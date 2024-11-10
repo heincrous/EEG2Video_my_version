@@ -16,3 +16,7 @@ This repository is the official implementation of our NeurIPS 24 paper: [EEG2Vid
 <br/>
 
 Code will be released soon.
+
+## Delay of Datasets Application
+
+We need more time to arrange our dataset, the SEED-DV dataset will be publiced next mouth (December). So please wait until the website updates before applying for the dataset (we will delete this delay note), thank you for understanding.
