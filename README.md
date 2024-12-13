@@ -15,8 +15,97 @@ This repository is the official implementation of our NeurIPS 24 paper: [EEG2Vid
 [Wei-Long Zheng](https://weilongzheng.github.io/)
 <br/>
 
-Code will be released soon.
+## 📣 News
+- Dec. 14, 2024. Our SEED-DV Dataset release.
+- Dec. 13, 2024. EEG2Video code release.
+- Nov. 25, 2024. EEG-VP code release.
+- Sep. 26, 2024. Accepted by NeurIPS 2024.
 
-## Delay of Datasets Application
+## Installation
 
-We need more time to arrange our dataset, the SEED-DV dataset will be publiced next mouth (December). So please wait until the website updates before applying for the dataset (we will delete this delay note), thank you for understanding.
+1. Fill out the SEED-DV's [License file](https://cloud.bcmi.sjtu.edu.cn/sharing/o64PBIsIc) and [Apply](https://bcmi.sjtu.edu.cn/ApplicationForm/apply_form/) the dataset.
+
+2. Download this repository: ``git clone https://github.com/XuanhaoLiu/EEG2Video.git``
+
+3. Create a conda environment and install the packages necessary to run the code.
+
+```bash
+conda create -n eegvideo
+conda activate eegvideo
+pip install -r requirements.txt
+```
+
+## 🖼️ Reconstruction Demos
+<table class="center">
+      <tr style="line-height: 0">
+      <td colspan="1" style="border: none; text-align: center">GT</td> <td colspan="1" style="border: none; text-align: center">Ours</td>
+      <td colspan="1" style="border: none; text-align: center">GT</td> <td colspan="1" style="border: none; text-align: center">Ours</td>
+      <td colspan="1" style="border: none; text-align: center">GT</td> <td colspan="1" style="border: none; text-align: center">Ours</td>
+      </tr>
+      <td style="border: none"><img src="assets/origif/image1.GIF"></td>
+      <td style="border: none"><img src="assets/recgif/image1.GIF"></td>
+      <td style="border: none"><img src="assets/origif/image2.GIF"></td>
+      <td style="border: none"><img src="assets/recgif/image2.GIF"></td>
+      <td style="border: none"><img src="assets/origif/image3.GIF"></td>
+      <td style="border: none"><img src="assets/recgif/image3.GIF"></td>
+      </tr>
+      <tr style="line-height: 0">
+      <td colspan="1" style="border: none; text-align: center">GT</td> <td colspan="1" style="border: none; text-align: center">Ours</td>
+      <td colspan="1" style="border: none; text-align: center">GT</td> <td colspan="1" style="border: none; text-align: center">Ours</td>
+      <td colspan="1" style="border: none; text-align: center">GT</td> <td colspan="1" style="border: none; text-align: center">Ours</td>
+      </tr>
+      <td style="border: none"><img src="assets/origif/image4.GIF"></td>
+      <td style="border: none"><img src="assets/recgif/image4.GIF"></td>
+      <td style="border: none"><img src="assets/origif/image7.GIF"></td>
+      <td style="border: none"><img src="assets/recgif/image7.GIF"></td>
+      <td style="border: none"><img src="assets/origif/image8.GIF"></td>
+      <td style="border: none"><img src="assets/recgif/image8.GIF"></td>
+      </tr>
+      <tr style="line-height: 0">
+      <td colspan="1" style="border: none; text-align: center">GT</td> <td colspan="1" style="border: none; text-align: center">Ours</td>
+      <td colspan="1" style="border: none; text-align: center">GT</td> <td colspan="1" style="border: none; text-align: center">Ours</td>
+      <td colspan="1" style="border: none; text-align: center">GT</td> <td colspan="1" style="border: none; text-align: center">Ours</td>
+      </tr>
+      <td style="border: none"><img src="assets/origif/image10.GIF"></td>
+      <td style="border: none"><img src="assets/recgif/image10.GIF"></td>
+      <td style="border: none"><img src="assets/origif/image15.GIF"></td>
+      <td style="border: none"><img src="assets/recgif/image15.GIF"></td>
+      <td style="border: none"><img src="assets/origif/image33.GIF"></td>
+      <td style="border: none"><img src="assets/recgif/image33.GIF"></td>
+      </tr>
+  </table>
+
+## 😞 Fail Cases
+We present some failure samples, these failures are typically caused by the inability of the model to infer either the semantic information or the low-level visual information correctly, resulting the irrelevantly generated videos.
+<table class="center">
+      <tr style="line-height: 0">
+      <td colspan="1" style="border: none; text-align: center">GT</td> <td colspan="1" style="border: none; text-align: center">Ours</td>
+      <td colspan="1" style="border: none; text-align: center">GT</td> <td colspan="1" style="border: none; text-align: center">Ours</td>
+      <td colspan="1" style="border: none; text-align: center">GT</td> <td colspan="1" style="border: none; text-align: center">Ours</td>
+      </tr>
+      <td style="border: none"><img src="assets/origif/image41.GIF"></td>
+      <td style="border: none"><img src="assets/recgif/image41.GIF"></td>
+      <td style="border: none"><img src="assets/origif/image43.GIF"></td>
+      <td style="border: none"><img src="assets/recgif/image43.GIF"></td>
+      <td style="border: none"><img src="assets/origif/image42.GIF"></td>
+      <td style="border: none"><img src="assets/recgif/image42.GIF"></td>
+      </tr>
+  </table>
+
+## BibTeX
+```
+@inproceedings{liu2024eegvideo,
+    title={{EEG}2Video: Towards Decoding Dynamic Visual Perception from {EEG} Signals},
+    author={Liu, Xuan-Hao and Liu, Yan-Kai and Wang, Yansen and Ren, Kan and Shi, Hanwen and Wang, Zilong and Li, Dongsheng and Lu, Bao-Liang and Zheng, Wei-Long},
+    booktitle={The Thirty-eighth Annual Conference on Neural Information Processing Systems},
+    year={2024},
+    url={https://openreview.net/forum?id=RfsfRn9OFd}
+}
+```
+
+## Acknowledgement
+Huge thanks to the [Stable Diffusion Team](https://stablediffusionweb.com/) for opensourcing their high-quality AIGC models. Gratitude to the [Tune-A-Video Team](https://tuneavideo.github.io/) for their elegant text-to-video model. And kudos to the [Mind-Video Team](https://www.mind-video.com/) for their pioneering and excellent fMRI-to-video work.
+
+<div align="center">
+    <img src="assets/galaxy_brain.gif" alt="galaxy brain" height=100 />
+</div>
