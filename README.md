@@ -97,7 +97,7 @@ We present some failure samples, these failures are typically caused by the inab
 @inproceedings{liu2024eegvideo,
     title={{EEG}2Video: Towards Decoding Dynamic Visual Perception from {EEG} Signals},
     author={Liu, Xuan-Hao and Liu, Yan-Kai and Wang, Yansen and Ren, Kan and Shi, Hanwen and Wang, Zilong and Li, Dongsheng and Lu, Bao-Liang and Zheng, Wei-Long},
-    booktitle={The Thirty-eighth Annual Conference on Neural Information Processing Systems},
+    booktitle={The Thirty-eighth Annual Conference on Neural Information Processing Systems (NeurIPS)},
     year={2024},
     url={https://openreview.net/forum?id=RfsfRn9OFd}
 }
