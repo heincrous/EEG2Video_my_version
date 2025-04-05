@@ -20,6 +20,7 @@ This repository is the official implementation of our NeurIPS 24 paper: [EEG2Vid
 - Dec. 13, 2024. EEG2Video code release.
 - Nov. 25, 2024. EEG-VP code release.
 - Sep. 26, 2024. Accepted by NeurIPS 2024.
+- April. 5, 2025. We notice all issues in Github, we will update the code base in two months.
 
 ## Installation
 
