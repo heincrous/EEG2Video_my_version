@@ -16,7 +16,7 @@ This repository is the official implementation of our NeurIPS 24 paper: [EEG2Vid
 <br/>
 
 ## 📣 News
-- April. 24 2025. We are excited to release the new version of **EEG2Video**.
+- Apr. 24, 2025. We are excited to release the new version of **EEG2Video**.
 - Dec. 14, 2024. Our SEED-DV Dataset release.
 - Dec. 13, 2024. EEG2Video code release.
 - Nov. 25, 2024. EEG-VP code release.
