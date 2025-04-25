@@ -16,12 +16,11 @@ This repository is the official implementation of our NeurIPS 24 paper: [EEG2Vid
 <br/>
 
 ## 📣 News
+- April. 24 2025. We are excited to release the new version of **EEG2Video**.
 - Dec. 14, 2024. Our SEED-DV Dataset release.
 - Dec. 13, 2024. EEG2Video code release.
 - Nov. 25, 2024. EEG-VP code release.
 - Sep. 26, 2024. Accepted by NeurIPS 2024.
-- April. 5, 2025. We notice all issues in Github, we will update the code base in two months.
-- April. 24 2025. We are excited to release the new version of **EEG2Video**.
 
 ## Installation
 
@@ -107,6 +106,8 @@ We present some failure samples, these failures are typically caused by the inab
 
 ## Acknowledgement
 Huge thanks to the [Stable Diffusion Team](https://stablediffusionweb.com/) for opensourcing their high-quality AIGC models. Gratitude to the [Tune-A-Video Team](https://tuneavideo.github.io/) for their elegant text-to-video model. And kudos to the [Mind-Video Team](https://www.mind-video.com/) for their pioneering and excellent fMRI-to-video work.
+
+Great thanks to our intelligent friend [**Tianyi Zhou**](https://scholar.google.com/citations?user=VyLD9McAAAAJ) for creating the new version of EEG2Video!
 
 <div align="center">
     <img src="assets/galaxy_brain.gif" alt="galaxy brain" height=100 />
