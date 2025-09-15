@@ -11,7 +11,7 @@ from EEG2Video.EEG2Video_New.Generation.tuneavideo.util import save_videos_grid
 # from EEG2Video.EEG2Video_New.Semantic.eeg_text import CLIP
 from EEG2Video.EEG2Video_New.Semantic.eeg_text import CLIPSmall as CLIP
 
-#BACK TO OLD CODE
+# BACK TO OLD CODE
 import torch
 import numpy as np
 from einops import rearrange
@@ -23,7 +23,7 @@ from sklearn import preprocessing
 # PATCHED CODE
 pretrained_eeg_encoder_path = "/content/drive/MyDrive/EEG2Video_checkpoints/eeg2text_40_eeg.pt"
 
-#BACK TO OLD CODE
+# BACK TO OLD CODE
 model = CLIP()
 model.load_state_dict(torch.load(pretrained_eeg_encoder_path, map_location=lambda storage, loc: storage)['state_dict'])
 model.to(torch.device('cuda'))
@@ -58,11 +58,24 @@ for i in range(6):
     EEG.append(chosed_eeg)
 EEG = np.stack(EEG, axis=0)
 
+# FAULTY CODE
+# test_indices = [list(GT_label[6]).index(element) for element in chosed_label]
+# eeg_test = eegdata[6][test_indices, :]
+# eeg_test = torch.from_numpy(eeg_test)
+# eeg_test = rearrange(eeg_test, 'a b c d e -> (a b) c (d e)')
+# eeg_test = torch.mean(eeg_test, dim=1).resize(eeg_test.shape[0], EEG_dim)
+
+# PATCHED CODE
 test_indices = [list(GT_label[6]).index(element) for element in chosed_label]
-eeg_test = eegdata[6][test_indices, :]
+eeg_test = eegdata[6][test_indices, :]          # shape [clips, timepoints]
 eeg_test = torch.from_numpy(eeg_test)
-eeg_test = rearrange(eeg_test, 'a b c d e -> (a b) c (d e)')
-eeg_test = torch.mean(eeg_test, dim=1).resize(eeg_test.shape[0], EEG_dim)
+
+# Flatten into [clips, features]
+eeg_test = eeg_test.view(eeg_test.shape[0], -1)
+
+print("eeg_test shape after flatten:", eeg_test.shape)
+
+# BACK TO OLD CODE
 
 EEG = torch.from_numpy(EEG)
 print(EEG.shape)
