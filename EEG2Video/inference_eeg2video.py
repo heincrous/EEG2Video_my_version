@@ -160,23 +160,22 @@ unet = UNet3DConditionModel(
     down_block_types=("DownBlock3D", "DownBlock3D", "DownBlock3D"),
     up_block_types=("UpBlock3D", "UpBlock3D", "UpBlock3D"),
     cross_attention_dim=768
-).to("cuda")
-print(">>> UNet initialized and moved to CUDA")
+).to("cuda").to(torch.float32)   # force float32
+
+print(">>> UNet initialized and moved to CUDA (float32)")
 
 print(">>> Starting pipeline creation")
 pipe = TuneAVideoPipeline.from_pretrained(
     "CompVis/stable-diffusion-v1-4",
     unet=unet,
-    torch_dtype=torch.float32
+    torch_dtype=torch.float32   # force float32 for the whole pipeline
 ).to("cuda")
 
-# make sure UNet weights are also float32
-unet.to(torch.float32)
+pipe.unet.to(torch.float32)
+pipe.vae.to(torch.float32)
 
-print(">>> Pipeline created")
-
+print(">>> Pipeline created (all float32)")
 print(">>> Enabling memory optimizations...")
-# pipe.enable_xformers_memory_efficient_attention() COMMENTED OUT AS IT CAUSES ISSUES
 pipe.enable_vae_slicing()
 pipe.to("cuda")
 
@@ -228,6 +227,7 @@ woDANA = True
 print(">>> Starting inference loop")
 for i in range(0, 2):
     print(f">>> Generating video {i}")
+    print(">>> eeg_embeddings dtype:", eeg_test.dtype)
     video = pipe(
         model,
         eeg_test[i:i+1, ...],
