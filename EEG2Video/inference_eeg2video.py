@@ -196,10 +196,11 @@ print(">>> latents shape:", latents.shape)
 print(">>> eeg_test shape:", eeg_test.shape)
 
 # Ablation, inference w/o Seq2Seq and w/o DANA
-woSeq2Seq = True
+# PATCHED CODE: CHANGED FROM TRUE TO FALSE FOR TESTING
+woSeq2Seq = False
 woDANA = True
 
-# CHANGING FROM 200 TO 2 FOR TESTING
+# PATCHED CODE: CHANGING FROM 200 TO 2 FOR TESTING
 print(">>> Starting inference loop")
 for i in range(0,2):
     print(f">>> Generating video {i}")
