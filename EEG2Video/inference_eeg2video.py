@@ -17,10 +17,10 @@ from einops import rearrange
 from sklearn import preprocessing
 
 # FAULTY CODE
-pretrained_eeg_encoder_path = '/home/v-xuanhaoliu/EEG2Video/Tune-A-Video/tuneavideo/models/eeg2text_40_eeg.pt'
+# pretrained_eeg_encoder_path = '/home/v-xuanhaoliu/EEG2Video/Tune-A-Video/tuneavideo/models/eeg2text_40_eeg.pt'
 
 # PATCHED CODE
-pretrained_eeg_encoder_path = "EEG2Video/EEG2Video/EEG2Video_New/Semantic/eeg2text_40_eeg.pt"
+pretrained_eeg_encoder_path = "/content/drive/MyDrive/EEG2Video_checkpoints/eeg2text_40_eeg.pt"
 
 #BACK TO OLD CODE
 model = CLIP()
