@@ -156,7 +156,7 @@ class TuneAVideoPipeline(DiffusionPipeline):
     
         eeg_embeddings = eeg
         eeg_embeddings  = torch.reshape(eeg_embeddings, [eeg_embeddings.shape[0], 77,  768]) #half是转为float16
-        eeg_embeddings = eeg_embeddings.cuda().to(dtype=torch.float16)
+        eeg_embeddings = eeg_embeddings.cuda().to(dtype=torch.float32)  # force float32 for eeg embeddings
 
 
         bs_embed, seq_len, _ = eeg_embeddings.shape

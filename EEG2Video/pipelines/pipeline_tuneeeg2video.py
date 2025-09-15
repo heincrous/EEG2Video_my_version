@@ -154,7 +154,7 @@ class TuneAVideoPipeline(DiffusionPipeline):
     def _encode_eeg(self, model, eeg, device, num_videos_per_eeg, do_classifier_guidance, negative_eeg):
     
         eeg_embeddings = model(eeg.to(device))
-        eeg_embeddings  = torch.reshape(eeg_embeddings, [eeg_embeddings.shape[0], 77,  768]).half()
+        eeg_embeddings = torch.reshape(eeg_embeddings, [eeg_embeddings.shape[0], 77, 768]).float().to(device)
         # eeg_embeddings = np.load('/home/v-xuanhaoliu/EEG2Video/Tune-A-Video/tuneavideo/models/text_embedding.npy')
         # eeg_embeddings = torch.from_numpy(eeg_embeddings).cuda()
         # eeg_embeddings = eeg_embeddings[22:23, ...]
