@@ -302,7 +302,8 @@ class TuneAVideoPipeline(DiffusionPipeline):
             video_length,
             height,
             width,
-            eeg_embeddings.dtype,
+            # eeg_embeddings.dtype,
+            torch.float32,   # force float32 latents
             device,
             generator,
             latents,
