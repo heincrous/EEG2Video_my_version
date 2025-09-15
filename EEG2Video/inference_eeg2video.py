@@ -180,12 +180,13 @@ print(">>> Pipeline device:", pipe.device)
 
 # BACK TO OLD CODE
 
+# SKIPPING THIS TO VERIFY THE PIPELINE WORKS
 # this are latents with DANA, these latents are pre-prepared by Seq2Seq model
-print(">>> Loading pre-prepared latents with DANA")
-latents_add_noise = np.load('./tuneavideo/models/latent_add_noise.npy')
-latents_add_noise = torch.from_numpy(latents_add_noise).half()
-latents_add_noise = rearrange(latents_add_noise, 'a b c d e -> a c b d e')
-print(">>> latents_add_noise shape:", latents_add_noise.shape)
+# print(">>> Loading pre-prepared latents with DANA")
+# latents_add_noise = np.load('./tuneavideo/models/latent_add_noise.npy')
+# latents_add_noise = torch.from_numpy(latents_add_noise).half()
+# latents_add_noise = rearrange(latents_add_noise, 'a b c d e -> a c b d e')
+# print(">>> latents_add_noise shape:", latents_add_noise.shape)
 
 # SKIPPING THIS TO VERIFY THE PIPELINE WORKS
 # this are latents w/o DANA, these latents are pre-prepared by Seq2Seq model
