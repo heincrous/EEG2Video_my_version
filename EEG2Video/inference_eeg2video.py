@@ -169,6 +169,10 @@ pipe = TuneAVideoPipeline.from_pretrained(
     unet=unet,
     torch_dtype=torch.float32
 ).to("cuda")
+
+# make sure UNet weights are also float32
+unet.to(torch.float32)
+
 print(">>> Pipeline created")
 
 print(">>> Enabling memory optimizations...")
