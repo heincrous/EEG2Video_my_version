@@ -1,13 +1,15 @@
 # FAULTY CODE
 # from tuneavideo.pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 # from tuneavideo.models.unet import UNet3DConditionModel
+# from tuneavideo.util import save_videos_grid
 
 # PATCHED CODE
 from EEG2Video.pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 from EEG2Video.EEG2Video_New.Generation.tuneavideo.models.unet import UNet3DConditionModel
+from EEG2Video.EEG2Video_New.Generation.tuneavideo.util import save_videos_grid
 
 #BACK TO OLD CODE
-from tuneavideo.util import save_videos_grid
+
 import torch
 from tuneavideo.models.eeg_text import CLIP
 import numpy as np
