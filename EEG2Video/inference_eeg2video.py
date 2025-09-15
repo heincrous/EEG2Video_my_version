@@ -167,7 +167,7 @@ print(">>> Starting pipeline creation")
 pipe = TuneAVideoPipeline.from_pretrained(
     "CompVis/stable-diffusion-v1-4",
     unet=unet,
-    torch_dtype=torch.float16
+    torch_dtype=torch.float32
 ).to("cuda")
 print(">>> Pipeline created")
 
