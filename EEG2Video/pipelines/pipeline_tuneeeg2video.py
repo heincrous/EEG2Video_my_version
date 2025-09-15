@@ -174,7 +174,7 @@ class TuneAVideoPipeline(DiffusionPipeline):
             # seq_len = uncond_embeddings.shape[1]
             # uncond_embeddings = uncond_embeddings.repeat(1, num_videos_per_eeg, 1)
             # uncond_embeddings = uncond_embeddings.view(bs_embed * num_videos_per_eeg, seq_len, -1)
-            uncond_embeddings = np.load('EEG2Video/EEG2Video/EEG2Video_New/Generation/negative.npy')
+            uncond_embeddings = np.load('EEG2Video/EEG2Video_New/Generation/negative.npy')
             uncond_embeddings = torch.from_numpy(uncond_embeddings).cuda()
             eeg_embeddings = torch.cat([uncond_embeddings, eeg_embeddings])
         return eeg_embeddings
