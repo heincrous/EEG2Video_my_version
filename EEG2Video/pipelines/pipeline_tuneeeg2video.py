@@ -3,7 +3,14 @@
 import inspect
 from typing import Callable, List, Optional, Union
 from dataclasses import dataclass
-from ..models.eeg2text import CLIP as EEGencoder
+
+# FAULTY CODE
+# from ..models.eeg2text import CLIP as EEGencoder
+
+# PATCHED CODE
+from EEG2Video.models.eeg2text import CLIP as EEGencoder
+
+#BACK TO OLD CODE
 import numpy as np
 import torch
 
