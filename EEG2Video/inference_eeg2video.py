@@ -121,24 +121,27 @@ eeg_test = torch.from_numpy(eeg_test).float().cuda()
 # pipe.enable_vae_slicing()
 
 # PATCHED CODE
-# PATCHED CODE for dummy pipeline
-pretrained_model_path = "CompVis/stable-diffusion-v1-4"  # Hugging Face SD v1.4
-unet = UNet3DConditionModel.from_pretrained(
-    pretrained_model_path,
-    subfolder="unet",
-    torch_dtype=torch.float16
+from EEG2Video.EEG2Video_New.Generation.tuneavideo.models.unet import UNet3DConditionModel
+
+unet = UNet3DConditionModel(
+    sample_size=64,
+    in_channels=4,
+    out_channels=4,
+    layers_per_block=2,
+    block_out_channels=(320, 640),
+    down_block_types=("DownBlock3D", "DownBlock3D", "DownBlock3D"),
+    up_block_types=("UpBlock3D", "UpBlock3D", "UpBlock3D"),
+    cross_attention_dim=768
 ).to("cuda")
 
 pipe = TuneAVideoPipeline.from_pretrained(
-    pretrained_model_path,
+    "CompVis/stable-diffusion-v1-4",
     unet=unet,
     torch_dtype=torch.float16
 ).to("cuda")
 
 pipe.enable_xformers_memory_efficient_attention()
 pipe.enable_vae_slicing()
-pipe.to("cuda")
-
 print("Pipeline device:", pipe.device)
 
 # BACK TO OLD CODE
