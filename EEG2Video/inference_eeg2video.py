@@ -115,16 +115,18 @@ print("EEG shape after fix:", EEG.shape)
 
 # PATCHED CODE
 print(">>> Skipping StandardScaler (too big), using simple normalization instead")
-EEG = torch.from_numpy(EEG).float()
+
+# EEG is already a torch.Tensor here
+EEG = EEG.float()
 EEG = (EEG - EEG.mean()) / (EEG.std() + 1e-6)
 EEG = EEG.cuda()
 
+# eeg_test is still a numpy array, so convert it
 eeg_test = torch.from_numpy(eeg_test).float()
 eeg_test = (eeg_test - eeg_test.mean()) / (eeg_test.std() + 1e-6)
 eeg_test = eeg_test.cuda()
 
 print(">>> EEG and eeg_test normalized and moved to CUDA")
-
 
 # FAULTY CODE
 # pretrained_model_path = "./checkpoints/stable-diffusion-v1-4"
