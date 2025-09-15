@@ -129,12 +129,15 @@ EEG = EEG.float()
 EEG = (EEG - EEG.mean()) / (EEG.std() + 1e-6)
 EEG = EEG.cuda()
 
-# eeg_test is still a numpy array, so convert it
-eeg_test = torch.from_numpy(eeg_test).float()
+# eeg_test is ALSO already a tensor at this point (flattened above), so no torch.from_numpy
+eeg_test = eeg_test.float()
 eeg_test = (eeg_test - eeg_test.mean()) / (eeg_test.std() + 1e-6)
 eeg_test = eeg_test.cuda()
 
-print(">>> EEG and eeg_test normalized and moved to CUDA")
+print(">>> EEG shape:", EEG.shape, "device:", EEG.device)
+print(">>> eeg_test shape:", eeg_test.shape, "device:", eeg_test.device)
+
+# BACK TO OLD CODE
 
 # FAULTY CODE
 # pretrained_model_path = "./checkpoints/stable-diffusion-v1-4"
