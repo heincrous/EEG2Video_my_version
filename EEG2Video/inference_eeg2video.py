@@ -106,11 +106,25 @@ print("EEG shape after fix:", EEG.shape)
 
 # BACK TO OLD CODE
 
-scaler = preprocessing.StandardScaler().fit(EEG)
-EEG = scaler.transform(EEG)
-EEG = torch.from_numpy(EEG).float().cuda()
-eeg_test = scaler.transform(eeg_test)
-eeg_test = torch.from_numpy(eeg_test).float().cuda()
+# FAULTY CODE
+# scaler = preprocessing.StandardScaler().fit(EEG)
+# EEG = scaler.transform(EEG)
+# EEG = torch.from_numpy(EEG).float().cuda()
+# eeg_test = scaler.transform(eeg_test)
+# eeg_test = torch.from_numpy(eeg_test).float().cuda()
+
+# PATCHED CODE
+print(">>> Skipping StandardScaler (too big), using simple normalization instead")
+EEG = torch.from_numpy(EEG).float()
+EEG = (EEG - EEG.mean()) / (EEG.std() + 1e-6)
+EEG = EEG.cuda()
+
+eeg_test = torch.from_numpy(eeg_test).float()
+eeg_test = (eeg_test - eeg_test.mean()) / (eeg_test.std() + 1e-6)
+eeg_test = eeg_test.cuda()
+
+print(">>> EEG and eeg_test normalized and moved to CUDA")
+
 
 # FAULTY CODE
 # pretrained_model_path = "./checkpoints/stable-diffusion-v1-4"
