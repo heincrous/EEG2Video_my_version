@@ -29,7 +29,7 @@ model.load_state_dict(torch.load(pretrained_eeg_encoder_path, map_location=lambd
 model.to(torch.device('cuda'))
 model.eval()
 
-eeg_data_path = ""                           # your own data path for eeg data
+eeg_data_path = "/content/drive/MyDrive/Data/Raw/EEG/sub1.npy" # your own data path for eeg data
 EEG_dim = 62*200                             # the dimension of an EEG segment
 eegdata = np.load(eeg_data_path)
 GT_label = np.array([[23, 22, 9, 6, 18,       14, 5, 36, 25, 19,      28, 35, 3, 16, 24,      40, 15, 27, 38, 33,
