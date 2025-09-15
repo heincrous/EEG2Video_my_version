@@ -73,7 +73,11 @@ eeg_test = torch.from_numpy(eeg_test)
 # Flatten into [clips, features]
 eeg_test = eeg_test.view(eeg_test.shape[0], -1)
 
-print("eeg_test shape after flatten:", eeg_test.shape)
+# shrink to match reduced EEG_dim
+EEG_dim = 100
+eeg_test = eeg_test[:, :EEG_dim]
+
+print("eeg_test shape after shrink:", eeg_test.shape)
 
 # BACK TO OLD CODE
 
@@ -98,11 +102,15 @@ print("EEG shape after rearrange:", EEG.shape)
 # FAULTY CODE
 # EEG = torch.mean(EEG, dim=1).resize(EEG.shape[0], EEG_dim)
 
-# PATCHED CODE
-EEG = torch.mean(EEG, dim=1)              # reduce along dim=1
-EEG = EEG.view(EEG.shape[0], -1)          # flatten
-EEG = EEG.expand(-1, EEG_dim)             # pad/broadcast to match EEG_dim (12400)
-print("EEG shape after fix:", EEG.shape)
+# PATCHED CODE (safe shrink for debugging)
+EEG = torch.mean(EEG, dim=1)       # reduce along dim=1
+EEG = EEG.view(EEG.shape[0], -1)   # flatten
+
+# shrink EEG_dim to something manageable for Colab
+EEG_dim = 100
+EEG = EEG[:, :EEG_dim]             # take only first 100 features
+
+print("EEG shape after shrink:", EEG.shape)
 
 # BACK TO OLD CODE
 
