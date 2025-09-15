@@ -117,6 +117,8 @@ eeg_test = torch.from_numpy(eeg_test).float().cuda()
 # my_model_path = "./outputs/40_classes_video_200_epoch"
 # unet = UNet3DConditionModel.from_pretrained(my_model_path, subfolder='unet', torch_dtype=torch.float16).to('cuda')
 # pipe = TuneAVideoPipeline.from_pretrained(pretrained_model_path, unet=unet, torch_dtype=torch.float16).to("cuda")
+# pipe.enable_xformers_memory_efficient_attention()
+# pipe.enable_vae_slicing()
 
 # PATCHED CODE
 # PATCHED CODE for dummy pipeline
@@ -140,9 +142,6 @@ pipe.to("cuda")
 print("Pipeline device:", pipe.device)
 
 # BACK TO OLD CODE
-
-pipe.enable_xformers_memory_efficient_attention()
-pipe.enable_vae_slicing()
 
 # this are latents with DANA, these latents are pre-prepared by Seq2Seq model
 latents_add_noise = np.load('./tuneavideo/models/latent_add_noise.npy')
