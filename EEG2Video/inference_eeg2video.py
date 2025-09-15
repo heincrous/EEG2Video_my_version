@@ -187,13 +187,16 @@ latents_add_noise = torch.from_numpy(latents_add_noise).half()
 latents_add_noise = rearrange(latents_add_noise, 'a b c d e -> a c b d e')
 print(">>> latents_add_noise shape:", latents_add_noise.shape)
 
+# SKIPPING THIS TO VERIFY THE PIPELINE WORKS
 # this are latents w/o DANA, these latents are pre-prepared by Seq2Seq model
-print(">>> Loading pre-prepared latents w/o DANA")
-latents = np.load('./tuneavideo/models/latents.npy')
-latents = torch.from_numpy(latents).half()
-latents = rearrange(latents, 'a b c d e -> a c b d e')
-print(">>> latents shape:", latents.shape)
-print(">>> eeg_test shape:", eeg_test.shape)
+# print(">>> Loading pre-prepared latents w/o DANA")
+# latents = np.load('./tuneavideo/models/latents.npy')
+# latents = torch.from_numpy(latents).half()
+# latents = rearrange(latents, 'a b c d e -> a c b d e')
+# print(">>> latents shape:", latents.shape)
+# print(">>> eeg_test shape:", eeg_test.shape)
+
+print(">>> Skipping pre-prepared latents, using None")
 
 # Ablation, inference w/o Seq2Seq and w/o DANA
 # PATCHED CODE: CHANGED FROM TRUE TO FALSE FOR TESTING
@@ -201,17 +204,35 @@ woSeq2Seq = False
 woDANA = True
 
 # PATCHED CODE: CHANGING FROM 200 TO 2 FOR TESTING
+# print(">>> Starting inference loop")
+# for i in range(0,2):
+#     print(f">>> Generating video {i}")
+#     if woSeq2Seq:
+#         video = pipe(model, eeg_test[i:i+1,...], latents=None, video_length=6, height=288, width=512, num_inference_steps=100, guidance_scale=12.5).videos
+#         savename = '40_Classes_woSeq2Seq'
+#     elif woDANA:
+#         video = pipe(model, eeg_test[i:i+1,...], latents=latents[i:i+1,...], video_length=6, height=288, width=512, num_inference_steps=100, guidance_scale=12.5).videos
+#         savename = '40_Classes_woDANA'
+#     else:
+#         video = pipe(model, eeg_test[i:i+1,...], latents=latents_add_noise[i:i+1,...], video_length=6, height=288, width=512, num_inference_steps=100, guidance_scale=12.5).videos
+#         savename = '40_Classes_Fullmodel'
+#     save_videos_grid(video, f"./{savename}/{i}.gif")
+#     print(f">>> Saved {savename}/{i}.gif")
+
+# PATCHED CODE: UPDATED LOOP TO SKIP LATENTS
 print(">>> Starting inference loop")
-for i in range(0,2):
+for i in range(0, 2):
     print(f">>> Generating video {i}")
-    if woSeq2Seq:
-        video = pipe(model, eeg_test[i:i+1,...], latents=None, video_length=6, height=288, width=512, num_inference_steps=100, guidance_scale=12.5).videos
-        savename = '40_Classes_woSeq2Seq'
-    elif woDANA:
-        video = pipe(model, eeg_test[i:i+1,...], latents=latents[i:i+1,...], video_length=6, height=288, width=512, num_inference_steps=100, guidance_scale=12.5).videos
-        savename = '40_Classes_woDANA'
-    else:
-        video = pipe(model, eeg_test[i:i+1,...], latents=latents_add_noise[i:i+1,...], video_length=6, height=288, width=512, num_inference_steps=100, guidance_scale=12.5).videos
-        savename = '40_Classes_Fullmodel'
+    video = pipe(
+        model,
+        eeg_test[i:i+1, ...],
+        latents=None,
+        video_length=6,
+        height=288,
+        width=512,
+        num_inference_steps=100,
+        guidance_scale=12.5
+    ).videos
+    savename = "40_Classes_Test"
     save_videos_grid(video, f"./{savename}/{i}.gif")
     print(f">>> Saved {savename}/{i}.gif")
