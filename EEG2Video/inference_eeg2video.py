@@ -8,7 +8,7 @@
 from EEG2Video.pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 from EEG2Video.EEG2Video_New.Generation.tuneavideo.models.unet import UNet3DConditionModel
 from EEG2Video.EEG2Video_New.Generation.tuneavideo.util import save_videos_grid
-# from EEG2Video.EEG2Video_New.Semantic.eeg_text import CLIP
+# from EEG2Video.EEG2Video_New.Semantic.eeg_text import CLIP NEEDS TO BE UNCOMMENTED LATER
 from EEG2Video.EEG2Video_New.Semantic.eeg_text import CLIPSmall as CLIP
 
 # BACK TO OLD CODE
@@ -73,8 +73,8 @@ eeg_test = torch.from_numpy(eeg_test)
 # Flatten into [clips, features]
 eeg_test = eeg_test.view(eeg_test.shape[0], -1)
 
-# shrink to match reduced EEG_dim
-EEG_dim = 100
+# crop to match CLIPSmall input dimension
+EEG_dim = 310
 eeg_test = eeg_test[:, :EEG_dim]
 
 print(">>> eeg_test shape after shrink:", eeg_test.shape)
@@ -106,9 +106,9 @@ print(">>> EEG shape after rearrange:", EEG.shape)
 EEG = torch.mean(EEG, dim=1)       # reduce along dim=1
 EEG = EEG.view(EEG.shape[0], -1)   # flatten
 
-# shrink EEG_dim to something manageable for Colab
-EEG_dim = 100
-EEG = EEG[:, :EEG_dim]             # take only first 100 features
+# crop EEG to CLIPSmall input dimension
+EEG_dim = 310
+EEG = EEG[:, :EEG_dim]             # take only first 310 features
 
 print(">>> EEG shape after shrink:", EEG.shape)
 
