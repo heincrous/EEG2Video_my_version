@@ -172,7 +172,7 @@ pipe = TuneAVideoPipeline.from_pretrained(
 print(">>> Pipeline created")
 
 print(">>> Enabling memory optimizations...")
-pipe.enable_xformers_memory_efficient_attention()
+# pipe.enable_xformers_memory_efficient_attention() COMMENTED OUT AS IT CAUSES ISSUES
 pipe.enable_vae_slicing()
 pipe.to("cuda")
 
