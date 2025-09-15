@@ -112,10 +112,35 @@ EEG = torch.from_numpy(EEG).float().cuda()
 eeg_test = scaler.transform(eeg_test)
 eeg_test = torch.from_numpy(eeg_test).float().cuda()
 
-pretrained_model_path = "./checkpoints/stable-diffusion-v1-4"
-my_model_path = "./outputs/40_classes_video_200_epoch"
-unet = UNet3DConditionModel.from_pretrained(my_model_path, subfolder='unet', torch_dtype=torch.float16).to('cuda')
-pipe = TuneAVideoPipeline.from_pretrained(pretrained_model_path, unet=unet, torch_dtype=torch.float16).to("cuda")
+# FAULTY CODE
+# pretrained_model_path = "./checkpoints/stable-diffusion-v1-4"
+# my_model_path = "./outputs/40_classes_video_200_epoch"
+# unet = UNet3DConditionModel.from_pretrained(my_model_path, subfolder='unet', torch_dtype=torch.float16).to('cuda')
+# pipe = TuneAVideoPipeline.from_pretrained(pretrained_model_path, unet=unet, torch_dtype=torch.float16).to("cuda")
+
+# PATCHED CODE
+# PATCHED CODE for dummy pipeline
+pretrained_model_path = "CompVis/stable-diffusion-v1-4"  # Hugging Face SD v1.4
+unet = UNet3DConditionModel.from_pretrained(
+    pretrained_model_path,
+    subfolder="unet",
+    torch_dtype=torch.float16
+).to("cuda")
+
+pipe = TuneAVideoPipeline.from_pretrained(
+    pretrained_model_path,
+    unet=unet,
+    torch_dtype=torch.float16
+).to("cuda")
+
+pipe.enable_xformers_memory_efficient_attention()
+pipe.enable_vae_slicing()
+pipe.to("cuda")
+
+print("Pipeline device:", pipe.device)
+
+# BACK TO OLD CODE
+
 pipe.enable_xformers_memory_efficient_attention()
 pipe.enable_vae_slicing()
 
