@@ -8,7 +8,7 @@
 from EEG2Video.pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 from EEG2Video.EEG2Video_New.Generation.tuneavideo.models.unet import UNet3DConditionModel
 from EEG2Video.EEG2Video_New.Generation.tuneavideo.util import save_videos_grid
-from EEG2Video.EEG2Video_New.Generation.tuneavideo.models.eeg_text import CLIP
+from EEG2Video.EEG2Video_New.Semantic.eeg_text import CLIP
 
 #BACK TO OLD CODE
 import torch
