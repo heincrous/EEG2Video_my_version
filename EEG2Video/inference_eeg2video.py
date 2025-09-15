@@ -1,4 +1,10 @@
-from tuneavideo.pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
+# FAULTY CODE
+# from tuneavideo.pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
+
+# PATCHED CODE
+from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
+
+#BACK TO OLD CODE
 from tuneavideo.models.unet import UNet3DConditionModel
 from tuneavideo.util import save_videos_grid
 import torch
