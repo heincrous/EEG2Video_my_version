@@ -172,4 +172,20 @@ if __name__ == '__main__':
     os.makedirs(path,exist_ok=True)
     torch.save({'state_dict': model_dict}, f'../checkpoints/Semantic/{current_time}/eeg2text_40_classes.pt')
     
+# PATCHED CODE
+class CLIPSmall(nn.Module):
+    def __init__(self):
+        super(CLIPSmall, self).__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(310, 512),
+            nn.ReLU(),
+            nn.Linear(512, 1024),
+            nn.ReLU(),
+            nn.Linear(1024, 2048),
+            nn.ReLU(),
+            nn.Linear(2048, 77 * 768)
+        )
 
+    def forward(self, eeg):
+        eeg_embeddings = self.mlp(eeg)
+        return eeg_embeddings
