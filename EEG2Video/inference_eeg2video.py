@@ -123,6 +123,7 @@ eeg_test = torch.from_numpy(eeg_test).float().cuda()
 # PATCHED CODE
 from EEG2Video.EEG2Video_New.Generation.tuneavideo.models.unet import UNet3DConditionModel
 
+print(">>> Starting UNet initialization")
 unet = UNet3DConditionModel(
     sample_size=64,
     in_channels=4,
@@ -133,16 +134,21 @@ unet = UNet3DConditionModel(
     up_block_types=("UpBlock3D", "UpBlock3D", "UpBlock3D"),
     cross_attention_dim=768
 ).to("cuda")
+print(">>> UNet initialized and moved to CUDA")
 
+print(">>> Starting pipeline creation")
 pipe = TuneAVideoPipeline.from_pretrained(
     "CompVis/stable-diffusion-v1-4",
     unet=unet,
     torch_dtype=torch.float16
 ).to("cuda")
+print(">>> Pipeline created")
 
 pipe.enable_xformers_memory_efficient_attention()
 pipe.enable_vae_slicing()
-print("Pipeline device:", pipe.device)
+pipe.to("cuda")
+
+print(">>> Pipeline device:", pipe.device)
 
 # BACK TO OLD CODE
 
