@@ -94,7 +94,17 @@ EEG = rearrange(EEG, 'a b c d e f -> (a b c) d (e f)')
 print("EEG shape after rearrange:", EEG.shape)
 
 # BACK TO OLD CODE
-EEG = torch.mean(EEG, dim=1).resize(EEG.shape[0], EEG_dim)
+
+# FAULTY CODE
+# EEG = torch.mean(EEG, dim=1).resize(EEG.shape[0], EEG_dim)
+
+# PATCHED CODE
+EEG = torch.mean(EEG, dim=1)              # reduce along dim=1
+EEG = EEG.view(EEG.shape[0], -1)          # flatten
+EEG = EEG.expand(-1, EEG_dim)             # pad/broadcast to match EEG_dim (12400)
+print("EEG shape after fix:", EEG.shape)
+
+# BACK TO OLD CODE
 
 scaler = preprocessing.StandardScaler().fit(EEG)
 EEG = scaler.transform(EEG)
