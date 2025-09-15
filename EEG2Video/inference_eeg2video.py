@@ -2,7 +2,7 @@
 # from tuneavideo.pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 
 # PATCHED CODE
-from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
+from EEG2Video.pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 
 #BACK TO OLD CODE
 from tuneavideo.models.unet import UNet3DConditionModel
