@@ -135,7 +135,8 @@ print(eeg_test.shape)
 woSeq2Seq = True
 woDANA = True
 
-for i in range(0,200):
+# CHANGING FROM 200 TO 2 FOR TESTING
+for i in range(0,2):
     if woSeq2Seq:
         video = pipe(model, eeg_test[i:i+1,...], latents=None, video_length=6, height=288, width=512, num_inference_steps=100, guidance_scale=12.5).videos
         savename = '40_Classes_woSeq2Seq'
