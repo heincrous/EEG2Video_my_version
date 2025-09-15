@@ -79,12 +79,21 @@ print("eeg_test shape after flatten:", eeg_test.shape)
 
 EEG = torch.from_numpy(EEG)
 print(EEG.shape)
-# id = 1
-# for i in range(40):
-#     EEG[:,i,...] = id
-#     id += 1
+
+# FAULTY CODE
+# EEG = rearrange(EEG, 'a b c d e f -> (a b c) d (e f)')
+# print(EEG.shape)
+
+# PATCHED CODE
+# Pad to 6D so einops doesn’t break
+while EEG.ndim < 6:
+    EEG = EEG.unsqueeze(-1)
+
+print("EEG shape padded for rearrange:", EEG.shape)
 EEG = rearrange(EEG, 'a b c d e f -> (a b c) d (e f)')
-print(EEG.shape)
+print("EEG shape after rearrange:", EEG.shape)
+
+# BACK TO OLD CODE
 EEG = torch.mean(EEG, dim=1).resize(EEG.shape[0], EEG_dim)
 
 scaler = preprocessing.StandardScaler().fit(EEG)
