@@ -77,7 +77,7 @@ eeg_test = eeg_test.view(eeg_test.shape[0], -1)
 EEG_dim = 100
 eeg_test = eeg_test[:, :EEG_dim]
 
-print("eeg_test shape after shrink:", eeg_test.shape)
+print(">>> eeg_test shape after shrink:", eeg_test.shape)
 
 # BACK TO OLD CODE
 
@@ -93,9 +93,9 @@ print(EEG.shape)
 while EEG.ndim < 6:
     EEG = EEG.unsqueeze(-1)
 
-print("EEG shape padded for rearrange:", EEG.shape)
+print(">>> EEG shape padded for rearrange:", EEG.shape)
 EEG = rearrange(EEG, 'a b c d e f -> (a b c) d (e f)')
-print("EEG shape after rearrange:", EEG.shape)
+print(">>> EEG shape after rearrange:", EEG.shape)
 
 # BACK TO OLD CODE
 
@@ -110,7 +110,7 @@ EEG = EEG.view(EEG.shape[0], -1)   # flatten
 EEG_dim = 100
 EEG = EEG[:, :EEG_dim]             # take only first 100 features
 
-print("EEG shape after shrink:", EEG.shape)
+print(">>> EEG shape after shrink:", EEG.shape)
 
 # BACK TO OLD CODE
 
@@ -171,6 +171,7 @@ pipe = TuneAVideoPipeline.from_pretrained(
 ).to("cuda")
 print(">>> Pipeline created")
 
+print(">>> Enabling memory optimizations...")
 pipe.enable_xformers_memory_efficient_attention()
 pipe.enable_vae_slicing()
 pipe.to("cuda")
@@ -180,23 +181,28 @@ print(">>> Pipeline device:", pipe.device)
 # BACK TO OLD CODE
 
 # this are latents with DANA, these latents are pre-prepared by Seq2Seq model
+print(">>> Loading pre-prepared latents with DANA")
 latents_add_noise = np.load('./tuneavideo/models/latent_add_noise.npy')
 latents_add_noise = torch.from_numpy(latents_add_noise).half()
 latents_add_noise = rearrange(latents_add_noise, 'a b c d e -> a c b d e')
+print(">>> latents_add_noise shape:", latents_add_noise.shape)
 
 # this are latents w/o DANA, these latents are pre-prepared by Seq2Seq model
+print(">>> Loading pre-prepared latents w/o DANA")
 latents = np.load('./tuneavideo/models/latents.npy')
 latents = torch.from_numpy(latents).half()
 latents = rearrange(latents, 'a b c d e -> a c b d e')
-print(latents_add_noise.shape)
-print(eeg_test.shape)
+print(">>> latents shape:", latents.shape)
+print(">>> eeg_test shape:", eeg_test.shape)
 
 # Ablation, inference w/o Seq2Seq and w/o DANA
 woSeq2Seq = True
 woDANA = True
 
 # CHANGING FROM 200 TO 2 FOR TESTING
+print(">>> Starting inference loop")
 for i in range(0,2):
+    print(f">>> Generating video {i}")
     if woSeq2Seq:
         video = pipe(model, eeg_test[i:i+1,...], latents=None, video_length=6, height=288, width=512, num_inference_steps=100, guidance_scale=12.5).videos
         savename = '40_Classes_woSeq2Seq'
@@ -207,3 +213,4 @@ for i in range(0,2):
         video = pipe(model, eeg_test[i:i+1,...], latents=latents_add_noise[i:i+1,...], video_length=6, height=288, width=512, num_inference_steps=100, guidance_scale=12.5).videos
         savename = '40_Classes_Fullmodel'
     save_videos_grid(video, f"./{savename}/{i}.gif")
+    print(f">>> Saved {savename}/{i}.gif")
