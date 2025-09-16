@@ -247,7 +247,6 @@ print(">>> Pipeline device:", pipe.device)
 # print(">>> eeg_test shape:", eeg_test.shape)
 
 print(">>> Generating latents from Seq2Seq instead of loading from file")
-print(">>> Generating latents from Seq2Seq instead of loading from file")
 with torch.no_grad():
     # eeg_test: [40, 310]
     B, F = 1, 6   # 1 video, 6 frames
