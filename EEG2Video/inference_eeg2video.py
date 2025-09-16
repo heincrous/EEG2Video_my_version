@@ -272,8 +272,8 @@ with torch.no_grad():
 print(">>> latents shape:", latents.shape)
 # ----------------------------------------------------------------
 
-# Ablation, inference w/o Seq2Seq and w/o DANA
 # PATCHED CODE: CHANGED FROM TRUE TO FALSE FOR TESTING + APPARENTLY NOT USED
+# Ablation, inference w/o Seq2Seq and w/o DANA
 woSeq2Seq = False
 woDANA = True
 
@@ -297,12 +297,15 @@ woDANA = True
 
 # ----------------------------------------------------------------
 # PATCHED CODE: UPDATED LOOP TO ONLY TEST SEQ2SEQ PIPELINE
-
-class IdentityModel(torch.nn.Module):
+class DummySemantic(torch.nn.Module):
     def forward(self, x):
-        return x
+        b = x.size(0)
+        # expand or pad from 310 -> 77*768 = 59136
+        expanded = torch.zeros((b, 77*768), device=x.device)
+        expanded[:, :min(310, 77*768)] = x[:, :min(310, 77*768)]
+        return expanded
 
-dummy_model = IdentityModel().to("cuda")
+dummy_model = DummySemantic().to("cuda")
 
 print(">>> Starting inference loop")
 for i in range(0, 2):
