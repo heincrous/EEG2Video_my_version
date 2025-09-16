@@ -297,12 +297,19 @@ woDANA = True
 
 # ----------------------------------------------------------------
 # PATCHED CODE: UPDATED LOOP TO ONLY TEST SEQ2SEQ PIPELINE
+
+class IdentityModel(torch.nn.Module):
+    def forward(self, x):
+        return x
+
+dummy_model = IdentityModel().to("cuda")
+
 print(">>> Starting inference loop")
 for i in range(0, 2):
     print(f">>> Generating video {i}")
     print(">>> eeg_embeddings dtype:", eeg_test.dtype)
     video = pipe(
-        None,  # semantic predictor disabled
+        dummy_model,                      # stub instead of None
         eeg_test[i:i+1, ...],
         latents=latents[:, :6, ...],  # make sure we take the 6 frames
         video_length=6,
