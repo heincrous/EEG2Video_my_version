@@ -1,3 +1,5 @@
+# THIS FILE HAS BEEN PATCHED
+
 # FAULTY CODE
 # from tuneavideo.pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 # from tuneavideo.models.unet import UNet3DConditionModel
