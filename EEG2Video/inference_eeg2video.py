@@ -31,7 +31,7 @@ import torch.nn as nn
 CKPT_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_semantic.pt"
 
 class EEG2Latent(nn.Module):
-    def __init__(self, eeg_dim=62*512, latent_dim=4*32*32, hidden=512, num_layers=2):
+    def __init__(self, eeg_dim=62*512, latent_dim=77*768, hidden=512, num_layers=2):  # <-- update latent_dim
         super().__init__()
         self.embed = nn.Linear(eeg_dim, hidden)
         encoder_layer = nn.TransformerEncoderLayer(d_model=hidden, nhead=8)
@@ -310,22 +310,24 @@ woDANA = True
 
 # ----------------------------------------------------------------
 # PATCHED CODE: UPDATED LOOP TO ONLY TEST SEQ2SEQ PIPELINE
-class DummySemantic(torch.nn.Module):
-    def forward(self, x):
-        b = x.size(0)
-        # expand or pad from 310 -> 77*768 = 59136
-        expanded = torch.zeros((b, 77*768), device=x.device)
-        expanded[:, :min(310, 77*768)] = x[:, :min(310, 77*768)]
-        return expanded
+# class DummySemantic(torch.nn.Module):
+#     def forward(self, x):
+#         b = x.size(0)
+#         # expand or pad from 310 -> 77*768 = 59136
+#         expanded = torch.zeros((b, 77*768), device=x.device)
+#         expanded[:, :min(310, 77*768)] = x[:, :min(310, 77*768)]
+#         return expanded
 
-dummy_model = DummySemantic().to("cuda")
+# dummy_model = DummySemantic().to("cuda")
+
+
 
 print(">>> Starting inference loop")
 for i in range(0, 2):
     print(f">>> Generating video {i}")
     print(">>> eeg_embeddings dtype:", eeg_test.dtype)
     video = pipe(
-        dummy_model,                      # stub instead of None
+        seq2seq,                      
         eeg_test[i:i+1, ...],
         latents=latents[:, :6, ...],  # make sure we take the 6 frames
         video_length=6,
