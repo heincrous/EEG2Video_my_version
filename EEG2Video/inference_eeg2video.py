@@ -28,7 +28,7 @@ from sklearn import preprocessing
 # SEQ2SEQ MODEL FOR EEG -> LATENTS (TOY VERSION ADDED BY ME)
 import torch.nn as nn
 
-CKPT_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_demo.pt"
+CKPT_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_semantic.pt"
 
 class EEG2Latent(nn.Module):
     def __init__(self, eeg_dim=62*512, latent_dim=4*32*32, hidden=512, num_layers=2):
