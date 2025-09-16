@@ -5,8 +5,8 @@ from decord import VideoReader, cpu
 from diffusers import AutoencoderKL
 
 # Paths
-EEG_PATH = "/content/drive/MyDrive/Data/Raw/SEED-DV/EEG/sub1.npy"
-VIDEO_PATH = "/content/drive/MyDrive/Data/Raw/SEED-DV/Video/1st_10min.mp4"
+EEG_PATH = "/content/drive/MyDrive/Data/Raw/EEG/sub1.npy"
+VIDEO_PATH = "/content/drive/MyDrive/Data/Raw/Video/1st_10min.mp4"
 
 # Device
 device = "cuda" if torch.cuda.is_available() else "cpu"
