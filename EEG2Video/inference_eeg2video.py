@@ -248,13 +248,11 @@ print(">>> Pipeline device:", pipe.device)
 
 print(">>> Generating latents from Seq2Seq instead of loading from file")
 with torch.no_grad():
-    # Prepare EEG input [B,F,62,512]
     B, F = 1, 6
-    eeg_segment = eeg_test[0:1, ...]  # [1, 310] now, placeholder EEG features
-    eeg_segment = eeg_segment.unsqueeze(1).repeat(1, F, 62, 512)  # fake reshape for now
-    eeg_segment = eeg_segment.view(B*F, 62, 512)
+    # Just repeat the 310-dim EEG features F times (one per frame)
+    eeg_segment = eeg_test[0:1, ...].repeat(F, 1)  # [6, 310]
 
-    # Predict latents per frame [B*F, 4096]
+    # Predict latents per frame [F, 4096]
     pred_latents = seq2seq(eeg_segment)
 
     # Reshape into video latent format [B,F,4,32,32]
