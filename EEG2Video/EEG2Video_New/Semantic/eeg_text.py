@@ -172,8 +172,7 @@ if __name__ == '__main__':
     os.makedirs(path,exist_ok=True)
     torch.save({'state_dict': model_dict}, f'../checkpoints/Semantic/{current_time}/eeg2text_40_classes.pt')
     
-# PATCHED CODE
-class CLIPSmall(nn.Module):
+# PATCHED CODE: CLIPSMALL IS A LIGHTWEIGHT VERSION OF THE SEMANTIC PREDICTOR
     def __init__(self):
         super(CLIPSmall, self).__init__()
         self.mlp = nn.Sequential(
