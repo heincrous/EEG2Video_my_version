@@ -266,10 +266,24 @@ with torch.no_grad():
     # Predict latents
     pred_latents = seq2seq(eeg_segment)  # [6,4096]
 
-    # Reshape into video latent format [1,6,4,32,32]
+    # Reshape into [1,6,4,32,32]
     latents = pred_latents.view(1, F, 4, 32, 32).to("cuda")
 
-print(">>> latents shape:", latents.shape)
+    # Rearrange to [1,4,6,32,32]
+    latents = latents.permute(0, 2, 1, 3, 4)
+
+    # Upsample from 32x32 -> 36x64 so it matches pipeline expectations
+    latents = torch.nn.functional.interpolate(
+        latents.reshape(1*4*6, 1, 32, 32),  # flatten B,C,F
+        size=(36, 64),
+        mode="bilinear",
+        align_corners=False
+    )
+
+    # Reshape back to [1,4,6,36,64]
+    latents = latents.view(1, 4, F, 36, 64).to("cuda")
+
+print(">>> latents final shape:", latents.shape)
 # ----------------------------------------------------------------
 
 # PATCHED CODE: CHANGED FROM TRUE TO FALSE FOR TESTING + APPARENTLY NOT USED
