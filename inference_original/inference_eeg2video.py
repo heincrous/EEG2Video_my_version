@@ -6,7 +6,6 @@ import numpy as np
 from einops import rearrange
 
 from diffusers import AutoencoderKL, DDIMScheduler
-from transformers import CLIPTextModel, CLIPTokenizer
 
 from models_original.tuneavideo.unet import UNet3DConditionModel
 from pipelines_original.pipeline_tuneeeg2video import TuneAVideoPipeline
@@ -41,15 +40,11 @@ semantic_model.eval()
 DIFFUSION_CKPT = "/content/drive/MyDrive/EEG2Video_checkpoints/videodiffusion"
 
 vae = AutoencoderKL.from_pretrained(DIFFUSION_CKPT, subfolder="vae")
-tokenizer = CLIPTokenizer.from_pretrained(DIFFUSION_CKPT, subfolder="tokenizer")
-text_encoder = CLIPTextModel.from_pretrained(DIFFUSION_CKPT, subfolder="text_encoder")
 unet = UNet3DConditionModel.from_pretrained_2d(DIFFUSION_CKPT, subfolder="unet")
 scheduler = DDIMScheduler.from_pretrained(DIFFUSION_CKPT, subfolder="scheduler")
 
 pipe = TuneAVideoPipeline(
     vae=vae,
-    text_encoder=text_encoder,
-    tokenizer=tokenizer,
     unet=unet,
     scheduler=scheduler
 ).to("cuda")
