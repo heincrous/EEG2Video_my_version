@@ -14,10 +14,10 @@ from utils.gt_label import GT_LABEL  # use the shared GT_LABEL
 # Semantic Predictor Network
 # ----------------------------
 class SemanticPredictor(nn.Module):
-    def __init__(self):
+    def __init__(self, input_dim):
         super(SemanticPredictor, self).__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(310, 10000),
+            nn.Linear(input_dim, 10000),
             nn.ReLU(),
             nn.Linear(10000, 10000),
             nn.ReLU(),
@@ -54,7 +54,7 @@ class Dataset(torch.utils.data.Dataset):
 # Training Loop
 # ----------------------------
 if __name__ == "__main__":
-    # 🔹 Paths (update for your Drive)
+    # Paths (update for your Drive)
     eeg_data_path = "/content/drive/MyDrive/Data/Processed/EEG_timewindows_100/sub1.npy"
     text_embedding_path = "/content/drive/MyDrive/Data/Raw/text_embedding.npy"
     save_path = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor.pt"
@@ -73,7 +73,8 @@ if __name__ == "__main__":
         EEG.append(chosen_eeg)
     EEG = np.stack(EEG, axis=0)
     EEG = torch.from_numpy(EEG)
-    EEG = rearrange(EEG, "a b c d e f -> (a b c) d (e f)")  # [N, 310]
+    EEG = rearrange(EEG, "a b c d e f -> (a b c) d (e f)")  # [N, d, f]
+    EEG = EEG.reshape(EEG.shape[0], -1)  # flatten to [N, features]
 
     print("EEG after reshape:", EEG.shape)
 
@@ -91,7 +92,7 @@ if __name__ == "__main__":
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
 
     # Model
-    model = SemanticPredictor().cuda()
+    model = SemanticPredictor(input_dim=EEG.shape[1]).cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=200 * len(dataloader)
@@ -102,8 +103,8 @@ if __name__ == "__main__":
         model.train()
         epoch_loss = 0
         for eeg, text in dataloader:
-            eeg = eeg.float().cuda()
-            text = text.float().cuda()
+            eeg = torch.tensor(eeg).float().cuda()
+            text = torch.tensor(text).float().cuda()
 
             optimizer.zero_grad()
             eeg_embeddings = model(eeg)
