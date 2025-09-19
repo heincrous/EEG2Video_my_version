@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-# Import Seq2Seq model from authors' code (wrapper defined in models_original/seq2seq/__init__.py)
+# Import our wrapper
 from models_original.seq2seq import Seq2SeqModel
 
 
@@ -46,13 +46,9 @@ def main():
             eeg, target = eeg.to(device), target.to(device)
 
             optimizer.zero_grad()
-            output = model(eeg, target)
+            output = model(eeg, target)   # Seq2SeqModel forces [B,7,9216]
 
-            # If model returns a tuple, keep first element
-            if isinstance(output, tuple):
-                output = output[0]
-
-            # Flatten target to match output shape
+            # Flatten target to [B,7,9216] to match output
             loss = criterion(output, target.view(output.shape))
             loss.backward()
             optimizer.step()
