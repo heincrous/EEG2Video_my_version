@@ -70,7 +70,7 @@ def main(
     use_8bit_adam: bool = False,
     enable_xformers_memory_efficient_attention: bool = True,
     seed: Optional[int] = None,
-    num_train_epochs: int = 20,          # <— ADD THIS
+    num_train_epochs: int = 5,          # bump this later
     dana_beta: float = 0.3
 ):
     *_, config = inspect.getargvalues(inspect.currentframe())

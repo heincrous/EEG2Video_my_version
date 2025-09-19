@@ -97,17 +97,26 @@ seq2seq_random.eval()
 random_path = run_inference(seq2seq_random, "sample_random")
 
 # ----------------------------------------------------------------
-# Ground truth info for the same EEG segment
-labels = np.load("/content/drive/MyDrive/Data/Raw/meta-info/All_video_label.npy")
-concept_id = labels[0, 0]  # block0, concept0
+# Ground truth info for the same EEG segment (block0, class0, clip0)
+labels = np.load("/content/drive/MyDrive/Data/Raw/meta-info/All_video_label.npy")  # (7,40)
+expanded_labels = np.repeat(labels, 5, axis=1)  # (7,200)
 
+# Which clip we picked above: block=0, concept=0, clip=0 → clip_idx=0
+clip_idx = 0
+concept_id = expanded_labels[0, clip_idx]
+
+# BLIP captions (200 per block)
 with open("/content/drive/MyDrive/Data/Raw/BLIP-caption/1st_10min.txt") as f:
     lines = f.readlines()
-caption = lines[0].strip()
+caption = lines[clip_idx].strip()
 
-print("Inference complete. Saved results:")
-print("Trained:", trained_path)
-print("Random:", random_path)
+# Example: also load metadata (color, motion, etc.)
+color = np.load("/content/drive/MyDrive/Data/Raw/meta-info/All_video_color.npy")[0, clip_idx]
+motion = np.load("/content/drive/MyDrive/Data/Raw/meta-info/All_video_optical_flow_score.npy")[0, clip_idx]
+
 print("\nGround truth for block0,class0,clip0:")
 print("Concept ID:", concept_id)
 print("Caption:", caption)
+print("Color:", color)
+print("Motion score:", motion)
+
