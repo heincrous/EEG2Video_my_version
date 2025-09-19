@@ -10,17 +10,17 @@ from torchvision import transforms
 import clip
 
 from pipelines_original.pipeline_tuneeeg2video import TuneAVideoPipeline
-from models_original.tuneavideo.unet import UNet3DConditionModel
 from models_original.tuneavideo.util import save_videos_grid
 from models_original.seq2seq import Seq2SeqModel
-from models_original.semantic import SemanticPredictor
+from training.train_semantic_predictor import SemanticPredictor
 
 # ----------------------------------------------------------------
+# Load trained semantic predictor
 semantic_model = SemanticPredictor().to("cuda")
 semantic_model.load_state_dict(torch.load(
-    "/content/drive/MyDrive/EEG2Video_checkpoints/semantic.pt", 
+    "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor.pt",
     map_location="cuda"
-))
+)["state_dict"])
 semantic_model.eval()
 # ----------------------------------------------------------------
 
@@ -82,7 +82,7 @@ random_path = run_inference(seq2seq_random, "sample_random")
 
 # # ----------------------------------------------------------------
 # # Evaluation
-# # Load ground truth video (block01/class00/clip0) from SEED-DV
+# # Load ground truth video (adjust indices to match the EEG clip used)
 # gt_video_path = "/content/drive/MyDrive/Data/Raw/Video/1st_10min.mp4"
 # vr = decord.VideoReader(gt_video_path)
 # gt_frames = [Image.fromarray(frame.asnumpy()) for frame in vr.get_batch(range(4))]
@@ -103,7 +103,7 @@ random_path = run_inference(seq2seq_random, "sample_random")
 # random_frames = load_gif_frames(random_path)
 
 # # Resize everything
-# transform = transforms.Compose([transforms.Resize((256,256)), transforms.ToTensor()])
+# transform = transforms.Compose([transforms.Resize((256, 256)), transforms.ToTensor()])
 # gt_frames = [transform(f) for f in gt_frames]
 # trained_frames = [transform(f) for f in trained_frames[:len(gt_frames)]]
 # random_frames = [transform(f) for f in random_frames[:len(gt_frames)]]
@@ -112,8 +112,8 @@ random_path = run_inference(seq2seq_random, "sample_random")
 # def avg_ssim(pred, gt):
 #     vals = []
 #     for p, g in zip(pred, gt):
-#         p_np = p.permute(1,2,0).numpy()
-#         g_np = g.permute(1,2,0).numpy()
+#         p_np = p.permute(1, 2, 0).numpy()
+#         g_np = g.permute(1, 2, 0).numpy()
 #         vals.append(ssim(p_np, g_np, channel_axis=-1, data_range=1.0))
 #     return np.mean(vals)
 
@@ -124,9 +124,11 @@ random_path = run_inference(seq2seq_random, "sample_random")
 # clip_model, clip_preprocess = clip.load("ViT-B/32", device="cuda")
 # def avg_clip_sim(pred, gt):
 #     vals = []
-#     for p,g in zip(pred,gt):
-#         p_emb = clip_model.encode_image((p.unsqueeze(0)*255).byte().cuda())
-#         g_emb = clip_model.encode_image((g.unsqueeze(0)*255).byte().cuda())
+#     for p, g in zip(pred, gt):
+#         p_img = (p.unsqueeze(0) * 255).byte().cuda()
+#         g_img = (g.unsqueeze(0) * 255).byte().cuda()
+#         p_emb = clip_model.encode_image(p_img)
+#         g_emb = clip_model.encode_image(g_img)
 #         vals.append(torch.cosine_similarity(p_emb, g_emb).item())
 #     return np.mean(vals)
 
