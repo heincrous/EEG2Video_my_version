@@ -93,55 +93,55 @@ seq2seq_random = Seq2SeqModel().to("cuda")
 seq2seq_random.eval()
 random_path = run_inference(seq2seq_random, "sample_random")
 
-# ----------------------------------------------------------------
-# Evaluation
-# Load ground truth video (block01/class00/clip0) from SEED-DV
-gt_video_path = "/content/drive/MyDrive/Data/Raw/Video/1st_10min.mp4"
-vr = decord.VideoReader(gt_video_path)
-gt_frames = [Image.fromarray(frame.asnumpy()) for frame in vr.get_batch(range(4))]
+# # ----------------------------------------------------------------
+# # Evaluation
+# # Load ground truth video (block01/class00/clip0) from SEED-DV
+# gt_video_path = "/content/drive/MyDrive/Data/Raw/Video/1st_10min.mp4"
+# vr = decord.VideoReader(gt_video_path)
+# gt_frames = [Image.fromarray(frame.asnumpy()) for frame in vr.get_batch(range(4))]
 
-# Helper to load GIF frames
-def load_gif_frames(path):
-    gif = Image.open(path)
-    frames = []
-    try:
-        while True:
-            frames.append(gif.copy().convert("RGB"))
-            gif.seek(len(frames))  # next frame
-    except EOFError:
-        pass
-    return frames
+# # Helper to load GIF frames
+# def load_gif_frames(path):
+#     gif = Image.open(path)
+#     frames = []
+#     try:
+#         while True:
+#             frames.append(gif.copy().convert("RGB"))
+#             gif.seek(len(frames))  # next frame
+#     except EOFError:
+#         pass
+#     return frames
 
-trained_frames = load_gif_frames(trained_path)
-random_frames = load_gif_frames(random_path)
+# trained_frames = load_gif_frames(trained_path)
+# random_frames = load_gif_frames(random_path)
 
-# Resize everything
-transform = transforms.Compose([transforms.Resize((256,256)), transforms.ToTensor()])
-gt_frames = [transform(f) for f in gt_frames]
-trained_frames = [transform(f) for f in trained_frames[:len(gt_frames)]]
-random_frames = [transform(f) for f in random_frames[:len(gt_frames)]]
+# # Resize everything
+# transform = transforms.Compose([transforms.Resize((256,256)), transforms.ToTensor()])
+# gt_frames = [transform(f) for f in gt_frames]
+# trained_frames = [transform(f) for f in trained_frames[:len(gt_frames)]]
+# random_frames = [transform(f) for f in random_frames[:len(gt_frames)]]
 
-# SSIM
-def avg_ssim(pred, gt):
-    vals = []
-    for p, g in zip(pred, gt):
-        p_np = p.permute(1,2,0).numpy()
-        g_np = g.permute(1,2,0).numpy()
-        vals.append(ssim(p_np, g_np, channel_axis=-1, data_range=1.0))
-    return np.mean(vals)
+# # SSIM
+# def avg_ssim(pred, gt):
+#     vals = []
+#     for p, g in zip(pred, gt):
+#         p_np = p.permute(1,2,0).numpy()
+#         g_np = g.permute(1,2,0).numpy()
+#         vals.append(ssim(p_np, g_np, channel_axis=-1, data_range=1.0))
+#     return np.mean(vals)
 
-print("SSIM (trained vs GT):", avg_ssim(trained_frames, gt_frames))
-print("SSIM (random vs GT):", avg_ssim(random_frames, gt_frames))
+# print("SSIM (trained vs GT):", avg_ssim(trained_frames, gt_frames))
+# print("SSIM (random vs GT):", avg_ssim(random_frames, gt_frames))
 
-# CLIP similarity
-clip_model, clip_preprocess = clip.load("ViT-B/32", device="cuda")
-def avg_clip_sim(pred, gt):
-    vals = []
-    for p,g in zip(pred,gt):
-        p_emb = clip_model.encode_image((p.unsqueeze(0)*255).byte().cuda())
-        g_emb = clip_model.encode_image((g.unsqueeze(0)*255).byte().cuda())
-        vals.append(torch.cosine_similarity(p_emb, g_emb).item())
-    return np.mean(vals)
+# # CLIP similarity
+# clip_model, clip_preprocess = clip.load("ViT-B/32", device="cuda")
+# def avg_clip_sim(pred, gt):
+#     vals = []
+#     for p,g in zip(pred,gt):
+#         p_emb = clip_model.encode_image((p.unsqueeze(0)*255).byte().cuda())
+#         g_emb = clip_model.encode_image((g.unsqueeze(0)*255).byte().cuda())
+#         vals.append(torch.cosine_similarity(p_emb, g_emb).item())
+#     return np.mean(vals)
 
-print("CLIP sim (trained vs GT):", avg_clip_sim(trained_frames, gt_frames))
-print("CLIP sim (random vs GT):", avg_clip_sim(random_frames, gt_frames))
+# print("CLIP sim (trained vs GT):", avg_clip_sim(trained_frames, gt_frames))
+# print("CLIP sim (random vs GT):", avg_clip_sim(random_frames, gt_frames))
