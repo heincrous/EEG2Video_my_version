@@ -8,7 +8,7 @@ from tqdm import tqdm
 from einops import rearrange
 import os
 
-from utils.GT_LABEL import GT_LABEL  # use the shared GT_LABEL
+from utils.gt_label import GT_LABEL  # use the shared GT_LABEL
 
 # ----------------------------
 # Semantic Predictor Network
