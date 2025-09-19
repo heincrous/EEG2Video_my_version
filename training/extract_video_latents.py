@@ -3,8 +3,8 @@ import os
 import numpy as np
 import torch
 from diffusers import AutoencoderKL
-from torchvision.io import read_video
 from torchvision import transforms
+import decord
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -21,7 +21,7 @@ vae.eval()
 
 # Preprocessing transform for frames
 transform = transforms.Compose([
-    transforms.Resize((288, 512)),   # downsample frames
+    transforms.Resize((288, 512)),
     transforms.ToTensor(),
     transforms.Normalize([0.5], [0.5])
 ])
@@ -31,37 +31,32 @@ def encode_frames(frames_tchw):
         lat = vae.encode(frames_tchw).latent_dist.mean
     return lat.cpu().numpy().astype("float32")  # [T,4,36,64]
 
-def extract_clip(video_tensor, fps, t0, t1, F=6):
+def extract_clip(video_reader, fps, t0, t1, F=6):
     """Extract a 2s clip between t0–t1 sec, sample F frames evenly, encode to latents."""
-    T = video_tensor.shape[0]
-    i0 = max(0, min(T-1, int(round(t0 * fps))))
-    i1 = max(0, min(T-1, int(round(t1 * fps))))
+    i0 = int(round(t0 * fps))
+    i1 = int(round(t1 * fps))
     if i1 <= i0:
-        i1 = min(T-1, i0 + max(1, int(round(2 * fps))))  # fallback ~2s span
+        i1 = i0 + int(round(2 * fps))  # fallback ~2s span
 
-    idxs = np.linspace(i0, i1-1, num=F, dtype=int)
+    idxs = np.linspace(i0, i1 - 1, num=F, dtype=int)
 
-    frames = []
-    for i in idxs:
-        frame = video_tensor[i]                       # [H,W,C], uint8
-        frame = transform(frame).unsqueeze(0)         # [1,3,288,512]
-        frames.append(frame)
-    frames = torch.cat(frames, dim=0).to(device)      # [F,3,288,512]
+    frames = video_reader.get_batch(idxs).asnumpy()  # [F,H,W,C]
+    frames = torch.stack([transform(f).unsqueeze(0) for f in frames])  # [F,3,288,512]
+    frames = frames.squeeze(1).to(device)
 
-    latents = encode_frames(frames)                   # [F,4,36,64]
+    latents = encode_frames(frames)  # [F,4,36,64]
     return latents
 
 def process_block(block_idx, fname, F=6):
     path = os.path.join(video_root, fname)
-    video, _, info = read_video(path, pts_unit="sec")
-    fps = info["video_fps"]
+    video_reader = decord.VideoReader(path)
+    fps = video_reader.get_avg_fps()
 
-    # Each block: 40 concepts × 5 clips
     for c in range(40):
-        base = 3 + 13 * c   # skip 3s hint, then 13s per concept
+        base = 3 + 13 * c  # skip 3s hint, then 13s per concept
         for i in range(5):
-            t0, t1 = base + 2*i, base + 2*i + 2
-            lat = extract_clip(video, fps, t0, t1, F=F)  # [F,4,36,64]
+            t0, t1 = base + 2 * i, base + 2 * i + 2
+            lat = extract_clip(video_reader, fps, t0, t1, F=F)
 
             out_dir = os.path.join(out_root, f"block{block_idx+1:02d}", f"class{c:02d}")
             os.makedirs(out_dir, exist_ok=True)
