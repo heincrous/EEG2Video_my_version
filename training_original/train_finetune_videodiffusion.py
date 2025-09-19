@@ -253,6 +253,10 @@ def main(
     for epoch in tqdm(range(first_epoch, num_train_epochs+1)):
         unet.train()
         train_loss = 0.0
+
+        # wrap dataloader with tqdm for step progress
+        progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch}/{num_train_epochs}", leave=False)
+        
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(unet):
                 # Convert videos to latent space
