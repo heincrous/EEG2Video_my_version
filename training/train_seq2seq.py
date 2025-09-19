@@ -45,11 +45,10 @@ def main():
             optimizer.zero_grad()
             output = model(eeg, target)
 
-            # If model returns a tuple, take the first item
             if isinstance(output, tuple):
-                output = output[0]
+                output = output[0]   # unpack tuple
 
-            loss = criterion(output, target.view_as(output))
+            loss = criterion(output, target.view(output.shape))
             loss.backward()
             optimizer.step()
 
