@@ -96,7 +96,7 @@ if __name__ == "__main__":
     )
 
     # Training loop
-    for epoch in tqdm(range(200)):
+    for epoch in tqdm(range(30)): # CHANGED FROM 200 TO 30 TO SPEED UP TESTING
         model.train()
         epoch_loss = 0
         for eeg, text in dataloader:
