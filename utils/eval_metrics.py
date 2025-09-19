@@ -71,10 +71,19 @@ def evaluate(seq2seq_model, name):
         pred_latents = seq2seq_model(eeg_input_4d, dummy_tgt)
 
         # Debug stats
+        print(f"[{name}] pred_latents.shape = {tuple(pred_latents.shape)}")
         print(f"[{name}] latents mean={pred_latents.mean().item():.4f}, std={pred_latents.std().item():.4f}")
 
-        # Fake recon as RGB by reshaping latents (for metrics only, not real decoding)
-        fake_imgs = pred_latents.view(F, 3, 96, 96)  # coarse reshape
+        # Flatten and reshape into fake RGB frames (adaptive)
+        flat = pred_latents.view(F, -1)
+        needed = 3 * 96 * 96
+        if flat.shape[1] < needed:
+            pad = needed - flat.shape[1]
+            flat = torch.nn.functional.pad(flat, (0, pad))
+        flat = flat[:, :needed]
+        fake_imgs = flat.view(F, 3, 96, 96)
+
+        # Normalize 0-1 and resize
         fake_imgs = (fake_imgs - fake_imgs.min()) / (fake_imgs.max() - fake_imgs.min() + 1e-6)
         fake_imgs = torch.nn.functional.interpolate(fake_imgs, size=(288,512), mode="bilinear")
 
