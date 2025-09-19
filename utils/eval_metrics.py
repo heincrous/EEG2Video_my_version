@@ -46,13 +46,9 @@ vr = decord.VideoReader(gt_video)
 clip_idx = 0
 frame_start = clip_idx * 48   # 2s at 24fps
 frame_end = frame_start + 48
-gt_frames = [Image.fromarray(frame.asnumpy()) for frame in vr.get_batch(range(frame_start, frame_end))]
+batch = vr.get_batch(range(frame_start, frame_end)).asnumpy()  # (48,H,W,3)
+gt_frames = [Image.fromarray(f) for f in batch]
 
-transform = T.Compose([
-    T.Resize((288,512)),
-    T.ToTensor()
-])
-gt_tensors = torch.stack([transform(f) for f in gt_frames])  # [48,3,288,512]
 
 # Downsample to match our window count (e.g., 6 frames)
 gt_tensors = gt_tensors[::8]  # every 8th frame -> 6 frames
