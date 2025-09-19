@@ -5,43 +5,44 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import numpy as np
 
-# Import Seq2Seq model (kept in __init__.py for clean import)
+# Import Seq2Seq model
 from models_original.seq2seq import Seq2SeqModel
 
 
 # Dataset: EEG time-window features + per-clip video latents
 class SeedDVEEGDataset(torch.utils.data.Dataset):
-    def __init__(self, eeg_file, latent_root):
+    def __init__(self, eeg_files, latent_root, max_blocks=7):
         super().__init__()
-        # Load one subject's EEG time-window features
-        # Shape: [7,40,5,4,62,100] = block × class × clip × windows × channels × time
-        self.eeg_data = np.load(eeg_file)
+        self.eeg_data_list = [np.load(f) for f in eeg_files]  # one per subject
         self.latent_root = latent_root
+        self.max_blocks = min(max_blocks, self.eeg_data_list[0].shape[0])
 
-        # Build index map, only keep entries that have a latent file
+        # Build index map: (subject_idx, block, class, clip)
         self.index_map = []
-        for b in range(7):       # blocks
-            for c in range(40):  # classes
-                for i in range(5):  # clips
-                    latent_path = os.path.join(
-                        self.latent_root,
-                        f"block{b+1:02d}",
-                        f"class{c:02d}",
-                        f"clip{i}.npy"
-                    )
-                    if os.path.exists(latent_path):
-                        self.index_map.append((b, c, i))
+        for s, eeg_data in enumerate(self.eeg_data_list):
+            for b in range(self.max_blocks):    # restrict to available blocks
+                for c in range(40):            # classes
+                    for i in range(5):         # clips
+                        latent_path = os.path.join(
+                            self.latent_root,
+                            f"block{b+1:02d}",
+                            f"class{c:02d}",
+                            f"clip{i}.npy"
+                        )
+                        if os.path.exists(latent_path):
+                            self.index_map.append((s, b, c, i))
 
-        print(f"Found {len(self.index_map)} aligned EEG-video pairs")
+        print(f"Found {len(self.index_map)} aligned EEG-video pairs "
+              f"(subjects={len(self.eeg_data_list)}, blocks={self.max_blocks})")
 
     def __len__(self):
         return len(self.index_map)
 
     def __getitem__(self, idx):
-        b, c, i = self.index_map[idx]
+        s, b, c, i = self.index_map[idx]
 
         # EEG clip: shape (F,62,100), where F=4 windows per clip
-        eeg_clip = self.eeg_data[b, c, i]  # [4,62,100]
+        eeg_clip = self.eeg_data_list[s][b, c, i]  # [4,62,100]
 
         # Video latents: (6,4,36,64) → flatten to (6,9216)
         latent_path = os.path.join(
@@ -64,10 +65,13 @@ def main():
     model = Seq2SeqModel().to(device)
 
     # Dataset & loader
-    eeg_file = "/content/drive/MyDrive/Data/Processed/EEG_timewindows_100/sub1.npy"
+    eeg_files = [
+        f"/content/drive/MyDrive/Data/Processed/EEG_timewindows_100/sub{i}.npy"
+        for i in range(1, 11)  # subjects 1–10
+    ]
     latent_root = "/content/drive/MyDrive/Data/Processed/Video_latents_per_clip/"
-    dataset = SeedDVEEGDataset(eeg_file, latent_root)
-    dataloader = DataLoader(dataset, batch_size=2, shuffle=True)
+    dataset = SeedDVEEGDataset(eeg_files, latent_root, max_blocks=4)  # only blocks 1–4
+    dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=2)
 
     # Loss & optimizer
     criterion = nn.MSELoss()
@@ -89,7 +93,7 @@ def main():
         print(f"Epoch {epoch+1}: Loss = {loss.item():.4f}")
 
     # Save checkpoint
-    ckpt_path = os.path.join(save_dir, "seq2seq_subset.pt")
+    ckpt_path = os.path.join(save_dir, "seq2seq_sub1to10_blocks1to4.pt")
     torch.save(model.state_dict(), ckpt_path)
     print(f"Checkpoint saved at {ckpt_path}")
 
