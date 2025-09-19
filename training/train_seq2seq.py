@@ -5,7 +5,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import numpy as np
 
-# Import Seq2Seq model (keep __init__.py for this style)
+# Import Seq2Seq model (kept in __init__.py for clean import)
 from models_original.seq2seq import Seq2SeqModel
 
 
@@ -14,14 +14,14 @@ class SeedDVEEGDataset(torch.utils.data.Dataset):
     def __init__(self, eeg_file, latent_root):
         super().__init__()
         # Load one subject's EEG features (7,40,5,62,5)
-        self.eeg_data = np.load(eeg_file)
+        self.eeg_data = np.load(eeg_file)  # shape [7,40,5,62,5]
         self.latent_root = latent_root
 
         # Build index map, only keep entries that have a latent file
         self.index_map = []
-        for b in range(7):
-            for c in range(40):
-                for i in range(5):
+        for b in range(7):       # blocks
+            for c in range(40):  # classes
+                for i in range(5):  # clips
                     latent_path = os.path.join(
                         self.latent_root,
                         f"block{b+1:02d}",
@@ -39,8 +39,8 @@ class SeedDVEEGDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         b, c, i = self.index_map[idx]
 
-        # EEG clip: keep as (5,62,5) instead of flattening
-        eeg_clip = self.eeg_data[b, c, i]  # shape (5,62,5)
+        # EEG clip: shape (5,62,5), already includes 5 slices
+        eeg_clip = self.eeg_data[b, c, i]  # [5,62,5]
 
         # Video latents: (6,4,36,64) → flatten to (6,9216)
         latent_path = os.path.join(
@@ -49,7 +49,7 @@ class SeedDVEEGDataset(torch.utils.data.Dataset):
             f"class{c:02d}",
             f"clip{i}.npy"
         )
-        latents = np.load(latent_path).reshape(6, -1)
+        latents = np.load(latent_path).reshape(6, -1)  # [6,9216]
 
         return torch.from_numpy(eeg_clip).float(), torch.from_numpy(latents).float()
 
@@ -75,7 +75,8 @@ def main():
     # Training loop
     for epoch in range(2):  # quick test run
         for eeg, target in dataloader:
-            eeg, target = eeg.to(device), target.to(device)  # eeg: [B,5,62,5], target: [B,6,9216]
+            # eeg: [B,5,62,5], target: [B,6,9216]
+            eeg, target = eeg.to(device), target.to(device)
 
             optimizer.zero_grad()
             output = model(eeg, target)   # model must return [B,6,9216]
