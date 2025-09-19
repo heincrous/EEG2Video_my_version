@@ -78,7 +78,7 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
     # Training loop
-    for epoch in range(50):  # quick test run
+    for epoch in range(10):  # quick test run
         for eeg, target in dataloader:
             # eeg: [B,F,62,100], target: [B,6,9216]
             eeg, target = eeg.to(device), target.to(device)
