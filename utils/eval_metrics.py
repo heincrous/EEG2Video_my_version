@@ -12,19 +12,17 @@ from models_original.seq2seq import Seq2SeqModel
 from training_original.train_semantic_predictor import SemanticPredictor
 
 # ----------------------------------------------------------------
-# Load EEG features (subject1, block0, class0, all clips)
+# Load EEG features (subject1, block0, class0, all 5 clips)
 eeg_file = "/content/drive/MyDrive/Data/Processed/EEG_timewindows_100/sub1.npy"
 eeg_features = np.load(eeg_file)  # [blocks, classes, clips, 4, 62, 100]
 block_id, class_id = 0, 0
 eeg_clips = eeg_features[block_id, class_id]  # shape [5, 4, 62, 100]
 
-# Prepare EEG
-eeg_input_4d = torch.from_numpy(eeg_clips).float().cuda()  # [5,4,62,100]
-eeg_flat = rearrange(eeg_input_4d, "b f c t -> b (f c t)")
+# ----------------------------------------------------------------
+# Prepare semantic predictor
+eeg_flat = rearrange(torch.from_numpy(eeg_clips[0]).unsqueeze(0).float(), "b f c t -> b (f c t)")
 input_dim = eeg_flat.shape[1]
 
-# ----------------------------------------------------------------
-# Semantic predictor
 semantic_model = SemanticPredictor(input_dim=input_dim).to("cuda")
 semantic_model.load_state_dict(torch.load(
     "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor_full.pt",
@@ -58,12 +56,12 @@ clip_model, clip_preprocess = clip.load("ViT-B/32", device="cuda")
 
 def evaluate(seq2seq_model, name, eeg_clip, clip_idx):
     with torch.no_grad():
-        B = eeg_clip.size(0)  # number of clips (1 here)
-        F = eeg_clip.size(1)  # number of windows
+        B, F, C, Tt = eeg_clip.shape  # (1,F,62,100)
         dummy_tgt = torch.zeros((B, F, 4, 36, 64), device="cuda")
-        pred_latents = seq2seq_model(eeg_clip.unsqueeze(0), dummy_tgt)  # add batch dim
+        pred_latents = seq2seq_model(eeg_clip, dummy_tgt)
 
-        print(f"[{name}] clip {clip_idx} -> shape={tuple(pred_latents.shape)}, mean={pred_latents.mean().item():.4f}, std={pred_latents.std().item():.4f}")
+        print(f"[{name}] clip {clip_idx} -> shape={tuple(pred_latents.shape)}, "
+              f"mean={pred_latents.mean().item():.4f}, std={pred_latents.std().item():.4f}")
 
         # Flatten + fake RGB
         flat = pred_latents.view(F, -1)
@@ -110,8 +108,9 @@ trained_scores = []
 random_scores = []
 
 for i in range(5):
-    trained_scores.append(evaluate(seq2seq_trained, "Trained", eeg_input_4d[i], i))
-    random_scores.append(evaluate(seq2seq_random, "Random", eeg_input_4d[i], i))
+    eeg_clip = torch.from_numpy(eeg_clips[i]).unsqueeze(0).float().cuda()  # (1,F,62,100)
+    trained_scores.append(evaluate(seq2seq_trained, "Trained", eeg_clip, i))
+    random_scores.append(evaluate(seq2seq_random, "Random", eeg_clip, i))
 
 trained_ssim = np.mean([s for s,_ in trained_scores])
 trained_sim = np.mean([c for _,c in trained_scores])
