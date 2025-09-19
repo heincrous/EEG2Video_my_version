@@ -39,7 +39,7 @@ validation_data:
 
 learning_rate: 3e-5
 train_batch_size: 1
-num_train_epochs: 20        # <— NEW, replaces hardcoded value in script
+num_train_epochs: 5        # bump later
 checkpointing_steps: 500
 validation_steps: 500
 

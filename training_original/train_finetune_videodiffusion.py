@@ -25,7 +25,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 
 from models_original.tuneavideo.unet import UNet3DConditionModel
 from models_original.tuneavideo.dataset import TuneAVideoDataset, TuneMultiVideoDataset
-from pipelines_original.pipeline_tuneeeg2video import TuneAVideoPipeline
+from pipelines_original.pipeline_tuneavideo import TuneAVideoPipeline
 from models_original.tuneavideo.util import save_videos_grid, ddim_inversion
 from einops import rearrange
 
