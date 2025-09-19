@@ -101,6 +101,9 @@ print(">>> latents final shape:", latents.shape)
 # Inference loop (2 samples for testing)
 print(">>> Starting inference loop")
 for i in range(2):
+    # Apply semantic model: [B,310] -> [B,77,768]
+    eeg_embed = semantic_model(eeg_test[i:i+1, ...])
+    
     video = pipe(
         semantic_model,                # stub semantic encoder
         eeg_test[i:i+1, ...],
