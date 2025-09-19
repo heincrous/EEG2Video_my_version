@@ -165,6 +165,7 @@ def main(
     # # Get the training dataset
     #train_dataset = TuneAVideoDataset(**train_data)
     train_dataset = TuneMultiVideoDataset(**train_data)
+    print("First 10 video paths:", train_dataset.video_path[:10])
     # # video_name_list = ['1st_10min', '2nd_10min', '3rd_10min', '4th_10min', '5th_10min']
     # #video_name_list = ['1st_10min']
     # video_path = './data/final_data/video'
