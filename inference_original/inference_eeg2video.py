@@ -11,7 +11,7 @@ import numpy as np
 
 # ----------------------------------------------------------------
 # Load Seq2Seq checkpoint
-CKPT_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_dummy.pt"
+CKPT_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_real.pt"
 seq2seq = Seq2SeqModel().to("cuda")
 seq2seq.load_state_dict(torch.load(CKPT_PATH, map_location="cuda"))
 seq2seq.eval()

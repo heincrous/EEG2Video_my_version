@@ -15,7 +15,12 @@ def get_files_names_in_directory(directory):
             files_names.append(filename)
     return files_names
 
-sub_list = get_files_names_in_directory("./data/Rawf_200Hz/")
+# Paths
+input_dir = "/content/drive/MyDrive/Data/Raw/EEG/"
+output_dir = "/content/drive/MyDrive/Data/Processed/EEG_segments/"
+os.makedirs(output_dir, exist_ok=True)
+
+sub_list = get_files_names_in_directory(input_dir)
 
 for subname in sub_list:
     npydata = np.load('./data/Rawf_200Hz/' + subname)
