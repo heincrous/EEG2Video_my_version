@@ -16,6 +16,16 @@ seq2seq = Seq2SeqModel().to("cuda")
 seq2seq.load_state_dict(torch.load(CKPT_PATH, map_location="cuda"))
 seq2seq.eval()
 print("Loaded Seq2Seq checkpoint:", CKPT_PATH)
+
+# Dummy semantic model (EEG -> [B,77,768])
+class DummySemantic(torch.nn.Module):
+    def forward(self, x):
+        b = x.size(0)
+        expanded = torch.zeros((b, 77*768), device=x.device)
+        expanded[:, :min(x.shape[1], 77*768)] = x[:, :min(x.shape[1], 77*768)]
+        return expanded.view(b, 77, 768)
+
+semantic_model = DummySemantic().to("cuda")
 # ----------------------------------------------------------------
 
 # ----------------------------------------------------------------
@@ -92,7 +102,7 @@ print(">>> latents final shape:", latents.shape)
 print(">>> Starting inference loop")
 for i in range(2):
     video = pipe(
-        seq2seq,
+        semantic_model,                # stub semantic encoder
         eeg_test[i:i+1, ...],
         latents=latents,
         video_length=6,
