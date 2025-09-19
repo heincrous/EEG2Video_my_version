@@ -34,10 +34,17 @@ def extract_time_windows(input_file, output_file, window_size=100, step_size=100
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", type=str, required=True, help="Path to segmented EEG .npy file")
-    parser.add_argument("--output", type=str, required=True, help="Path to save time-windowed EEG .npy file")
+    parser.add_argument("--input_dir", type=str, required=True, help="Folder containing segmented EEG .npy files")
+    parser.add_argument("--output_dir", type=str, required=True, help="Folder to save time-windowed EEG .npy files")
     parser.add_argument("--window_size", type=int, default=100, help="Window length (samples)")
     parser.add_argument("--step_size", type=int, default=100, help="Step size (samples)")
     args = parser.parse_args()
 
-    extract_time_windows(args.input, args.output, args.window_size, args.step_size)
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # Process all subject files in input_dir
+    for fname in sorted(os.listdir(args.input_dir)):
+        if fname.endswith(".npy") and fname.startswith("sub"):
+            input_file = os.path.join(args.input_dir, fname)
+            output_file = os.path.join(args.output_dir, fname)
+            extract_time_windows(input_file, output_file, args.window_size, args.step_size)

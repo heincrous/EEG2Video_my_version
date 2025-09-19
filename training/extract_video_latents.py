@@ -50,12 +50,12 @@ def extract_clip(video_reader, fps, t0, t1, F=6):
     latents = encode_frames(frames_torch)  # [F,4,36,64]
     return latents
 
-def process_block(block_idx, fname, F=6, max_concepts=5):
+def process_block(block_idx, fname, F=6, max_concepts=40):
     path = os.path.join(video_root, fname)
     video_reader = decord.VideoReader(path)
     fps = video_reader.get_avg_fps()
 
-    for c in range(max_concepts):  # only first 5 concepts
+    for c in range(max_concepts):  # all 40 concepts
         base = 3 + 13 * c
         for i in range(5):
             t0, t1 = base + 2 * i, base + 2 * i + 2
@@ -66,14 +66,14 @@ def process_block(block_idx, fname, F=6, max_concepts=5):
             out_path = os.path.join(out_dir, f"clip{i}.npy")
             np.save(out_path, lat)
 
-    print(f"Finished block {block_idx+1} (subset): saved latents to {out_root}")
+    print(f"✅ Finished block {block_idx+1}: saved {max_concepts*5} clips to {out_root}")
 
 def main():
     files = {0: "1st_10min.mp4"}  # only first block
     for b, fname in files.items():
         print(f"Processing block {b+1}: {fname}")
-        process_block(b, fname, F=6, max_concepts=5)
-    print("✅ Subset processed. Latents saved per clip.")
+        process_block(b, fname, F=6, max_concepts=40)
+    print("✅ All requested blocks processed. Latents saved per clip.")
 
 if __name__ == "__main__":
     main()
