@@ -4,8 +4,16 @@ output_dir: "/content/drive/MyDrive/EEG2Video_checkpoints/videodiffusion"
 train_data:
   video_path:
     - "/content/drive/MyDrive/Data/Raw/Video/1st_10min.mp4"
+    - "/content/drive/MyDrive/Data/Raw/Video/2nd_10min.mp4"
+    - "/content/drive/MyDrive/Data/Raw/Video/3rd_10min.mp4"
+    - "/content/drive/MyDrive/Data/Raw/Video/4th_10min.mp4"
+    # add 5th–7th if processed
   prompt:
-    - "/content/drive/MyDrive/Data/Raw/BLIP-caption/block01.txt"
+    - "/content/drive/MyDrive/Data/Raw/BLIP-caption/1st_10min.txt"
+    - "/content/drive/MyDrive/Data/Raw/BLIP-caption/2nd_10min.txt"
+    - "/content/drive/MyDrive/Data/Raw/BLIP-caption/3rd_10min.txt"
+    - "/content/drive/MyDrive/Data/Raw/BLIP-caption/4th_10min.txt"
+    # add 5th–7th captions as needed
   n_sample_frames: 6
   width: 512
   height: 288

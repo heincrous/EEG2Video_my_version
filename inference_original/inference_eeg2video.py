@@ -1,4 +1,4 @@
-# EEG2Video Inference (trained vs random)
+# EEG2Video Inference (trained vs random, with ground truth info)
 
 import os
 import torch
@@ -15,19 +15,19 @@ from models_original.seq2seq import Seq2SeqModel
 from training_original.train_semantic_predictor import SemanticPredictor
 
 # ----------------------------------------------------------------
-# Load EEG features (example: first subject)
+# Load EEG features (example: subject1, block0, class0, clip0)
 eeg_file = "/content/drive/MyDrive/Data/Processed/EEG_timewindows_100/sub1.npy"
 eeg_features = np.load(eeg_file)  # [blocks, classes, clips, 4, 62, 100]
 eeg_clip = eeg_features[0, 0, 0]  # block0, class0, clip0
 
 # Prepare EEG
-eeg_input_4d = torch.from_numpy(eeg_clip).unsqueeze(0).float().cuda()  # [1, 4, 62, 100] for Seq2Seq
-eeg_flat = rearrange(eeg_input_4d, "b f c t -> b (f c t)")             # [1, features] for Semantic predictor
+eeg_input_4d = torch.from_numpy(eeg_clip).unsqueeze(0).float().cuda()  # [1, 4, 62, 100]
+eeg_flat = rearrange(eeg_input_4d, "b f c t -> b (f c t)")             # [1, features]
 input_dim = eeg_flat.shape[1]
 # ----------------------------------------------------------------
 
 # ----------------------------------------------------------------
-# Load trained semantic predictor (new full version)
+# Load trained semantic predictor
 semantic_model = SemanticPredictor(input_dim=input_dim).to("cuda")
 semantic_model.load_state_dict(torch.load(
     "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor_full.pt",
@@ -57,18 +57,18 @@ pipe.enable_vae_slicing()
 def run_inference(seq2seq_model, save_name):
     with torch.no_grad():
         B = eeg_input_4d.size(0)
-        F = eeg_input_4d.size(1)  # number of frames
+        F = eeg_input_4d.size(1)  # number of windows
         dummy_tgt = torch.zeros((B, F, 4, 36, 64), device="cuda")
 
-        # Seq2Seq expects [B, F, C, T]
-        pred_latents = seq2seq_model(eeg_input_4d, dummy_tgt)  # [B, F, 9216]
+        # Seq2Seq forward: [B,F,62,100] -> [B,F,9216]
+        pred_latents = seq2seq_model(eeg_input_4d, dummy_tgt)
         latents = pred_latents.view(B, F, 4, 36, 64).permute(0, 2, 1, 3, 4).contiguous()
 
-        # Semantic predictor now outputs [B, 77, 768]
+        # Semantic predictor: [B, features] -> [B,77,768]
         eeg_embed = semantic_model(eeg_flat)
 
         video = pipe(
-            model=None,              # unused by pipeline
+            model=None,   # unused in our wrapper
             eeg=eeg_embed,
             video_length=F,
             height=288,
@@ -85,7 +85,7 @@ def run_inference(seq2seq_model, save_name):
 
 # ----------------------------------------------------------------
 # Run with trained Seq2Seq
-CKPT_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_subset.pt"
+CKPT_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_sub1to10_blocks1to4.pt"
 seq2seq_trained = Seq2SeqModel().to("cuda")
 seq2seq_trained.load_state_dict(torch.load(CKPT_PATH, map_location="cuda"))
 seq2seq_trained.eval()
@@ -96,6 +96,18 @@ seq2seq_random = Seq2SeqModel().to("cuda")
 seq2seq_random.eval()
 random_path = run_inference(seq2seq_random, "sample_random")
 
+# ----------------------------------------------------------------
+# Ground truth info for the same EEG segment
+labels = np.load("/content/drive/MyDrive/Data/Raw/meta-info/All_video_label.npy")
+concept_id = labels[0,0,0]
+
+with open("/content/drive/MyDrive/Data/Raw/BLIP-caption/1st_10min.txt") as f:
+    lines = f.readlines()
+caption = lines[0].strip()
+
 print("Inference complete. Saved results:")
 print("Trained:", trained_path)
 print("Random:", random_path)
+print("\nGround truth for block0,class0,clip0:")
+print("Concept ID:", concept_id)
+print("Caption:", caption)
