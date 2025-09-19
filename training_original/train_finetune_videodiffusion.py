@@ -35,7 +35,6 @@ from models_original.dana.dana import Diffusion
 
 os.environ["PYTORCH_CUDA_ALLOC_conf"] = "max_split_size_mb:24"
 
-# Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.10.0.dev0")
 
 logger = get_logger(__name__, log_level="INFO")
@@ -163,7 +162,7 @@ def main(
 
     # Validation pipeline
     validation_pipeline = TuneAVideoPipeline(
-        vae=vae, text_encoder=text_encoder, tokenizer=tokenizer, unet=unet,
+        vae=vae, tokenizer=tokenizer, unet=unet,
         scheduler=DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
     )
     validation_pipeline.enable_vae_slicing()
@@ -216,7 +215,6 @@ def main(
 
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(unet):
-                # VAE encode to latent space
                 pixel_values = batch["pixel_values"].to(weight_dtype)
                 video_length = pixel_values.shape[1]
                 pixel_values = rearrange(pixel_values, "b f c h w -> (b f) c h w")
@@ -225,20 +223,17 @@ def main(
                 latents = latents * 0.18215
 
                 # --- Apply DANA noise ---
-                dynamic_beta = 0.3  # placeholder, can vary by meta-info
+                dynamic_beta = 0.3
                 latents = dana.forward(latents, dynamic_beta)
                 # ------------------------
 
-                # Add scheduler noise
                 noise = torch.randn_like(latents)
                 bsz = latents.shape[0]
                 timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (bsz,), device=latents.device).long()
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-                # Conditioning
                 encoder_hidden_states = text_encoder(batch["prompt_ids"])[0]
 
-                # Target
                 if noise_scheduler.prediction_type == "epsilon":
                     target = noise
                 elif noise_scheduler.prediction_type == "v_prediction":
@@ -246,7 +241,6 @@ def main(
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.prediction_type}")
 
-                # Loss
                 model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
@@ -265,7 +259,6 @@ def main(
                 accelerator.log({"train_loss": train_loss}, step=global_step)
                 train_loss = 0.0
 
-        # Save sample every 10 epochs
         if epoch % 10 == 0 and accelerator.is_main_process:
             samples = []
             generator = torch.Generator(device=latents.device).manual_seed(seed)
@@ -283,7 +276,6 @@ def main(
             unet = accelerator.unwrap_model(unet)
             pipeline = TuneAVideoPipeline.from_pretrained(
                 pretrained_model_path,
-                text_encoder=text_encoder,
                 vae=vae,
                 unet=unet,
             )
@@ -294,7 +286,6 @@ def main(
         unet = accelerator.unwrap_model(unet)
         pipeline = TuneAVideoPipeline.from_pretrained(
             pretrained_model_path,
-            text_encoder=text_encoder,
             vae=vae,
             unet=unet,
         )
