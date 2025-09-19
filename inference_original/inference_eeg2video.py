@@ -20,10 +20,10 @@ eeg_file = "/content/drive/MyDrive/Data/Processed/EEG_timewindows_100/sub1.npy"
 eeg_features = np.load(eeg_file)  # [blocks, classes, clips, 4, 62, 100]
 eeg_clip = eeg_features[0, 0, 0]  # block0, class0, clip0
 
-# Reshape EEG same way as in training
-eeg_input = torch.from_numpy(eeg_clip).unsqueeze(0).float().cuda()  # [1, 4, 62, 100]
-eeg_input = rearrange(eeg_input, "b d c t -> b (d c t)")  # flatten to [1, features]
-input_dim = eeg_input.shape[1]
+# Prepare EEG
+eeg_input_4d = torch.from_numpy(eeg_clip).unsqueeze(0).float().cuda()  # [1, 4, 62, 100] for Seq2Seq
+eeg_flat = rearrange(eeg_input_4d, "b f c t -> b (f c t)")             # [1, features] for Semantic predictor
+input_dim = eeg_flat.shape[1]
 # ----------------------------------------------------------------
 
 # ----------------------------------------------------------------
@@ -56,18 +56,20 @@ pipe.enable_vae_slicing()
 
 def run_inference(seq2seq_model, save_name):
     with torch.no_grad():
-        B = eeg_input.size(0)
-        F = 4  # number of frames
+        B = eeg_input_4d.size(0)
+        F = eeg_input_4d.size(1)  # number of frames
         dummy_tgt = torch.zeros((B, F, 4, 36, 64), device="cuda")
 
-        pred_latents = seq2seq_model(eeg_input, dummy_tgt)  # [B,F,9216]
+        # Seq2Seq expects [B, F, C, T]
+        pred_latents = seq2seq_model(eeg_input_4d, dummy_tgt)  # [B, F, 9216]
         latents = pred_latents.view(B, F, 4, 36, 64).permute(0, 2, 1, 3, 4).contiguous()
 
-        eeg_embed = semantic_model(eeg_input)
+        # Semantic predictor expects flat [B, features]
+        eeg_embed = semantic_model(eeg_flat)
 
         video = pipe(
             model=None,              # unused by pipeline
-            eeg=eeg_embed,           # semantic embeddings go here
+            eeg=eeg_embed,           # semantic embeddings
             video_length=F,
             height=288,
             width=512,
