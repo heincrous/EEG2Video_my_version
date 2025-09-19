@@ -6,6 +6,7 @@ import numpy as np
 from einops import rearrange
 
 from diffusers import AutoencoderKL, DDIMScheduler
+from transformers import CLIPTokenizer, CLIPTextModel
 
 from models_original.tuneavideo.unet import UNet3DConditionModel
 from pipelines_original.pipeline_tuneeeg2video import TuneAVideoPipeline
@@ -43,8 +44,14 @@ vae = AutoencoderKL.from_pretrained(DIFFUSION_CKPT, subfolder="vae")
 unet = UNet3DConditionModel.from_pretrained_2d(DIFFUSION_CKPT, subfolder="unet")
 scheduler = DDIMScheduler.from_pretrained(DIFFUSION_CKPT, subfolder="scheduler")
 
+# tokenizer + text encoder are mandatory
+tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
+text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14")
+
 pipe = TuneAVideoPipeline(
     vae=vae,
+    text_encoder=text_encoder,
+    tokenizer=tokenizer,
     unet=unet,
     scheduler=scheduler
 ).to("cuda")
@@ -63,8 +70,8 @@ def run_inference(seq2seq_model, save_name):
         eeg_embed = semantic_model(eeg_input)
 
         video = pipe(
-            None,
-            eeg_embed,
+            prompt=None,
+            eeg_embeds=eeg_embed,
             latents=latents,
             video_length=F,
             height=288,
