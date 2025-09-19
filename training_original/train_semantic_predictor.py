@@ -8,7 +8,7 @@ from tqdm import tqdm
 from einops import rearrange
 import os
 
-from utils.gt_label import GT_label  # 🔹 use the shared GT_label
+from utils.gt_label import GT_label  # use the shared GT_label
 
 # ----------------------------
 # Semantic Predictor Network
@@ -80,7 +80,7 @@ if __name__ == "__main__":
     # Flatten text embeddings
     Text = []
     for i in range(6):
-        Text.append(text_embedding[:150, ...])  # 🔹 adjust if needed
+        Text.append(text_embedding[:150, ...])  # adjust if needed
     Text = np.concatenate(Text)
     Text = torch.from_numpy(Text).reshape(Text.shape[0], -1)
 
@@ -117,4 +117,4 @@ if __name__ == "__main__":
     # Save checkpoint
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     torch.save({"state_dict": model.state_dict()}, save_path)
-    print(f"✅ Semantic predictor saved to {save_path}")
+    print(f"Semantic predictor saved to {save_path}")
