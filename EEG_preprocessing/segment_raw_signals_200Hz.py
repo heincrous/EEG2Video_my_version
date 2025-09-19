@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import re
 from tqdm import tqdm
 
 # Segment EEG data into 2-second windows
@@ -9,7 +10,9 @@ from tqdm import tqdm
 fre = 200
 
 def get_files_names_in_directory(directory):
-    return [f for f in os.listdir(directory) if f.endswith(".npy")]
+    files = [f for f in os.listdir(directory) if f.endswith(".npy")]
+    files.sort(key=lambda x: int(re.search(r'\d+', x).group()))
+    return files
 
 # Input/output paths on Google Drive
 input_dir = "/content/drive/MyDrive/Data/Raw/EEG/"
