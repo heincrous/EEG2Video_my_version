@@ -9,11 +9,10 @@ from models_original.seq2seq import Seq2SeqModel
 
 # Dummy dataset to mimic EEG → latent frames
 class DummyEEGDataset(torch.utils.data.Dataset):
-    def __init__(self, n_samples=100, frames=7, n_channels=62, timesteps=100):
+    def __init__(self, n_samples=100, frames=7, n_channels=62, timesteps=100, n_classes=13):
         super().__init__()
         self.data = torch.randn(n_samples, frames, n_channels, timesteps)  # [B,7,62,100]
-        # Authors expect targets shaped like [frames, 4, 36, 64] = 9216
-        self.targets = torch.randn(n_samples, frames, 4, 36, 64)
+        self.targets = torch.randint(0, n_classes, (n_samples,))          # class labels
 
     def __len__(self):
         return len(self.data)
@@ -39,16 +38,17 @@ def main():
 
     # Training loop
     for epoch in range(2):  # keep small for testing
+        criterion = nn.CrossEntropyLoss()
+
         for eeg, target in dataloader:
             eeg, target = eeg.to(device), target.to(device)
 
             optimizer.zero_grad()
-            output = model(eeg, target)
-
+            output = model(eeg, eeg)  # pass eeg twice (src & dummy tgt), since it expects both
             if isinstance(output, tuple):
-                output = output[0]   # unpack tuple
+                output = output[0]
 
-            loss = criterion(output, target.view(output.shape))
+            loss = criterion(output, target)
             loss.backward()
             optimizer.step()
 
