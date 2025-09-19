@@ -17,15 +17,13 @@ class SemanticPredictor(nn.Module):
     def __init__(self, input_dim):
         super(SemanticPredictor, self).__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(input_dim, 10000),
+            nn.Linear(input_dim, 4096),
             nn.ReLU(),
-            nn.Linear(10000, 10000),
+            nn.Linear(4096, 4096),
             nn.ReLU(),
-            nn.Linear(10000, 10000),
+            nn.Linear(4096, 4096),
             nn.ReLU(),
-            nn.Linear(10000, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, 77 * 768)  # full CLIP hidden states
+            nn.Linear(4096, 77 * 768)  # full CLIP hidden states
         )
 
     def forward(self, eeg):
@@ -69,18 +67,18 @@ if __name__ == "__main__":
     # Flatten EEG
     EEG = []
     for i in range(6):  # use first 6 blocks
-        indices = [list(GT_LABEL[i]).index(element) for element in range(1, 41)]  # classes 1–40
+        indices = [list(GT_LABEL[i]).index(element) for element in range(1, 41)]
         chosen_eeg = eegdata[i][indices, :]
         EEG.append(chosen_eeg)
     EEG = np.stack(EEG, axis=0)
     EEG = torch.from_numpy(EEG)
-    EEG = rearrange(EEG, "a b c d e f -> (a b c) d (e f)")  # [N, d, f]
-    EEG = EEG.reshape(EEG.shape[0], -1)  # flatten to [N, features]
+    EEG = rearrange(EEG, "a b c d e f -> (a b c) d (e f)")
+    EEG = EEG.reshape(EEG.shape[0], -1)  # [N, features]
     EEG = EEG.numpy()
 
     print("EEG after reshape:", EEG.shape)
 
-    # Flatten text embeddings to match predictor output
+    # Flatten text embeddings
     Text = text_embedding[:EEG.shape[0], ...]   # [N, 77, 768]
     Text = Text.reshape(Text.shape[0], -1)      # [N, 59136]
 
@@ -88,7 +86,7 @@ if __name__ == "__main__":
 
     # Build dataset + dataloader
     dataset = Dataset(EEG, Text)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=8, shuffle=True)  # smaller batch size
 
     # Model
     model = SemanticPredictor(input_dim=EEG.shape[1]).cuda()
@@ -98,13 +96,13 @@ if __name__ == "__main__":
     )
 
     # Training loop
-    for epoch in tqdm(range(30)):  # shorten to 30 epochs for testing
+    for epoch in tqdm(range(30)):  # 30 epochs for quick test
         model.train()
         epoch_loss = 0
         for eeg, text in dataloader:
             eeg, text = eeg.cuda(), text.cuda()
             optimizer.zero_grad()
-            eeg_embeddings = model(eeg).reshape(text.shape)  # reshape to [B, 59136]
+            eeg_embeddings = model(eeg).reshape(text.shape)  # [B, 59136]
             loss = F.mse_loss(eeg_embeddings, text)
             loss.backward()
             optimizer.step()
