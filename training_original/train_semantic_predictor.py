@@ -1,14 +1,14 @@
-import torch
+import os
 import numpy as np
+import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from sklearn import preprocessing
-import torch.nn.functional as F
 from tqdm import tqdm
 from einops import rearrange
-import os
 
-from utils.gt_label import GT_LABEL  # use the shared GT_LABEL
+from utils.gt_label import GT_LABEL  # shared GT_LABEL
 
 # ----------------------------
 # Semantic Predictor Network
@@ -25,12 +25,13 @@ class SemanticPredictor(nn.Module):
             nn.ReLU(),
             nn.Linear(10000, 10000),
             nn.ReLU(),
-            nn.Linear(10000, 512)  # match your current text embeddings
+            nn.Linear(10000, 77 * 768)  # full CLIP hidden states
         )
 
     def forward(self, eeg):
-        return self.mlp(eeg)  # shape: (batch, 512)
-
+        out = self.mlp(eeg)              # [B, 59136]
+        out = out.view(-1, 77, 768)      # [B, 77, 768]
+        return out
 
 # ----------------------------
 # Dataset
@@ -49,23 +50,23 @@ class Dataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         return self.eeg[idx], self.text[idx]
 
-
 # ----------------------------
 # Training Loop
 # ----------------------------
 if __name__ == "__main__":
-    # Paths (update for your Drive)
+    # Paths
     eeg_data_path = "/content/drive/MyDrive/Data/Processed/EEG_timewindows_100/sub1.npy"
-    text_embedding_path = "/content/drive/MyDrive/Data/Raw/text_embedding.npy"
-    save_path = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor.pt"
+    text_embedding_path = "/content/drive/MyDrive/Data/Raw/text_embeddings_full.npy"
+    save_path = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor_full.pt"
 
     # Load data
-    eegdata = np.load(eeg_data_path)  # shape: [blocks, classes, clips, …]
-    text_embedding = np.load(text_embedding_path)  # shape: [samples, 512]
+    eegdata = np.load(eeg_data_path)  # shape: [blocks, classes, clips, 4, 62, 100]
+    text_embedding = np.load(text_embedding_path)  # shape: [samples, 77, 768]
 
     print("EEG raw:", eegdata.shape)
     print("Text embedding raw:", text_embedding.shape)
 
+    # Flatten EEG
     EEG = []
     for i in range(6):  # use first 6 blocks
         indices = [list(GT_LABEL[i]).index(element) for element in range(1, 41)]  # classes 1–40
@@ -75,12 +76,13 @@ if __name__ == "__main__":
     EEG = torch.from_numpy(EEG)
     EEG = rearrange(EEG, "a b c d e f -> (a b c) d (e f)")  # [N, d, f]
     EEG = EEG.reshape(EEG.shape[0], -1)  # flatten to [N, features]
+    EEG = EEG.numpy()
 
     print("EEG after reshape:", EEG.shape)
 
-    # Match text embeddings to EEG sample count
-    Text = text_embedding[:EEG.shape[0], ...]
-    Text = torch.from_numpy(Text).reshape(Text.shape[0], -1)
+    # Flatten text embeddings to match predictor output
+    Text = text_embedding[:EEG.shape[0], ...]   # [N, 77, 768]
+    Text = Text.reshape(Text.shape[0], -1)      # [N, 59136]
 
     print("Text after reshape:", Text.shape)
 
@@ -96,13 +98,13 @@ if __name__ == "__main__":
     )
 
     # Training loop
-    for epoch in tqdm(range(30)): # CHANGED FROM 200 TO 30 TO SPEED UP TESTING
+    for epoch in tqdm(range(30)):  # shorten to 30 epochs for testing
         model.train()
         epoch_loss = 0
         for eeg, text in dataloader:
             eeg, text = eeg.cuda(), text.cuda()
             optimizer.zero_grad()
-            eeg_embeddings = model(eeg)
+            eeg_embeddings = model(eeg).reshape(text.shape)  # reshape to [B, 59136]
             loss = F.mse_loss(eeg_embeddings, text)
             loss.backward()
             optimizer.step()

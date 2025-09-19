@@ -1,5 +1,3 @@
-# training/generate_text_embeddings.py
-
 import os
 import numpy as np
 import torch
@@ -12,7 +10,7 @@ def main():
     tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
     text_model = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14").to(device)
 
-    # Use the actual filenames in your Drive
+    # Captions per block
     caption_files = [
         "1st_10min.txt",
         "2nd_10min.txt",
@@ -26,7 +24,7 @@ def main():
     base_dir = "/content/drive/MyDrive/Data/Raw/BLIP-caption"
     all_embeddings = []
 
-    for fname in caption_files:
+    for idx, fname in enumerate(caption_files, start=1):
         caption_file = os.path.join(base_dir, fname)
         if not os.path.exists(caption_file):
             print(f"Warning: {caption_file} not found, skipping")
@@ -60,6 +58,11 @@ def main():
         embeddings = np.concatenate(embeddings, axis=0)  # [num_captions, 77, 768]
         all_embeddings.append(embeddings)
 
+        # Save per-block embeddings
+        block_save_path = f"/content/drive/MyDrive/Data/Raw/text_embeddings_block{idx:02d}.npy"
+        np.save(block_save_path, embeddings)
+        print(f"Saved block {idx} embeddings to {block_save_path}")
+
     if not all_embeddings:
         raise RuntimeError("No caption files found. Check BLIP-caption folder.")
 
@@ -67,10 +70,10 @@ def main():
     all_embeddings = np.concatenate(all_embeddings, axis=0)  # [N, 77, 768]
     print("Final embeddings shape:", all_embeddings.shape)
 
-    # Save
-    save_path = "/content/drive/MyDrive/Data/Raw/text_embeddings_full.npy"
-    np.save(save_path, all_embeddings)
-    print(f"Saved embeddings to {save_path}")
+    # Save combined file
+    full_save_path = "/content/drive/MyDrive/Data/Raw/text_embeddings_full.npy"
+    np.save(full_save_path, all_embeddings)
+    print(f"Saved all embeddings to {full_save_path}")
 
 if __name__ == "__main__":
     main()

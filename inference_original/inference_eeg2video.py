@@ -12,7 +12,7 @@ from models_original.tuneavideo.unet import UNet3DConditionModel
 from pipelines_original.pipeline_tuneeeg2video import TuneAVideoPipeline
 from models_original.tuneavideo.util import save_videos_grid
 from models_original.seq2seq import Seq2SeqModel
-from training_original.train_semantic_predictor import SemanticPredictor
+from training_original.train_semantic_predictor_full import SemanticPredictor
 
 # ----------------------------------------------------------------
 # Load EEG features (example: first subject)
@@ -27,10 +27,10 @@ input_dim = eeg_flat.shape[1]
 # ----------------------------------------------------------------
 
 # ----------------------------------------------------------------
-# Load trained semantic predictor
+# Load trained semantic predictor (new full version)
 semantic_model = SemanticPredictor(input_dim=input_dim).to("cuda")
 semantic_model.load_state_dict(torch.load(
-    "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor.pt",
+    "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor_full.pt",
     map_location="cuda"
 )["state_dict"])
 semantic_model.eval()
@@ -64,12 +64,12 @@ def run_inference(seq2seq_model, save_name):
         pred_latents = seq2seq_model(eeg_input_4d, dummy_tgt)  # [B, F, 9216]
         latents = pred_latents.view(B, F, 4, 36, 64).permute(0, 2, 1, 3, 4).contiguous()
 
-        # Semantic predictor expects flat [B, features]
+        # Semantic predictor now outputs [B, 77, 768]
         eeg_embed = semantic_model(eeg_flat)
 
         video = pipe(
             model=None,              # unused by pipeline
-            eeg=eeg_embed,           # semantic embeddings
+            eeg=eeg_embed,
             video_length=F,
             height=288,
             width=512,
