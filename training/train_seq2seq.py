@@ -5,7 +5,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import numpy as np
 
-# Import our fixed wrapper (Seq2SeqModel returns 9216 latents instead of 13 classes)
+# Import Seq2Seq model (keep __init__.py for this style)
 from models_original.seq2seq import Seq2SeqModel
 
 
@@ -17,7 +17,7 @@ class SeedDVEEGDataset(torch.utils.data.Dataset):
         self.eeg_data = np.load(eeg_file)
         self.latent_root = latent_root
 
-        # Build index map, but only keep entries that have a latent file
+        # Build index map, only keep entries that have a latent file
         self.index_map = []
         for b in range(7):
             for c in range(40):
@@ -39,10 +39,10 @@ class SeedDVEEGDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         b, c, i = self.index_map[idx]
 
-        # EEG clip: (62,5) → flatten (310,)
-        eeg_clip = self.eeg_data[b, c, i].reshape(-1)
+        # EEG clip: keep as (5,62,5) instead of flattening
+        eeg_clip = self.eeg_data[b, c, i]  # shape (5,62,5)
 
-        # Video latents: (6,4,36,64) → (6,9216)
+        # Video latents: (6,4,36,64) → flatten to (6,9216)
         latent_path = os.path.join(
             self.latent_root,
             f"block{b+1:02d}",
@@ -75,7 +75,7 @@ def main():
     # Training loop
     for epoch in range(2):  # quick test run
         for eeg, target in dataloader:
-            eeg, target = eeg.to(device), target.to(device)  # eeg: [B,310], target: [B,6,9216]
+            eeg, target = eeg.to(device), target.to(device)  # eeg: [B,5,62,5], target: [B,6,9216]
 
             optimizer.zero_grad()
             output = model(eeg, target)   # model must return [B,6,9216]
