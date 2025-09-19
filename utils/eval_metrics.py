@@ -97,8 +97,11 @@ def evaluate(seq2seq_model, name):
         mean_ssim = np.mean(ssim_vals)
 
         # CLIP similarity
-        gt_feats = clip_model.encode_image(gt_tensors.cuda()).mean(0, keepdim=True)
-        fake_feats = clip_model.encode_image((fake_imgs*255).clamp(0,255).byte()).mean(0, keepdim=True)
+        gt_pre = torch.stack([clip_preprocess(T.ToPILImage()(f.cpu())) for f in gt_tensors]).cuda()
+        fake_pre = torch.stack([clip_preprocess(T.ToPILImage()(f.cpu())) for f in fake_imgs]).cuda()
+
+        gt_feats = clip_model.encode_image(gt_pre).mean(0, keepdim=True)
+        fake_feats = clip_model.encode_image(fake_pre).mean(0, keepdim=True)
         sim = torch.nn.functional.cosine_similarity(gt_feats, fake_feats).item()
 
         print(f"{name}: SSIM={mean_ssim:.4f}, CLIP-sim={sim:.4f}")
