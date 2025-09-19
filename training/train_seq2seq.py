@@ -43,8 +43,12 @@ def main():
             eeg, target = eeg.to(device), target.to(device)
 
             optimizer.zero_grad()
-            output = model(eeg, target)     # myTransformer expects (src, tgt)
-            # Flatten targets so dimensions match output
+            output = model(eeg, target)
+
+            # If model returns a tuple, take the first item
+            if isinstance(output, tuple):
+                output = output[0]
+
             loss = criterion(output, target.view_as(output))
             loss.backward()
             optimizer.step()
