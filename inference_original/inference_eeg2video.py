@@ -54,7 +54,7 @@ pipe = TuneAVideoPipeline(
 pipe.enable_vae_slicing()
 # ----------------------------------------------------------------
 
-def run_inference(seq2seq_model, save_name):
+def run_inference(seq2seq_model, save_name, normalize_latents=True):
     with torch.no_grad():
         B = eeg_input_4d.size(0)
         F = eeg_input_4d.size(1)  # number of windows
@@ -62,6 +62,14 @@ def run_inference(seq2seq_model, save_name):
 
         # Seq2Seq forward: [B,F,62,100] -> [B,F,9216]
         pred_latents = seq2seq_model(eeg_input_4d, dummy_tgt)
+
+        # Debug stats before normalization
+        print(f"[{save_name}] raw latents -> mean: {pred_latents.mean().item():.4f}, std: {pred_latents.std().item():.4f}")
+
+        if normalize_latents:
+            pred_latents = (pred_latents - pred_latents.mean()) / (pred_latents.std() + 1e-6)
+            print(f"[{save_name}] normalized latents -> mean: {pred_latents.mean().item():.4f}, std: {pred_latents.std().item():.4f}")
+
         latents = pred_latents.view(B, F, 4, 36, 64).permute(0, 2, 1, 3, 4).contiguous()
 
         # Semantic predictor: [B, features] -> [B,77,768]
@@ -87,10 +95,9 @@ def run_inference(seq2seq_model, save_name):
 # Run with trained Seq2Seq
 CKPT_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_sub1to10_blocks1to4.pt"
 seq2seq_trained = Seq2SeqModel().to("cuda")
-seq2seq_trained.load_state_dict(torch.load(CKPT_PATH, map_location="cuda"))  # <-- update here
+seq2seq_trained.load_state_dict(torch.load(CKPT_PATH, map_location="cuda"))
 seq2seq_trained.eval()
 trained_path = run_inference(seq2seq_trained, "sample_trained")
-
 
 # Run with random Seq2Seq
 seq2seq_random = Seq2SeqModel().to("cuda")
@@ -102,16 +109,13 @@ random_path = run_inference(seq2seq_random, "sample_random")
 labels = np.load("/content/drive/MyDrive/Data/Raw/meta-info/All_video_label.npy")  # (7,40)
 expanded_labels = np.repeat(labels, 5, axis=1)  # (7,200)
 
-# Which clip we picked above: block=0, concept=0, clip=0 → clip_idx=0
-clip_idx = 0
+clip_idx = 0  # block=0, concept=0, clip=0
 concept_id = expanded_labels[0, clip_idx]
 
-# BLIP captions (200 per block)
 with open("/content/drive/MyDrive/Data/Raw/BLIP-caption/1st_10min.txt") as f:
     lines = f.readlines()
 caption = lines[clip_idx].strip()
 
-# Example: also load metadata (color, motion, etc.)
 color = np.load("/content/drive/MyDrive/Data/Raw/meta-info/All_video_color.npy")[0, clip_idx]
 motion = np.load("/content/drive/MyDrive/Data/Raw/meta-info/All_video_optical_flow_score.npy")[0, clip_idx]
 
@@ -120,4 +124,3 @@ print("Concept ID:", concept_id)
 print("Caption:", caption)
 print("Color:", color)
 print("Motion score:", motion)
-
