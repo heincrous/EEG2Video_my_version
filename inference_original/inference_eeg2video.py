@@ -5,6 +5,10 @@ import torch
 import numpy as np
 from einops import rearrange
 
+from diffusers import AutoencoderKL, DDIMScheduler
+from transformers import CLIPTextModel, CLIPTokenizer
+
+from models_original.tuneavideo.unet import UNet3DConditionModel
 from pipelines_original.pipeline_tuneeeg2video import TuneAVideoPipeline
 from models_original.tuneavideo.util import save_videos_grid
 from models_original.seq2seq import Seq2SeqModel
@@ -13,7 +17,7 @@ from training_original.train_semantic_predictor import SemanticPredictor
 # ----------------------------------------------------------------
 # Load EEG features (example: first subject)
 eeg_file = "/content/drive/MyDrive/Data/Processed/EEG_timewindows_100/sub1.npy"
-eeg_features = np.load(eeg_file)  # shape: [blocks, classes, clips, 4, 62, 100]
+eeg_features = np.load(eeg_file)  # [blocks, classes, clips, 4, 62, 100]
 eeg_clip = eeg_features[0, 0, 0]  # block0, class0, clip0
 
 # Reshape EEG the same way as in training
@@ -33,20 +37,29 @@ semantic_model.eval()
 # ----------------------------------------------------------------
 
 # ----------------------------------------------------------------
-# Load fine-tuned diffusion pipeline
+# Manually build fine-tuned diffusion pipeline
 DIFFUSION_CKPT = "/content/drive/MyDrive/EEG2Video_checkpoints/videodiffusion"
-pipe = TuneAVideoPipeline.from_pretrained(
-    DIFFUSION_CKPT,
-    torch_dtype=torch.float16
+
+vae = AutoencoderKL.from_pretrained(DIFFUSION_CKPT, subfolder="vae")
+tokenizer = CLIPTokenizer.from_pretrained(DIFFUSION_CKPT, subfolder="tokenizer")
+text_encoder = CLIPTextModel.from_pretrained(DIFFUSION_CKPT, subfolder="text_encoder")
+unet = UNet3DConditionModel.from_pretrained_2d(DIFFUSION_CKPT, subfolder="unet")
+scheduler = DDIMScheduler.from_pretrained(DIFFUSION_CKPT, subfolder="scheduler")
+
+pipe = TuneAVideoPipeline(
+    vae=vae,
+    text_encoder=text_encoder,
+    tokenizer=tokenizer,
+    unet=unet,
+    scheduler=scheduler
 ).to("cuda")
 pipe.enable_vae_slicing()
 # ----------------------------------------------------------------
 
 def run_inference(seq2seq_model, save_name):
     with torch.no_grad():
-        # Prepare dummy latents (Seq2Seq predicts these)
         B = eeg_input.size(0)
-        F = 4  # number of frames to generate
+        F = 4  # number of frames
         dummy_tgt = torch.zeros((B, F, 4, 36, 64), device="cuda")
 
         pred_latents = seq2seq_model(eeg_input, dummy_tgt)  # [B,F,9216]
@@ -78,7 +91,7 @@ seq2seq_trained.load_state_dict(torch.load(CKPT_PATH, map_location="cuda"))
 seq2seq_trained.eval()
 trained_path = run_inference(seq2seq_trained, "sample_trained")
 
-# Run with random Seq2Seq (untrained)
+# Run with random Seq2Seq
 seq2seq_random = Seq2SeqModel().to("cuda")
 seq2seq_random.eval()
 random_path = run_inference(seq2seq_random, "sample_random")
