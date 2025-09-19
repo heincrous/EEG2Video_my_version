@@ -1,9 +1,9 @@
-pretrained_model_path: "./checkpoints/stable-diffusion-v1-4"
-output_dir: "./outputs/10_classes_6000_epochs"
+pretrained_model_path: "CompVis/stable-diffusion-v1-4"
+output_dir: "/content/drive/MyDrive/EEG2Video_checkpoints/videodiffusion"
 
 train_data:
-  video_path: "data/panda01.mp4"
-  prompt: "a panda is eatting bamboo"
+  video_path: "/content/drive/MyDrive/Data/Raw/Video/1st_10min.mp4"
+  prompt: "/content/drive/MyDrive/Data/Raw/BLIP-caption/block01.txt"
   n_sample_frames: 6
   width: 512
   height: 288
@@ -12,22 +12,24 @@ train_data:
 
 validation_data:
   prompts:
-    - "a cat is sitting on the ground"
-    - "an airplane in the sky"
-    - "a person is dancing"
+    - "a person is running"
+    - "a car is moving on the road"
+    - "a dog in the water"
   video_length: 6
   width: 512
-  height:  288
+  height: 288
   num_inference_steps: 50
   guidance_scale: 12.5
   use_inv_latent: False
   num_inv_steps: 50
 
+# LOW VALUES WILL BE UPDATED LATER
 learning_rate: 3e-5
-train_batch_size: 10
-max_train_steps: 500
-checkpointing_steps: 1000
-validation_steps: 100
+train_batch_size: 1
+max_train_steps: 100
+checkpointing_steps: 20
+validation_steps: 20
+
 trainable_modules:
   - "attn1.to_q"
   - "attn2.to_q"

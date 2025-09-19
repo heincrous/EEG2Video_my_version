@@ -154,30 +154,30 @@ def main(
         eps=adam_epsilon,
     )
 
-    # Get the training dataset
+    # # Get the training dataset
     #train_dataset = TuneAVideoDataset(**train_data)
     train_dataset = TuneMultiVideoDataset(**train_data)
-    # video_name_list = ['1st_10min', '2nd_10min', '3rd_10min', '4th_10min', '5th_10min']
-    #video_name_list = ['1st_10min']
-    video_path = './data/final_data/video'
-    video_files = []
-    video_ind = [i for i in range(1,51)]
-    for ind in video_ind:
-        file = video_path + '/' + str(ind) + '.mp4'
-        video_files.append(file)
+    # # video_name_list = ['1st_10min', '2nd_10min', '3rd_10min', '4th_10min', '5th_10min']
+    # #video_name_list = ['1st_10min']
+    # video_path = './data/final_data/video'
+    # video_files = []
+    # video_ind = [i for i in range(1,51)]
+    # for ind in video_ind:
+    #     file = video_path + '/' + str(ind) + '.mp4'
+    #     video_files.append(file)
         
-    train_dataset.video_path = video_files
+    # train_dataset.video_path = video_files
 
-    # text_path = './text'
-    text_prompts = []
-    video_text = './data/final_data/text.txt'
+    # # text_path = './text'
+    # text_prompts = []
+    # video_text = './data/final_data/text.txt'
 
-    with open(video_text, 'r') as f:
-        for line in f:
-            text_prompts.append(line.strip())
+    # with open(video_text, 'r') as f:
+    #     for line in f:
+    #         text_prompts.append(line.strip())
    
         
-    train_dataset.prompt = text_prompts
+    # train_dataset.prompt = text_prompts
     print("video_path_length:", len(train_dataset.video_path))
     print("prompt_length:", len(train_dataset.prompt))
 
@@ -199,7 +199,7 @@ def main(
     validation_pipeline.enable_vae_slicing()
     ddim_inv_scheduler = DDIMScheduler.from_pretrained(pretrained_model_path, subfolder='scheduler')
     ddim_inv_scheduler.set_timesteps(validation_data.num_inv_steps)
-    num_train_epochs = 6000
+    num_train_epochs = 5 # INCREASE TO 6000 LATER ON
 
     # Scheduler
     lr_scheduler = get_scheduler(
@@ -313,7 +313,8 @@ def main(
             logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             #progress_bar.set_postfix(**logs) 
 
-        if epoch % 1200 == 0:
+        if epoch % 10 == 0:
+        # if epoch % 1200 == 0: FOR NOW, WE'LL NEVER REACH 1200 EPOCHS, BUT LATER WE WILL
             if accelerator.is_main_process:
                 samples = []
                 generator = torch.Generator(device=latents.device)
