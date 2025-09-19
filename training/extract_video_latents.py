@@ -5,6 +5,7 @@ import torch
 from diffusers import AutoencoderKL
 from torchvision import transforms
 import decord
+from PIL import Image
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -41,10 +42,16 @@ def extract_clip(video_reader, fps, t0, t1, F=6):
     idxs = np.linspace(i0, i1 - 1, num=F, dtype=int)
 
     frames = video_reader.get_batch(idxs).asnumpy()  # [F,H,W,C]
-    frames = torch.stack([transform(f).unsqueeze(0) for f in frames])  # [F,3,288,512]
-    frames = frames.squeeze(1).to(device)
 
-    latents = encode_frames(frames)  # [F,4,36,64]
+    proc_frames = []
+    for f in frames:
+        pil_img = Image.fromarray(f)                     # Convert numpy → PIL
+        tensor_img = transform(pil_img).unsqueeze(0)     # [1,3,288,512]
+        proc_frames.append(tensor_img)
+
+    frames_torch = torch.cat(proc_frames, dim=0).to(device)  # [F,3,288,512]
+
+    latents = encode_frames(frames_torch)  # [F,4,36,64]
     return latents
 
 def process_block(block_idx, fname, F=6):
