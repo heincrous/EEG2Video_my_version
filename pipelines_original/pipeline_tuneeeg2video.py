@@ -168,7 +168,7 @@ class TuneAVideoPipeline(DiffusionPipeline):
             # Resolve path to resources/negative.npy relative to repo root
             import os
             repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-            neg_path = os.path.join(repo_root, "resources", "negative.npy")
+            neg_path = os.path.join(repo_root, "resources_original", "negative.npy")
 
             uncond_embeddings = np.load(neg_path)
             uncond_embeddings = torch.from_numpy(uncond_embeddings).float().to(device)
