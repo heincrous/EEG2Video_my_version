@@ -79,10 +79,7 @@ if __name__ == "__main__":
     print("EEG after reshape:", EEG.shape)
 
     # Flatten text embeddings
-    Text = []
-    for i in range(6):
-        Text.append(text_embedding[:150, ...])  # adjust if needed
-    Text = np.concatenate(Text)
+    Text = text_embedding[:EEG.shape[0], ...]  # match EEG sample count
     Text = torch.from_numpy(Text).reshape(Text.shape[0], -1)
 
     print("Text after reshape:", Text.shape)
