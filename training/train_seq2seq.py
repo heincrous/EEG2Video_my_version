@@ -11,10 +11,9 @@ from models_original.seq2seq import Seq2SeqModel
 class DummyEEGDataset(torch.utils.data.Dataset):
     def __init__(self, n_samples=100, frames=7, n_channels=62, timesteps=100):
         super().__init__()
-        # Authors expect [batch, frames, 62, 100]
-        self.data = torch.randn(n_samples, frames, n_channels, timesteps)
-        # Pretend target latent is [frames, 4, 32, 32]
-        self.targets = torch.randn(n_samples, frames, 4, 32, 32)
+        self.data = torch.randn(n_samples, frames, n_channels, timesteps)  # [B,7,62,100]
+        # Authors expect targets shaped like [frames, 4, 36, 64] = 9216
+        self.targets = torch.randn(n_samples, frames, 4, 36, 64)
 
     def __len__(self):
         return len(self.data)
