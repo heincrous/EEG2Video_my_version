@@ -2,45 +2,44 @@ import os
 import numpy as np
 import torch
 import clip
+from tqdm import tqdm
 
 def main():
-    # Paths
-    blip_folder = "/content/drive/MyDrive/Data/Raw/BLIP-caption"
-    save_path = "/content/EEG2Video_my_version/training_original/text_embedding.npy"
-
-    # Load CLIP model
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    print("Loading CLIP...")
     model, preprocess = clip.load("ViT-B/32", device=device)
 
     all_embeddings = []
 
-    # Loop over block caption files
-    for block_id in range(1, 8):  # block01.txt ... block07.txt
-        caption_file = os.path.join(blip_folder, f"block{block_id:02d}.txt")
+    # Loop over blocks 01–07
+    for i in range(1, 8):
+        caption_file = f"/content/drive/MyDrive/Data/Raw/BLIP-caption/block{i:02d}.npy"
         if not os.path.exists(caption_file):
             print(f"Warning: {caption_file} not found, skipping")
             continue
 
-        with open(caption_file, "r") as f:
-            captions = [line.strip() for line in f.readlines() if line.strip()]
-
-        print(f"Encoding {len(captions)} captions from {caption_file}")
+        # Load captions (array of strings)
+        captions = np.load(caption_file, allow_pickle=True)
+        print(f"Loaded {len(captions)} captions from {caption_file}")
 
         # Encode with CLIP
+        text = clip.tokenize(captions.tolist(), truncate=True).to(device)
         with torch.no_grad():
-            text_tokens = clip.tokenize(captions).to(device)
-            text_embeddings = model.encode_text(text_tokens).float()
-            text_embeddings /= text_embeddings.norm(dim=-1, keepdim=True)  # normalize
+            text_features = model.encode_text(text).cpu().numpy()
+        all_embeddings.append(text_features)
 
-        all_embeddings.append(text_embeddings.cpu().numpy())
+    if len(all_embeddings) == 0:
+        raise RuntimeError("No caption files found. Check BLIP-caption folder.")
 
-    # Concatenate into one array
+    # Concatenate across all blocks
     all_embeddings = np.concatenate(all_embeddings, axis=0)
-    print("Final embedding shape:", all_embeddings.shape)
+    print("Final embeddings shape:", all_embeddings.shape)
 
-    # Save as .npy file inside training folder
+    # Save inside training folder
+    save_path = "/content/EEG2Video_my_version/training/text_embedding.npy"
     np.save(save_path, all_embeddings)
     print(f"Saved embeddings to {save_path}")
+
 
 if __name__ == "__main__":
     main()
