@@ -25,11 +25,11 @@ class SemanticPredictor(nn.Module):
             nn.ReLU(),
             nn.Linear(10000, 10000),
             nn.ReLU(),
-            nn.Linear(10000, 77 * 768)  # match CLIP text encoder dim
+            nn.Linear(10000, 512)  # match your current text embeddings
         )
 
     def forward(self, eeg):
-        return self.mlp(eeg)  # shape: (batch, 77*768)
+        return self.mlp(eeg)  # shape: (batch, 512)
 
 
 # ----------------------------
@@ -39,8 +39,8 @@ class Dataset(torch.utils.data.Dataset):
     def __init__(self, eeg, text):
         scaler = preprocessing.StandardScaler().fit(eeg)
         eeg = scaler.transform(eeg)
-        self.eeg = eeg
-        self.text = text
+        self.eeg = torch.tensor(eeg, dtype=torch.float32)
+        self.text = torch.tensor(text, dtype=torch.float32)
         self.len = eeg.shape[0]
 
     def __len__(self):
@@ -61,7 +61,7 @@ if __name__ == "__main__":
 
     # Load data
     eegdata = np.load(eeg_data_path)  # shape: [blocks, classes, clips, …]
-    text_embedding = np.load(text_embedding_path)  # shape: [samples, 77, 768]
+    text_embedding = np.load(text_embedding_path)  # shape: [samples, 512]
 
     print("EEG raw:", eegdata.shape)
     print("Text embedding raw:", text_embedding.shape)
@@ -78,8 +78,8 @@ if __name__ == "__main__":
 
     print("EEG after reshape:", EEG.shape)
 
-    # Flatten text embeddings
-    Text = text_embedding[:EEG.shape[0], ...]  # match EEG sample count
+    # Match text embeddings to EEG sample count
+    Text = text_embedding[:EEG.shape[0], ...]
     Text = torch.from_numpy(Text).reshape(Text.shape[0], -1)
 
     print("Text after reshape:", Text.shape)
@@ -100,9 +100,7 @@ if __name__ == "__main__":
         model.train()
         epoch_loss = 0
         for eeg, text in dataloader:
-            eeg = torch.tensor(eeg).float().cuda()
-            text = torch.tensor(text).float().cuda()
-
+            eeg, text = eeg.cuda(), text.cuda()
             optimizer.zero_grad()
             eeg_embeddings = model(eeg)
             loss = F.mse_loss(eeg_embeddings, text)
