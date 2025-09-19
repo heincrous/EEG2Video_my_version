@@ -17,15 +17,24 @@ class SeedDVEEGDataset(torch.utils.data.Dataset):
         self.eeg_data = np.load(eeg_file)
         self.latent_root = latent_root
 
-        # Build index mapping (block, concept, clip)
+        # Build index map, but only keep entries that have a latent file
         self.index_map = []
         for b in range(7):
             for c in range(40):
                 for i in range(5):
-                    self.index_map.append((b, c, i))
+                    latent_path = os.path.join(
+                        self.latent_root,
+                        f"block{b+1:02d}",
+                        f"class{c:02d}",
+                        f"clip{i}.npy"
+                    )
+                    if os.path.exists(latent_path):
+                        self.index_map.append((b, c, i))
+
+        print(f"Found {len(self.index_map)} aligned EEG-video pairs")
 
     def __len__(self):
-        return len(self.index_map)  # normally 1400, but subset may be fewer files
+        return len(self.index_map)
 
     def __getitem__(self, idx):
         b, c, i = self.index_map[idx]
@@ -33,19 +42,14 @@ class SeedDVEEGDataset(torch.utils.data.Dataset):
         # EEG clip: (62,5) → flatten (310,)
         eeg_clip = self.eeg_data[b, c, i].reshape(-1)
 
-        # Latent path: blockXX/classYY/clipZ.npy
+        # Video latents: (6,4,36,64) → (6,9216)
         latent_path = os.path.join(
             self.latent_root,
             f"block{b+1:02d}",
             f"class{c:02d}",
             f"clip{i}.npy"
         )
-
-        if not os.path.exists(latent_path):
-            raise FileNotFoundError(f"Missing latent file: {latent_path}")
-
-        latents = np.load(latent_path)  # (6,4,36,64)
-        latents = latents.reshape(6, -1)  # (6,9216)
+        latents = np.load(latent_path).reshape(6, -1)
 
         return torch.from_numpy(eeg_clip).float(), torch.from_numpy(latents).float()
 
@@ -74,7 +78,7 @@ def main():
             eeg, target = eeg.to(device), target.to(device)  # eeg: [B,310], target: [B,6,9216]
 
             optimizer.zero_grad()
-            output = model(eeg, target)   # should output [B,6,9216]
+            output = model(eeg, target)   # model must return [B,6,9216]
 
             loss = criterion(output, target)
             loss.backward()
