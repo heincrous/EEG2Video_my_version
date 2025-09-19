@@ -10,7 +10,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Paths
 video_root = "/content/drive/MyDrive/Data/Raw/Video"
-out_root   = "/content/drive/MyDrive/Data/Processed/Video_latents"
+out_root   = "/content/drive/MyDrive/Data/Processed/Video_latents_per_clip"
 os.makedirs(out_root, exist_ok=True)
 
 # Load pretrained Stable Diffusion VAE
