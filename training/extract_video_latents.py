@@ -70,9 +70,10 @@ def process_block(block_idx, fname, F=6, max_concepts=40):
 
 def main():
     files = {
-        0: "2nd_10min.mp4",
-        1: "3rd_10min.mp4",
-        2: "4th_10min.mp4"
+        0: "1st_10min.mp4",
+        1: "2nd_10min.mp4",
+        2: "3rd_10min.mp4",
+        3: "4th_10min.mp4"
         }
     for b, fname in files.items():
         print(f"Processing block {b+1}: {fname}")
