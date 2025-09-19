@@ -2,8 +2,10 @@ pretrained_model_path: "./checkpoints/stable-diffusion-v1-4"
 output_dir: "/content/drive/MyDrive/EEG2Video_checkpoints/videodiffusion"
 
 train_data:
-  video_path: "/content/drive/MyDrive/Data/Raw/Video/1st_10min.mp4"
-  prompt: "/content/drive/MyDrive/Data/Raw/BLIP-caption/block01.txt"
+  video_path:
+    - "/content/drive/MyDrive/Data/Raw/Video/1st_10min.mp4"
+  prompt:
+    - "/content/drive/MyDrive/Data/Raw/BLIP-caption/block01.txt"
   n_sample_frames: 6
   width: 512
   height: 288
