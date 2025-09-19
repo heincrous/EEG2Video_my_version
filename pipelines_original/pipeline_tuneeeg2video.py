@@ -165,8 +165,14 @@ class TuneAVideoPipeline(DiffusionPipeline):
         eeg_embeddings = eeg_embeddings.view(bs_embed * num_videos_per_eeg, seq_len, -1)
 
         if do_classifier_guidance:
-            uncond_embeddings = np.load('EEG2Video/EEG2Video_New/Generation/negative.npy')
-            uncond_embeddings = torch.from_numpy(uncond_embeddings).cuda()
+            # Resolve path to resources/negative.npy relative to repo root
+            import os
+            repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            neg_path = os.path.join(repo_root, "resources", "negative.npy")
+
+            uncond_embeddings = np.load(neg_path)
+            uncond_embeddings = torch.from_numpy(uncond_embeddings).float().to(device)
+
             eeg_embeddings = torch.cat([uncond_embeddings, eeg_embeddings])
         return eeg_embeddings
 
