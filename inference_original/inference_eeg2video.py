@@ -87,9 +87,10 @@ def run_inference(seq2seq_model, save_name):
 # Run with trained Seq2Seq
 CKPT_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_sub1to10_blocks1to4.pt"
 seq2seq_trained = Seq2SeqModel().to("cuda")
-seq2seq_trained.load_state_dict(torch.load(CKPT_PATH, map_location="cuda"))
+seq2seq_trained.load_state_dict(torch.load(CKPT_PATH, map_location="cuda"))  # <-- update here
 seq2seq_trained.eval()
 trained_path = run_inference(seq2seq_trained, "sample_trained")
+
 
 # Run with random Seq2Seq
 seq2seq_random = Seq2SeqModel().to("cuda")
