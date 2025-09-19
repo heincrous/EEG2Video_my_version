@@ -162,11 +162,14 @@ def main(
         train_dataset, batch_size=train_batch_size, shuffle=True
     )
 
-    # Validation pipeline
     validation_pipeline = TuneAVideoPipeline(
-        vae=vae, tokenizer=tokenizer, unet=unet,
-        scheduler=DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
-    )
+    vae=vae,
+    tokenizer=tokenizer,
+    text_encoder=text_encoder,  # keep this
+    unet=unet,
+    scheduler=DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
+)
+
     validation_pipeline.enable_vae_slicing()
     ddim_inv_scheduler = DDIMScheduler.from_pretrained(pretrained_model_path, subfolder='scheduler')
     ddim_inv_scheduler.set_timesteps(validation_data.num_inv_steps)
