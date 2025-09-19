@@ -25,28 +25,11 @@ from einops import rearrange
 from sklearn import preprocessing
 
 # ----------------------------------------------------------------
-# SEQ2SEQ MODEL FOR EEG -> LATENTS (TOY VERSION ADDED BY ME)
-import torch.nn as nn
+CKPT_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_dummy.pt"
 
-CKPT_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_semantic.pt"
+from models_original.seq2seq import Seq2SeqModel
 
-class EEG2Latent(nn.Module):
-    def __init__(self, eeg_dim=62*512, latent_dim=77*768, hidden=512, num_layers=2):  # <-- update latent_dim
-        super().__init__()
-        self.embed = nn.Linear(eeg_dim, hidden)
-        encoder_layer = nn.TransformerEncoderLayer(d_model=hidden, nhead=8)
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        self.out = nn.Linear(hidden, latent_dim)
-
-    def forward(self, x):
-        b, c, t = x.shape
-        x = x.view(b, -1)
-        x = self.embed(x).unsqueeze(0)
-        h = self.transformer(x)
-        out = self.out(h).squeeze(0)
-        return out
-
-seq2seq = EEG2Latent().to("cuda")
+seq2seq = Seq2SeqModel().to("cuda")
 seq2seq.load_state_dict(torch.load(CKPT_PATH, map_location="cuda"))
 seq2seq.eval()
 print("Loaded Seq2Seq checkpoint:", CKPT_PATH)

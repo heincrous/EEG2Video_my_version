@@ -4,14 +4,16 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-# Import Seq2Seq model from authors' code
-from models_original.seq2seq.seq2seq import Seq2SeqModel
+# Import Seq2Seq model from authors' code (via wrapper in __init__.py)
+from models_original.seq2seq import Seq2SeqModel
 
-# Placeholder dataset class (we'll define later)
+# Dummy dataset to mimic EEG → latent frames
 class DummyEEGDataset(torch.utils.data.Dataset):
-    def __init__(self):
-        self.data = torch.randn(100, 62, 200)  # [samples, channels, timesteps]
-        self.targets = torch.randn(100, 7, 512)  # [samples, frames, latent_dim]
+    def __init__(self, n_samples=100, n_channels=62, timesteps=200, frames=6):
+        super().__init__()
+        self.data = torch.randn(n_samples, n_channels, timesteps)   # [samples, 62, 200]
+        # Pretend target latent is shaped like SD latents [frames, 4, 32, 32]
+        self.targets = torch.randn(n_samples, frames, 4, 32, 32)
 
     def __len__(self):
         return len(self.data)
@@ -20,7 +22,6 @@ class DummyEEGDataset(torch.utils.data.Dataset):
         return self.data[idx], self.targets[idx]
 
 def main():
-    # Config
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/"
     os.makedirs(save_dir, exist_ok=True)
@@ -30,20 +31,21 @@ def main():
 
     # Dataset & loader
     dataset = DummyEEGDataset()
-    dataloader = DataLoader(dataset, batch_size=8, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
 
     # Loss & optimizer
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
-    # Training loop skeleton
+    # Training loop
     for epoch in range(2):  # keep small for testing
         for eeg, target in dataloader:
             eeg, target = eeg.to(device), target.to(device)
 
             optimizer.zero_grad()
-            output = model(eeg)
-            loss = criterion(output, target)
+            output = model(eeg, target)     # myTransformer expects (src, tgt)
+            # Flatten targets so dimensions match output
+            loss = criterion(output, target.view_as(output))
             loss.backward()
             optimizer.step()
 
