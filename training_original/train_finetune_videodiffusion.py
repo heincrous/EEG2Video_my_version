@@ -119,11 +119,19 @@ def main(
             for params in module.parameters():
                 params.requires_grad = True
 
+    # NOT USING XFORMERS JUST YET
+    # if enable_xformers_memory_efficient_attention:
+    #     if is_xformers_available():
+    #         unet.enable_xformers_memory_efficient_attention()
+    #     else:
+    #         raise ValueError("xformers is not available. Make sure it is installed correctly")
+
     if enable_xformers_memory_efficient_attention:
         if is_xformers_available():
             unet.enable_xformers_memory_efficient_attention()
+            logger.info("Using xformers memory efficient attention.")
         else:
-            raise ValueError("xformers is not available. Make sure it is installed correctly")
+            logger.warning("xformers is not available, continuing without it.")
 
     if gradient_checkpointing:
         unet.enable_gradient_checkpointing()

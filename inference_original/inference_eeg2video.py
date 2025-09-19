@@ -13,17 +13,15 @@ from pipelines_original.pipeline_tuneeeg2video import TuneAVideoPipeline
 from models_original.tuneavideo.unet import UNet3DConditionModel
 from models_original.tuneavideo.util import save_videos_grid
 from models_original.seq2seq import Seq2SeqModel
+from models_original.semantic import SemanticPredictor
 
 # ----------------------------------------------------------------
-# Dummy semantic model
-class DummySemantic(torch.nn.Module):
-    def forward(self, x):
-        b = x.size(0)
-        expanded = torch.zeros((b, 77 * 768), device=x.device)
-        expanded[:, :min(x.shape[1], 77 * 768)] = x[:, :min(x.shape[1], 77 * 768)]
-        return expanded.view(b, 77, 768)
-
-semantic_model = DummySemantic().to("cuda")
+semantic_model = SemanticPredictor().to("cuda")
+semantic_model.load_state_dict(torch.load(
+    "/content/drive/MyDrive/EEG2Video_checkpoints/semantic.pt", 
+    map_location="cuda"
+))
+semantic_model.eval()
 # ----------------------------------------------------------------
 
 # ----------------------------------------------------------------
@@ -35,22 +33,11 @@ eeg_input = torch.from_numpy(eeg_clip).unsqueeze(0).float().cuda()  # [1,4,62,10
 # ----------------------------------------------------------------
 
 # ----------------------------------------------------------------
-# Build UNet + pipeline
-unet = UNet3DConditionModel(
-    sample_size=64,
-    in_channels=4,
-    out_channels=4,
-    layers_per_block=2,
-    block_out_channels=(320, 640, 1280),
-    down_block_types=("DownBlock3D", "DownBlock3D", "DownBlock3D"),
-    up_block_types=("UpBlock3D", "UpBlock3D", "UpBlock3D"),
-    cross_attention_dim=768
-).to("cuda").to(torch.float32)
-
+# Load fine-tuned diffusion pipeline
+DIFFUSION_CKPT = "/content/drive/MyDrive/EEG2Video_checkpoints/videodiffusion"
 pipe = TuneAVideoPipeline.from_pretrained(
-    "CompVis/stable-diffusion-v1-4",
-    unet=unet,
-    torch_dtype=torch.float32
+    DIFFUSION_CKPT,
+    torch_dtype=torch.float16
 ).to("cuda")
 pipe.enable_vae_slicing()
 # ----------------------------------------------------------------
