@@ -6,7 +6,7 @@ import numpy as np
 from einops import rearrange
 
 from diffusers import AutoencoderKL, DDIMScheduler
-from transformers import CLIPTokenizer, CLIPTextModel
+from transformers import CLIPTokenizer
 
 from models_original.tuneavideo.unet import UNet3DConditionModel
 from pipelines_original.pipeline_tuneeeg2video import TuneAVideoPipeline
@@ -20,7 +20,7 @@ eeg_file = "/content/drive/MyDrive/Data/Processed/EEG_timewindows_100/sub1.npy"
 eeg_features = np.load(eeg_file)  # [blocks, classes, clips, 4, 62, 100]
 eeg_clip = eeg_features[0, 0, 0]  # block0, class0, clip0
 
-# Reshape EEG the same way as in training
+# Reshape EEG same way as in training
 eeg_input = torch.from_numpy(eeg_clip).unsqueeze(0).float().cuda()  # [1, 4, 62, 100]
 eeg_input = rearrange(eeg_input, "b d c t -> b (d c t)")  # flatten to [1, features]
 input_dim = eeg_input.shape[1]
@@ -37,20 +37,16 @@ semantic_model.eval()
 # ----------------------------------------------------------------
 
 # ----------------------------------------------------------------
-# Manually build fine-tuned diffusion pipeline
+# Build fine-tuned diffusion pipeline
 DIFFUSION_CKPT = "/content/drive/MyDrive/EEG2Video_checkpoints/videodiffusion"
 
 vae = AutoencoderKL.from_pretrained(DIFFUSION_CKPT, subfolder="vae")
 unet = UNet3DConditionModel.from_pretrained_2d(DIFFUSION_CKPT, subfolder="unet")
 scheduler = DDIMScheduler.from_pretrained(DIFFUSION_CKPT, subfolder="scheduler")
-
-# tokenizer + text encoder are mandatory
 tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
-text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14")
 
 pipe = TuneAVideoPipeline(
     vae=vae,
-    text_encoder=text_encoder,
     tokenizer=tokenizer,
     unet=unet,
     scheduler=scheduler
@@ -70,14 +66,14 @@ def run_inference(seq2seq_model, save_name):
         eeg_embed = semantic_model(eeg_input)
 
         video = pipe(
-            prompt=None,
-            eeg_embeds=eeg_embed,
-            latents=latents,
+            model=None,              # unused by pipeline
+            eeg=eeg_embed,           # semantic embeddings go here
             video_length=F,
             height=288,
             width=512,
             num_inference_steps=50,
-            guidance_scale=12.5
+            guidance_scale=12.5,
+            latents=latents
         ).videos
 
         os.makedirs("Results", exist_ok=True)
