@@ -194,7 +194,7 @@ print(">>> eeg_test shape:", eeg_test.shape, "device:", eeg_test.device)
 
 # ----------------------------------------------------------------
 # PATCHED CODE
-from EEG2Video.EEG2Video_New.Generation.tuneavideo.models.unet import UNet3DConditionModel
+from models_original.tuneavideo.unet import UNet3DConditionModel
 
 print(">>> Starting UNet initialization")
 unet = UNet3DConditionModel(
