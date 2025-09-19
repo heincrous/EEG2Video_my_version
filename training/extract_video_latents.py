@@ -1,4 +1,3 @@
-# training/extract_video_latents_per_clip.py
 import os
 import numpy as np
 import torch
@@ -10,8 +9,8 @@ from PIL import Image
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Paths
-video_root = "/content/drive/MyDrive/Data/Raw/Video"   # contains 1st_10min.mp4 ... 7th_10min.mp4
-out_root   = "/content/drive/MyDrive/Data/Processed/Video_latents_per_clip"
+video_root = "/content/drive/MyDrive/Data/Raw/Video"
+out_root   = "/content/drive/MyDrive/Data/Processed/Video_latents_per_clip_subset"
 os.makedirs(out_root, exist_ok=True)
 
 # Load pretrained Stable Diffusion VAE
@@ -33,34 +32,31 @@ def encode_frames(frames_tchw):
     return lat.cpu().numpy().astype("float32")  # [T,4,36,64]
 
 def extract_clip(video_reader, fps, t0, t1, F=6):
-    """Extract a 2s clip between t0–t1 sec, sample F frames evenly, encode to latents."""
     i0 = int(round(t0 * fps))
     i1 = int(round(t1 * fps))
     if i1 <= i0:
         i1 = i0 + int(round(2 * fps))  # fallback ~2s span
 
     idxs = np.linspace(i0, i1 - 1, num=F, dtype=int)
-
     frames = video_reader.get_batch(idxs).asnumpy()  # [F,H,W,C]
 
     proc_frames = []
     for f in frames:
-        pil_img = Image.fromarray(f)                     # Convert numpy → PIL
-        tensor_img = transform(pil_img).unsqueeze(0)     # [1,3,288,512]
+        pil_img = Image.fromarray(f)
+        tensor_img = transform(pil_img).unsqueeze(0)
         proc_frames.append(tensor_img)
 
     frames_torch = torch.cat(proc_frames, dim=0).to(device)  # [F,3,288,512]
-
     latents = encode_frames(frames_torch)  # [F,4,36,64]
     return latents
 
-def process_block(block_idx, fname, F=6):
+def process_block(block_idx, fname, F=6, max_concepts=5):
     path = os.path.join(video_root, fname)
     video_reader = decord.VideoReader(path)
     fps = video_reader.get_avg_fps()
 
-    for c in range(40):
-        base = 3 + 13 * c  # skip 3s hint, then 13s per concept
+    for c in range(max_concepts):  # only first 5 concepts
+        base = 3 + 13 * c
         for i in range(5):
             t0, t1 = base + 2 * i, base + 2 * i + 2
             lat = extract_clip(video_reader, fps, t0, t1, F=F)
@@ -68,24 +64,16 @@ def process_block(block_idx, fname, F=6):
             out_dir = os.path.join(out_root, f"block{block_idx+1:02d}", f"class{c:02d}")
             os.makedirs(out_dir, exist_ok=True)
             out_path = os.path.join(out_dir, f"clip{i}.npy")
-
             np.save(out_path, lat)
-    print(f"Finished block {block_idx+1}: saved latents to {out_root}")
+
+    print(f"Finished block {block_idx+1} (subset): saved latents to {out_root}")
 
 def main():
-    files = {
-        0: "1st_10min.mp4",
-        1: "2nd_10min.mp4",
-        2: "3rd_10min.mp4",
-        3: "4th_10min.mp4",
-        4: "5th_10min.mp4",
-        5: "6th_10min.mp4",
-        6: "7th_10min.mp4"
-    }
+    files = {0: "1st_10min.mp4"}  # only first block
     for b, fname in files.items():
         print(f"Processing block {b+1}: {fname}")
-        process_block(b, fname, F=6)
-    print("✅ All blocks processed. Latents saved per clip.")
+        process_block(b, fname, F=6, max_concepts=5)
+    print("✅ Subset processed. Latents saved per clip.")
 
 if __name__ == "__main__":
     main()
