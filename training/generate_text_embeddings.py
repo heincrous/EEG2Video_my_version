@@ -1,3 +1,5 @@
+# training/generate_text_embeddings.py
+
 import os
 import numpy as np
 import torch
@@ -9,38 +11,53 @@ def main():
     print("Loading CLIP...")
     model, preprocess = clip.load("ViT-B/32", device=device)
 
+    # Use the actual filenames in your Drive
+    caption_files = [
+        "1st_10min.txt",
+        "2nd_10min.txt",
+        "3rd_10min.txt",
+        "4th_10min.txt",
+        "5th_10min.txt",
+        "6th_10min.txt",
+        "7th_10min.txt",
+    ]
+
+    base_dir = "/content/drive/MyDrive/Data/Raw/BLIP-caption"
     all_embeddings = []
 
-    # Loop over 1st_10min.txt ... 7th_10min.txt
-    for i in range(1, 8):
-        caption_file = f"/content/drive/MyDrive/Data/Raw/BLIP-caption/{i}st_10min.txt" if i == 1 else \
-                       f"/content/drive/MyDrive/Data/Raw/BLIP-caption/{i}th_10min.txt"
-
+    for fname in caption_files:
+        caption_file = os.path.join(base_dir, fname)
         if not os.path.exists(caption_file):
             print(f"Warning: {caption_file} not found, skipping")
             continue
 
-        # Load lines of captions
+        # Load captions (one per line)
         with open(caption_file, "r") as f:
             captions = [line.strip() for line in f if line.strip()]
 
         print(f"Loaded {len(captions)} captions from {caption_file}")
 
-        # Encode with CLIP
-        text = clip.tokenize(captions, truncate=True).to(device)
-        with torch.no_grad():
-            text_features = model.encode_text(text).cpu().numpy()
+        # Encode in batches
+        batch_size = 32
+        embeddings = []
+        for i in tqdm(range(0, len(captions), batch_size)):
+            batch = captions[i:i+batch_size]
+            tokens = clip.tokenize(batch, truncate=True).to(device)
+            with torch.no_grad():
+                emb = model.encode_text(tokens)
+            embeddings.append(emb.cpu().numpy())
 
-        all_embeddings.append(text_features)
+        embeddings = np.concatenate(embeddings, axis=0)
+        all_embeddings.append(embeddings)
 
-    if len(all_embeddings) == 0:
+    if not all_embeddings:
         raise RuntimeError("No caption files found. Check BLIP-caption folder.")
 
     # Concatenate across all blocks
     all_embeddings = np.concatenate(all_embeddings, axis=0)
     print("Final embeddings shape:", all_embeddings.shape)
 
-    # Save inside training folder
+    # Save
     save_path = "/content/EEG2Video_my_version/training/text_embedding.npy"
     np.save(save_path, all_embeddings)
     print(f"Saved embeddings to {save_path}")
