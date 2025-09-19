@@ -11,8 +11,8 @@ from transformers import CLIPTokenizer
 from models_original.tuneavideo.unet import UNet3DConditionModel
 from pipelines_original.pipeline_tuneeeg2video import TuneAVideoPipeline
 from models_original.tuneavideo.util import save_videos_grid
-from models_original.seq2seq import Seq2SeqModel
 from training_original.train_semantic_predictor import SemanticPredictor
+from training_original.train_seq2seq import myTransformer   # <-- authors' model
 
 # ----------------------------------------------------------------
 # Load EEG features (example: subject1, block0, class0, clip0)
@@ -54,23 +54,17 @@ pipe = TuneAVideoPipeline(
 pipe.enable_vae_slicing()
 # ----------------------------------------------------------------
 
-def run_inference(seq2seq_model, save_name, normalize_latents=True):
+def run_inference(seq2seq_model, save_name):
     with torch.no_grad():
         B = eeg_input_4d.size(0)
-        F = eeg_input_4d.size(1)  # number of windows
+        F = eeg_input_4d.size(1)
+
+        # Authors' model: forward returns (txt_logits, latents)
         dummy_tgt = torch.zeros((B, F, 4, 36, 64), device="cuda")
+        _, latents = seq2seq_model(eeg_input_4d, dummy_tgt)
 
-        # Seq2Seq forward: [B,F,62,100] -> [B,F,9216]
-        pred_latents = seq2seq_model(eeg_input_4d, dummy_tgt)
-
-        # Debug stats before normalization
-        print(f"[{save_name}] raw latents -> mean: {pred_latents.mean().item():.4f}, std: {pred_latents.std().item():.4f}")
-
-        if normalize_latents:
-            pred_latents = (pred_latents - pred_latents.mean()) / (pred_latents.std() + 1e-6)
-            print(f"[{save_name}] normalized latents -> mean: {pred_latents.mean().item():.4f}, std: {pred_latents.std().item():.4f}")
-
-        latents = pred_latents.view(B, F, 4, 36, 64).permute(0, 2, 1, 3, 4).contiguous()
+        print(f"[{save_name}] latents -> shape={latents.shape}, "
+              f"mean={latents.mean().item():.4f}, std={latents.std().item():.4f}")
 
         # Semantic predictor: [B, features] -> [B,77,768]
         eeg_embed = semantic_model(eeg_flat)
@@ -92,15 +86,16 @@ def run_inference(seq2seq_model, save_name, normalize_latents=True):
         return save_path
 
 # ----------------------------------------------------------------
-# Run with trained Seq2Seq
-CKPT_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_sub1to10_blocks1to4.pt"
-seq2seq_trained = Seq2SeqModel().to("cuda")
-seq2seq_trained.load_state_dict(torch.load(CKPT_PATH, map_location="cuda"))
+# Run with trained Seq2Seq (authors' checkpoint)
+CKPT_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seqmodel.pt"
+seq2seq_trained = myTransformer().to("cuda")
+ckpt = torch.load(CKPT_PATH, map_location="cuda")
+seq2seq_trained.load_state_dict(ckpt["state_dict"])
 seq2seq_trained.eval()
 trained_path = run_inference(seq2seq_trained, "sample_trained")
 
 # Run with random Seq2Seq
-seq2seq_random = Seq2SeqModel().to("cuda")
+seq2seq_random = myTransformer().to("cuda")
 seq2seq_random.eval()
 random_path = run_inference(seq2seq_random, "sample_random")
 
