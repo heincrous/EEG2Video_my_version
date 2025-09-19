@@ -5,7 +5,6 @@ from models_original.tuneavideo.unet import UNet3DConditionModel
 from models_original.tuneavideo.util import save_videos_grid
 from models_original.seq2seq import Seq2SeqModel
 from utils.gt_labels import GT_LABEL
-# Future: from EEG2Video.EEG2Video_New.Semantic.eeg_text import CLIP or CLIPSmall
 
 import torch
 import numpy as np
@@ -18,20 +17,15 @@ seq2seq.load_state_dict(torch.load(CKPT_PATH, map_location="cuda"))
 seq2seq.eval()
 print("Loaded Seq2Seq checkpoint:", CKPT_PATH)
 
-# Semantic adapter (ensures shape [B,77,768])
-class SemanticAdapter(torch.nn.Module):
+# Dummy semantic model (EEG -> [B,77,768])
+class DummySemantic(torch.nn.Module):
     def forward(self, x):
         b = x.size(0)
-        # if already [B,77,768], keep it
-        if x.dim() == 3 and x.shape[1:] == (77, 768):
-            return x
-        flat = x.view(b, -1)
-        out = torch.zeros((b, 77 * 768), device=x.device, dtype=x.dtype)
-        n = min(flat.size(1), 77 * 768)
-        out[:, :n] = flat[:, :n]
-        return out.view(b, 77, 768)
+        expanded = torch.zeros((b, 77 * 768), device=x.device)
+        expanded[:, :min(x.shape[1], 77 * 768)] = x[:, :min(x.shape[1], 77 * 768)]
+        return expanded.view(b, 77, 768)
 
-semantic_model = SemanticAdapter().to("cuda")
+semantic_model = DummySemantic().to("cuda")
 # ----------------------------------------------------------------
 
 # ----------------------------------------------------------------
@@ -39,8 +33,10 @@ semantic_model = SemanticAdapter().to("cuda")
 eeg_data_path = "/content/drive/MyDrive/Data/Raw/EEG/sub1.npy"
 eegdata = np.load(eeg_data_path)
 
-# Use authors’ GT ordering
+# Labels (authors’ GT ordering, unchanged)
 GT_label = GT_LABEL
+
+# Test EEG [clips,timepoints] -> shrink to manageable dim
 test_indices = [list(GT_label[6]).index(el) for el in range(1, 41)]
 eeg_test = torch.from_numpy(eegdata[6][test_indices, :])  # [40, T]
 eeg_test = eeg_test.view(eeg_test.shape[0], -1)[:, :310].float().cuda()
@@ -77,7 +73,7 @@ with torch.no_grad():
     dummy_tgt = torch.zeros((B, F, 4, 36, 64), device="cuda")
 
     eeg_input = torch.zeros((B, F, 62, 100), device="cuda")
-    flat = eeg_test[0:1, :min(62*100, eeg_test.shape[1])]
+    flat = eeg_test[0:1, :min(62 * 100, eeg_test.shape[1])]
     eeg_input.view(B, -1)[:, :flat.numel()] = flat.view(-1)
 
     pred_latents = seq2seq(eeg_input, dummy_tgt)  # [B,F,9216]
@@ -90,10 +86,13 @@ print(">>> latents final shape:", latents.shape)
 # Inference loop (2 samples for testing)
 print(">>> Starting inference loop")
 for i in range(2):
+    # Apply semantic model: [B,310] -> [B,77,768]
+    eeg_embed = semantic_model(eeg_test[i:i+1, ...])
+
     video = pipe(
-        semantic_model,                # adapter ensures [B,77,768]
-        eeg_test[i:i+1, ...],          # raw [1,310]
-        latents=latents,               # [1,4,6,36,64]
+        None,                        # model arg not needed, embeddings are ready
+        eeg_embed,                   # pass precomputed embeddings
+        latents=latents,
         video_length=6,
         height=288,
         width=512,
