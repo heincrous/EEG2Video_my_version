@@ -12,7 +12,7 @@ from models_original.tuneavideo.unet import UNet3DConditionModel
 from pipelines_original.pipeline_tuneeeg2video import TuneAVideoPipeline
 from models_original.tuneavideo.util import save_videos_grid
 from models_original.seq2seq import Seq2SeqModel
-from training_original.train_semantic_predictor_full import SemanticPredictor
+from training_original.train_semantic_predictor import SemanticPredictor
 
 # ----------------------------------------------------------------
 # Load EEG features (example: first subject)
