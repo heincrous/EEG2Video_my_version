@@ -9,12 +9,13 @@ import numpy as np
 from models_original.seq2seq import Seq2SeqModel
 
 
-# Dataset: EEG features + per-clip video latents
+# Dataset: EEG time-window features + per-clip video latents
 class SeedDVEEGDataset(torch.utils.data.Dataset):
     def __init__(self, eeg_file, latent_root):
         super().__init__()
-        # Load one subject's EEG features (7,40,5,62,5)
-        self.eeg_data = np.load(eeg_file)  # shape [7,40,5,62,5]
+        # Load one subject's EEG time-window features
+        # Shape: [7,40,5,4,62,100] = block × class × clip × windows × channels × time
+        self.eeg_data = np.load(eeg_file)
         self.latent_root = latent_root
 
         # Build index map, only keep entries that have a latent file
@@ -39,8 +40,8 @@ class SeedDVEEGDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         b, c, i = self.index_map[idx]
 
-        # EEG clip: shape (5,62,5), already includes 5 slices
-        eeg_clip = self.eeg_data[b, c, i]  # [5,62,5]
+        # EEG clip: shape (F,62,100), where F=4 windows per clip
+        eeg_clip = self.eeg_data[b, c, i]  # [4,62,100]
 
         # Video latents: (6,4,36,64) → flatten to (6,9216)
         latent_path = os.path.join(
@@ -63,7 +64,7 @@ def main():
     model = Seq2SeqModel().to(device)
 
     # Dataset & loader
-    eeg_file = "/content/drive/MyDrive/Data/Processed/EEG_DE_1per2s/sub1.npy"
+    eeg_file = "/content/drive/MyDrive/Data/Processed/EEG_timewindows_100/sub1.npy"
     latent_root = "/content/drive/MyDrive/Data/Processed/Video_latents_per_clip/"
     dataset = SeedDVEEGDataset(eeg_file, latent_root)
     dataloader = DataLoader(dataset, batch_size=2, shuffle=True)
@@ -75,7 +76,7 @@ def main():
     # Training loop
     for epoch in range(2):  # quick test run
         for eeg, target in dataloader:
-            # eeg: [B,5,62,5], target: [B,6,9216]
+            # eeg: [B,F,62,100], target: [B,6,9216]
             eeg, target = eeg.to(device), target.to(device)
 
             optimizer.zero_grad()

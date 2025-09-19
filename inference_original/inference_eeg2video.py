@@ -1,4 +1,4 @@
-# EEG2Video Inference (Seq2Seq with DE features [B,F,62,5])
+# EEG2Video Inference (Seq2Seq with time-window EEG [B,F,62,100])
 
 import os
 import torch
@@ -29,13 +29,13 @@ semantic_model = DummySemantic().to("cuda")
 # ----------------------------------------------------------------
 
 # ----------------------------------------------------------------
-# Load EEG features (DE: [7,40,5,62,5])
-eeg_file = "/content/drive/MyDrive/Data/Processed/EEG_DE_1per2s/sub1.npy"
+# Load EEG time-window features (shape: [7,40,5,4,62,100])
+eeg_file = "/content/drive/MyDrive/Data/Processed/EEG_timewindows_100/sub1.npy"
 eeg_features = np.load(eeg_file)
 
 # Example: block01, class00, clip0
-eeg_clip = eeg_features[0, 0, 0]  # shape (5,62,5)
-eeg_input = torch.from_numpy(eeg_clip).unsqueeze(0).float().cuda()  # [1,5,62,5]
+eeg_clip = eeg_features[0, 0, 0]  # shape (4,62,100)
+eeg_input = torch.from_numpy(eeg_clip).unsqueeze(0).float().cuda()  # [1,4,62,100]
 print(">>> eeg_input shape:", eeg_input.shape)
 # ----------------------------------------------------------------
 
@@ -65,7 +65,7 @@ print(">>> Pipeline ready")
 # ----------------------------------------------------------------
 # Generate latents from Seq2Seq
 with torch.no_grad():
-    B, F = eeg_input.size(0), eeg_input.size(1)  # B=1, F=5
+    B, F = eeg_input.size(0), eeg_input.size(1)  # B=1, F=4
     dummy_tgt = torch.zeros((B, F, 4, 36, 64), device="cuda")
 
     pred_latents = seq2seq(eeg_input, dummy_tgt)  # [B,F,9216]
@@ -81,7 +81,7 @@ os.makedirs("Results", exist_ok=True)
 
 with torch.no_grad():
     # Flatten EEG features before dummy semantic projection
-    eeg_embed = semantic_model(eeg_input.view(1, -1))  # [1, 5*62*5] -> [1,77,768]
+    eeg_embed = semantic_model(eeg_input.view(1, -1))  # [1, 4*62*100] -> [1,77,768]
 
     video = pipe(
         None,
