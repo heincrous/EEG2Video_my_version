@@ -15,7 +15,7 @@ def extract_time_windows(input_file, output_file, window_size=100, step_size=100
 
     # Number of windows per clip
     F = (T - window_size) // step_size + 1
-    print(f"Processing {input_file} -> {F} windows per clip")
+    print(f"  -> {os.path.basename(input_file)}: {F} windows per clip")
 
     out = np.zeros((B, C, I, F, Ch, window_size), dtype=np.float32)
 
@@ -29,7 +29,7 @@ def extract_time_windows(input_file, output_file, window_size=100, step_size=100
 
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     np.save(output_file, out)
-    print(f"Saved time-window EEG: {out.shape} -> {output_file}")
+    print(f"     Saved: {out.shape} -> {output_file}")
 
 
 if __name__ == "__main__":
@@ -42,9 +42,18 @@ if __name__ == "__main__":
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # Process all subject files in input_dir
-    for fname in sorted(os.listdir(args.input_dir)):
-        if fname.endswith(".npy") and fname.startswith("sub"):
-            input_file = os.path.join(args.input_dir, fname)
-            output_file = os.path.join(args.output_dir, fname)
-            extract_time_windows(input_file, output_file, args.window_size, args.step_size)
+    # Collect subject files
+    files = [f for f in os.listdir(args.input_dir) if f.startswith("sub") and f.endswith(".npy")]
+
+    # Sort numerically: sub1.npy, sub2.npy … sub16.npy
+    files = sorted(files, key=lambda x: int(x.replace("sub", "").replace(".npy", "")))
+
+    # Process in order
+    total = len(files)
+    for idx, fname in enumerate(files, start=1):
+        print(f"Processing subject {idx}/{total}: {fname}")
+        input_file = os.path.join(args.input_dir, fname)
+        output_file = os.path.join(args.output_dir, fname)
+        extract_time_windows(input_file, output_file, args.window_size, args.step_size)
+
+    print("✅ Finished converting all subjects.")

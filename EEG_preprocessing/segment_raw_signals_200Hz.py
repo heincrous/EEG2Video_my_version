@@ -4,14 +4,15 @@ import re
 from tqdm import tqdm
 
 # Segment EEG data into 2-second windows
-# Input:  (7, 62, 520s*fre)  →  7 blocks of continuous EEG
-# Output: (7, 40, 5, 62, 2*fre) → 7 blocks, 40 concepts, 5 clips, 62 channels, 400 samples (2s @ 200 Hz)
+# Input:  (7, 62, 104000) → 7 blocks of continuous EEG
+# Output: (7, 40, 5, 62, 400) → 7 blocks, 40 concepts, 5 clips, 62 channels, 400 samples (2s @ 200 Hz)
 
 fre = 200
 
 def get_files_names_in_directory(directory):
     files = [f for f in os.listdir(directory) if f.endswith(".npy")]
-    files.sort(key=lambda x: int(re.search(r'\d+', x).group()))
+    # Ensure exact ordering: sub1.npy, sub2.npy, ...
+    files.sort(key=lambda x: int(re.search(r"sub(\d+)", x).group(1)))
     return files
 
 # Input/output paths on Google Drive
@@ -32,7 +33,7 @@ for subname in sub_list:
         now_data = npydata[block_id]  # (62,104000)
         l = 0
         block_data = np.empty((0, 5, 62, 2 * fre))
-        for class_id in tqdm(range(40)):
+        for class_id in tqdm(range(40), desc=f"Class loop (Block {block_id})"):
             l += 3 * fre  # skip 3s hint
             class_data = np.empty((0, 62, 2 * fre))
             for i in range(5):
