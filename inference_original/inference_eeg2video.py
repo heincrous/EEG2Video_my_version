@@ -98,7 +98,7 @@ random_path = run_inference(seq2seq_random, "sample_random")
 # Load ground truth video (block01/class00/clip0) from SEED-DV
 gt_video_path = "/content/drive/MyDrive/Data/Raw/Video/1st_10min.mp4"
 vr = decord.VideoReader(gt_video_path)
-gt_frames = [Image.fromarray(f.asnumpy()) for f in vr[0:4]]  # 4 frames for clip0
+gt_frames = [Image.fromarray(frame.asnumpy()) for frame in vr.get_batch(range(4))]
 
 # Helper to load GIF frames
 def load_gif_frames(path):
