@@ -9,10 +9,11 @@ from models_original.seq2seq import Seq2SeqModel
 
 # Dummy dataset to mimic EEG → latent frames
 class DummyEEGDataset(torch.utils.data.Dataset):
-    def __init__(self, n_samples=100, n_channels=62, timesteps=200, frames=6):
+    def __init__(self, n_samples=100, frames=7, n_channels=62, timesteps=100):
         super().__init__()
-        self.data = torch.randn(n_samples, n_channels, timesteps)   # [samples, 62, 200]
-        # Pretend target latent is shaped like SD latents [frames, 4, 32, 32]
+        # Authors expect [batch, frames, 62, 100]
+        self.data = torch.randn(n_samples, frames, n_channels, timesteps)
+        # Pretend target latent is [frames, 4, 32, 32]
         self.targets = torch.randn(n_samples, frames, 4, 32, 32)
 
     def __len__(self):
