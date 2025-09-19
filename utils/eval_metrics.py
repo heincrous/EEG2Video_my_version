@@ -40,17 +40,23 @@ seq2seq_random = Seq2SeqModel().to("cuda")
 seq2seq_random.eval()
 
 # ----------------------------------------------------------------
-# Ground truth frames (decord)
+# Ground truth frames (from SEED-DV video)
 gt_video = "/content/drive/MyDrive/Data/Raw/Video/1st_10min.mp4"
 vr = decord.VideoReader(gt_video)
 clip_idx = 0
 frame_start = clip_idx * 48   # 2s at 24fps
 frame_end = frame_start + 48
+
 batch = vr.get_batch(range(frame_start, frame_end)).asnumpy()  # (48,H,W,3)
 gt_frames = [Image.fromarray(f) for f in batch]
 
+transform = T.Compose([
+    T.Resize((288,512)),
+    T.ToTensor()
+])
+gt_tensors = torch.stack([transform(f) for f in gt_frames])  # [48,3,288,512]
 
-# Downsample to match our window count (e.g., 6 frames)
+# Downsample to match EEG windows (e.g., 6 frames)
 gt_tensors = gt_tensors[::8]  # every 8th frame -> 6 frames
 
 # ----------------------------------------------------------------
@@ -64,12 +70,12 @@ def evaluate(seq2seq_model, name):
         dummy_tgt = torch.zeros((B, F, 4, 36, 64), device="cuda")
         pred_latents = seq2seq_model(eeg_input_4d, dummy_tgt)
 
-        # Debug
+        # Debug stats
         print(f"[{name}] latents mean={pred_latents.mean().item():.4f}, std={pred_latents.std().item():.4f}")
 
-        # Fake recon as RGB by reshaping latents (for metrics only)
-        fake_imgs = pred_latents.view(F, 3, 96, 96)  # coarse reshaping
-        fake_imgs = (fake_imgs - fake_imgs.min()) / (fake_imgs.max()-fake_imgs.min()+1e-6)
+        # Fake recon as RGB by reshaping latents (for metrics only, not real decoding)
+        fake_imgs = pred_latents.view(F, 3, 96, 96)  # coarse reshape
+        fake_imgs = (fake_imgs - fake_imgs.min()) / (fake_imgs.max() - fake_imgs.min() + 1e-6)
         fake_imgs = torch.nn.functional.interpolate(fake_imgs, size=(288,512), mode="bilinear")
 
         # SSIM (mean over frames)
@@ -93,4 +99,3 @@ def evaluate(seq2seq_model, name):
 print("\nEvaluating trained vs random...")
 trained_ssim, trained_sim = evaluate(seq2seq_trained, "Trained")
 random_ssim, random_sim = evaluate(seq2seq_random, "Random")
-
