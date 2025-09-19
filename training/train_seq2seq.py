@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-# Import our wrapper
+# Import our fixed wrapper (uses predictor instead of txtpredictor)
 from models_original.seq2seq import Seq2SeqModel
 
 
@@ -14,7 +14,7 @@ class DummyEEGDataset(torch.utils.data.Dataset):
         super().__init__()
         # EEG input: [B, 7, 62, 100]
         self.data = torch.randn(n_samples, frames, n_channels, timesteps)
-        # Target latents: [B, 7, 4, 36, 64]
+        # Target latents: [B, 7, 4, 36, 64] → flatten to [B, 7, 9216]
         self.targets = torch.randn(n_samples, frames, 4, 36, 64)
 
     def __len__(self):
@@ -41,15 +41,17 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
     # Training loop
-    for epoch in range(2):  # small for testing
+    for epoch in range(2):  # keep it small for testing
         for eeg, target in dataloader:
             eeg, target = eeg.to(device), target.to(device)
 
             optimizer.zero_grad()
-            output = model(eeg, target)   # Seq2SeqModel forces [B,7,9216]
+            output = model(eeg, target)   # Now [B,7,9216]
 
-            # Flatten target to [B,7,9216] to match output
-            loss = criterion(output, target.view(output.shape))
+            # Flatten target latents to [B,7,9216]
+            target_flat = target.view(output.shape)
+
+            loss = criterion(output, target_flat)
             loss.backward()
             optimizer.step()
 
