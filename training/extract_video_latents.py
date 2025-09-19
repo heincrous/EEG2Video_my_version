@@ -66,14 +66,18 @@ def process_block(block_idx, fname, F=6, max_concepts=40):
             out_path = os.path.join(out_dir, f"clip{i}.npy")
             np.save(out_path, lat)
 
-    print(f"✅ Finished block {block_idx+1}: saved {max_concepts*5} clips to {out_root}")
+    print(f"Finished block {block_idx+1}: saved {max_concepts*5} clips to {out_root}")
 
 def main():
-    files = {0: "1st_10min.mp4"}  # only first block
+    files = {
+        0: "2nd_10min.mp4",
+        1: "3rd_10min.mp4",
+        2: "4th_10min.mp4"
+        }
     for b, fname in files.items():
         print(f"Processing block {b+1}: {fname}")
         process_block(b, fname, F=6, max_concepts=40)
-    print("✅ All requested blocks processed. Latents saved per clip.")
+    print("All requested blocks processed. Latents saved per clip.")
 
 if __name__ == "__main__":
     main()
