@@ -5,21 +5,20 @@ class Seq2SeqModel(myTransformer):
         super().__init__(d_model=d_model)
 
     def forward(self, src, tgt):
-        # Run the encoder steps manually, not the parent forward
-        src = self.eeg_embedding(src.reshape(src.shape[0] * src.shape[1], 1, 62, 100)).reshape(src.shape[0], 7, -1)
-        tgt = tgt.reshape(tgt.shape[0], tgt.shape[1], tgt.shape[2] * tgt.shape[3] * tgt.shape[4])
-        tgt = self.img_embedding(tgt)
+        # Call the parent forward
+        out = super().forward(src, tgt)
 
-        # Add positional encodings
-        src = self.positional_encoding(src)
-        tgt = self.positional_encoding(tgt)
+        # Parent forward may return logits (B,13) or embeddings before predictor
+        if isinstance(out, tuple):
+            pred = out[0]
+        else:
+            pred = out
 
-        # Mask for autoregression
-        tgt_mask = self.generate_square_subsequent_mask(tgt.size(1)).to(tgt.device)
-
-        # Transformer
-        memory = self.transformer_encoder(src)
-        output = self.transformer_decoder(tgt, memory, tgt_mask=tgt_mask)
-
-        # Instead of txtpredictor, use latent predictor
-        return self.predictor(output)
+        # If the output looks like classification logits, re-map it
+        if pred.shape[-1] == 13:
+            # Take the decoder hidden states before classification
+            # In parent code: 'out' just before txtpredictor is the hidden reps
+            # Here we assume 'pred' is decoder hidden reps, so project to 9216
+            return self.predictor(pred)
+        else:
+            return pred

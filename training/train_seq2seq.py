@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-# Import our fixed wrapper (uses predictor instead of txtpredictor)
+# Import our fixed wrapper (Seq2SeqModel returns 9216 latents instead of 13 classes)
 from models_original.seq2seq import Seq2SeqModel
 
 
@@ -41,14 +41,14 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
     # Training loop
-    for epoch in range(2):  # keep it small for testing
+    for epoch in range(2):  # small for testing
         for eeg, target in dataloader:
             eeg, target = eeg.to(device), target.to(device)
 
             optimizer.zero_grad()
-            output = model(eeg, target)   # Now [B,7,9216]
+            output = model(eeg, target)   # Now outputs [B,7,9216]
 
-            # Flatten target latents to [B,7,9216]
+            # Flatten target to [B,7,9216]
             target_flat = target.view(output.shape)
 
             loss = criterion(output, target_flat)
