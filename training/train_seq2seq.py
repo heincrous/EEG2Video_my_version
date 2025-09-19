@@ -4,17 +4,15 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-# Import Seq2Seq model from authors' code (via wrapper in __init__.py)
+# Import Seq2Seq model (wrapper points to myTransformer)
 from models_original.seq2seq import Seq2SeqModel
 
-# Dummy dataset to mimic EEG → latent frames
+# Dummy dataset for classification (13 classes, like authors’ txtpredictor)
 class DummyEEGDataset(torch.utils.data.Dataset):
-    def __init__(self, n_samples=100, frames=7, n_channels=62, timesteps=100):
+    def __init__(self, n_samples=100, frames=7, n_channels=62, timesteps=100, n_classes=13):
         super().__init__()
-        # EEG input
         self.data = torch.randn(n_samples, frames, n_channels, timesteps)  # [B,7,62,100]
-        # Target latents (like SD’s 4x36x64)
-        self.targets = torch.randn(n_samples, frames, 4, 36, 64)
+        self.targets = torch.randint(0, n_classes, (n_samples,))           # [B] class labels
 
     def __len__(self):
         return len(self.data)
@@ -35,31 +33,32 @@ def main():
     dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
 
     # Loss & optimizer
-    criterion = nn.MSELoss()
+    criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
     # Training loop
-    for epoch in range(2):  # keep small for testing
-        criterion = nn.CrossEntropyLoss()
-
+    for epoch in range(2):  # small for testing
         for eeg, target in dataloader:
             eeg, target = eeg.to(device), target.to(device)
 
             optimizer.zero_grad()
-            output = model(eeg, target)
+            # Pass eeg as src, and a dummy tensor as tgt to satisfy forward()
+            dummy_tgt = torch.zeros_like(eeg)[:, :, :4, :4]  # small filler
+            output = model(eeg, dummy_tgt)
 
             if isinstance(output, tuple):
                 output = output[0]
 
-            # flatten target to match [B, frames, 9216] → [B*frames, 9216]
-            loss = criterion(output, target.view(output.size()))
+            loss = criterion(output, target)
             loss.backward()
             optimizer.step()
 
         print(f"Epoch {epoch+1}: Loss = {loss.item():.4f}")
 
     # Save checkpoint
-    torch.save(model.state_dict(), os.path.join(save_dir, "seq2seq_dummy.pt"))
+    ckpt_path = os.path.join(save_dir, "seq2seq_dummy.pt")
+    torch.save(model.state_dict(), ckpt_path)
+    print(f"Checkpoint saved at {ckpt_path}")
 
 if __name__ == "__main__":
     main()
