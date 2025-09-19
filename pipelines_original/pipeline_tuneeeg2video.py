@@ -33,7 +33,7 @@ from diffusers.utils import deprecate, logging, BaseOutput
 
 from einops import rearrange
 
-from models.unet import UNet3DConditionModel
+from models_original.diffusion.unet import UNet3DConditionModel
 
 torch.cuda.set_device(0)
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
