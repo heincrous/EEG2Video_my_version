@@ -70,6 +70,8 @@ def main(
     use_8bit_adam: bool = False,
     enable_xformers_memory_efficient_attention: bool = True,
     seed: Optional[int] = None,
+    num_train_epochs: int = 20,          # <— ADD THIS
+    dana_beta: float = 0.3
 ):
     *_, config = inspect.getargvalues(inspect.currentframe())
 
@@ -223,7 +225,7 @@ def main(
                 latents = latents * 0.18215
 
                 # --- Apply DANA noise ---
-                dynamic_beta = config.get("dana_beta", 0.3)
+                dynamic_beta = config.get("dana_beta", dana_beta)
                 latents = dana.forward(latents, dynamic_beta)
                 # ------------------------
 
