@@ -8,7 +8,7 @@ from tqdm import tqdm
 from einops import rearrange
 import os
 
-from utils.gt_label import GT_label  # use the shared GT_label
+from utils.GT_LABEL import GT_LABEL  # use the shared GT_LABEL
 
 # ----------------------------
 # Semantic Predictor Network
@@ -68,7 +68,7 @@ if __name__ == "__main__":
 
     EEG = []
     for i in range(6):  # use first 6 blocks
-        indices = [list(GT_label[i]).index(element) for element in range(1, 41)]  # classes 1–40
+        indices = [list(GT_LABEL[i]).index(element) for element in range(1, 41)]  # classes 1–40
         chosen_eeg = eegdata[i][indices, :]
         EEG.append(chosen_eeg)
     EEG = np.stack(EEG, axis=0)
