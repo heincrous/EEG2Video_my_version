@@ -168,7 +168,7 @@ def main(
     validation_pipeline.enable_vae_slicing()
     ddim_inv_scheduler = DDIMScheduler.from_pretrained(pretrained_model_path, subfolder='scheduler')
     ddim_inv_scheduler.set_timesteps(validation_data.num_inv_steps)
-    num_train_epochs = 5  # bump later
+    num_train_epochs = config["num_train_epochs"]
 
     # Scheduler
     lr_scheduler = get_scheduler(
@@ -223,7 +223,7 @@ def main(
                 latents = latents * 0.18215
 
                 # --- Apply DANA noise ---
-                dynamic_beta = 0.3
+                dynamic_beta = config.get("dana_beta", 0.3)
                 latents = dana.forward(latents, dynamic_beta)
                 # ------------------------
 

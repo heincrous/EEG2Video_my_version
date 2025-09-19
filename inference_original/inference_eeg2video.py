@@ -43,7 +43,7 @@ DIFFUSION_CKPT = "/content/drive/MyDrive/EEG2Video_checkpoints/videodiffusion"
 vae = AutoencoderKL.from_pretrained(DIFFUSION_CKPT, subfolder="vae")
 unet = UNet3DConditionModel.from_pretrained_2d(DIFFUSION_CKPT, subfolder="unet")
 scheduler = DDIMScheduler.from_pretrained(DIFFUSION_CKPT, subfolder="scheduler")
-tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
+tokenizer = CLIPTokenizer.from_pretrained(DIFFUSION_CKPT, subfolder="tokenizer")
 
 pipe = TuneAVideoPipeline(
     vae=vae,
@@ -99,7 +99,7 @@ random_path = run_inference(seq2seq_random, "sample_random")
 # ----------------------------------------------------------------
 # Ground truth info for the same EEG segment
 labels = np.load("/content/drive/MyDrive/Data/Raw/meta-info/All_video_label.npy")
-concept_id = labels[0,0,0]
+concept_id = labels[0, 0]  # block0, concept0
 
 with open("/content/drive/MyDrive/Data/Raw/BLIP-caption/1st_10min.txt") as f:
     lines = f.readlines()
