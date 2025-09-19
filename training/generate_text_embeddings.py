@@ -58,7 +58,7 @@ def main():
     print("Final embeddings shape:", all_embeddings.shape)
 
     # Save
-    save_path = "/content/EEG2Video_my_version/training/text_embedding.npy"
+    save_path = "/content/drive/MyDrive/Data/Raw/text_embedding.npy"
     np.save(save_path, all_embeddings)
     print(f"Saved embeddings to {save_path}")
 
