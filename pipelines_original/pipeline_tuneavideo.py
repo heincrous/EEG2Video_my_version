@@ -26,7 +26,7 @@ from diffusers.utils import deprecate, logging, BaseOutput
 
 from einops import rearrange
 
-from models_original.unet import UNet3DConditionModel
+from models_original.diffusion.unet import UNet3DConditionModel
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
