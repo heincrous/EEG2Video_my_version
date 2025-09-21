@@ -412,7 +412,6 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 import imageio
-import einops
 
 from accelerate import Accelerator
 from accelerate.logging import get_logger
@@ -548,20 +547,16 @@ for epoch in tqdm(range(1, NUM_EPOCHS+1)):
             if pixel_values.ndim == 4:
                 pixel_values = pixel_values.unsqueeze(0)
 
-            latents = pixel_values.permute(0,2,1,3,4)  # [B,4,F,H,W]
+            # Rearrange latents for 2D UNet
+            B, F_frames = pixel_values.shape[0], pixel_values.shape[1]
+            latents = pixel_values.permute(0,2,1,3,4).reshape(B*pixel_values.shape[2], pixel_values.shape[3], pixel_values.shape[1], pixel_values.shape[4])
 
             noise = torch.randn_like(latents)
-            timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device=latents.device).long()
+            timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (B,), device=latents.device).long()
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-            # ----------------------- Encode prompts (from BLIP .txt)
-            encoder_hidden_states = text_encoder(batch["prompt_ids"].to(accelerator.device))[0]
-            B, seq_len, hidden_dim = encoder_hidden_states.shape
-            F_frames = latents.shape[2]
-            encoder_hidden_states = einops.repeat(encoder_hidden_states, 'b n c -> b f n c', f=F_frames)
-            encoder_hidden_states = encoder_hidden_states.reshape(B*F_frames, seq_len, hidden_dim)
-
-            latents = latents.reshape(B*F_frames, latents.shape[1], latents.shape[3], latents.shape[4])
+            # ----------------------- Encode prompts correctly (no repeat)
+            encoder_hidden_states = text_encoder(batch["prompt_ids"].to(accelerator.device))[0]  # [B, seq_len, hidden_dim]
 
             model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
             target = noise if noise_scheduler.prediction_type=="epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
