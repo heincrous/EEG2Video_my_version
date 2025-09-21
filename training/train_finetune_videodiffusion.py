@@ -426,7 +426,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core_files.unet import UNet3DConditionModel
 from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
 
-# ----------------------- Inline save_videos_grid with single-channel fix
+# ----------------------- save_videos_grid
 def save_videos_grid(videos, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if isinstance(videos, torch.Tensor):
@@ -435,21 +435,27 @@ def save_videos_grid(videos, path):
         for i, video in enumerate(videos):
             frames = []
             for frame in video:
-                frame = frame.squeeze(0)  # remove channel dimension if C=1
-                if frame.ndim == 2:  # grayscale, convert to uint8
-                    frame = (frame * 255).astype('uint8')
-                else:  # for safety, convert any remaining channels
-                    frame = (frame.transpose(1,2,0) * 255).astype('uint8')
+                if frame.shape[0] == 1:
+                    frame = frame.squeeze(0)
+                else:
+                    frame = frame.transpose(1,2,0)
+                if frame.ndim == 2:
+                    frame = (frame * 255).astype("uint8")
+                else:
+                    frame = (frame * 255).astype("uint8")
                 frames.append(frame)
             imageio.mimsave(f"{path}_{i}.gif", frames, fps=5)
     elif videos.ndim == 4:  # [F, C, H, W]
         frames = []
         for frame in videos:
-            frame = frame.squeeze(0)
-            if frame.ndim == 2:
-                frame = (frame * 255).astype('uint8')
+            if frame.shape[0] == 1:
+                frame = frame.squeeze(0)
             else:
-                frame = (frame.transpose(1,2,0) * 255).astype('uint8')
+                frame = frame.transpose(1,2,0)
+            if frame.ndim == 2:
+                frame = (frame * 255).astype("uint8")
+            else:
+                frame = (frame * 255).astype("uint8")
             frames.append(frame)
         imageio.mimsave(path, frames, fps=5)
 
@@ -502,7 +508,7 @@ LEARNING_RATE = 3e-5
 GRAD_ACCUM_STEPS = 1
 MIXED_PRECISION = "fp16"
 SEED = 42
-NUM_EPOCHS = 10
+NUM_EPOCHS = 2
 MAX_FRAMES = None
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -534,7 +540,7 @@ train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffl
 train_dataloader = accelerator.prepare(train_dataloader)
 
 # ----------------------- Automatically infer video_length
-video_length = train_dataset[0]["pixel_values"].shape[0]  # number of frames
+video_length = train_dataset[0]["pixel_values"].shape[0]
 print(f"Inferred video_length: {video_length}")
 
 # ----------------------- Validation pipeline
@@ -555,18 +561,16 @@ unet, optimizer = accelerator.prepare(unet, optimizer)
 
 # ----------------------- Training loop
 global_step = 0
-for epoch in range(1, NUM_EPOCHS+1):
-    print(f"Starting epoch {epoch}/{NUM_EPOCHS}")
+for epoch in range(1, NUM_EPOCHS + 1):
     unet.train()
-    for step, batch in enumerate(train_dataloader):
-        if step % 1 == 0:
-            print(f"  Epoch {epoch} - Processing batch {step+1}/{len(train_dataloader)}")
+    train_bar = tqdm(train_dataloader, desc=f"Epoch {epoch}/{NUM_EPOCHS}", unit="batch")
+    for step, batch in enumerate(train_bar):
         with accelerator.accumulate(unet):
             pixel_values = batch["pixel_values"].to(weight_dtype)
             if pixel_values.ndim == 4:
                 pixel_values = pixel_values.unsqueeze(0)
             B, F_frames, C, H, W = pixel_values.shape
-            latents = pixel_values.permute(0,2,1,3,4).contiguous()  # [B, C, F, H, W]
+            latents = pixel_values.permute(0, 2, 1, 3, 4).contiguous()  # [B, C, F, H, W]
 
             noise = torch.randn_like(latents)
             timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (B,), device=latents.device).long()
@@ -575,7 +579,7 @@ for epoch in range(1, NUM_EPOCHS+1):
             encoder_hidden_states = text_encoder(batch["prompt_ids"].to(accelerator.device))[0]
 
             model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
-            target = noise if noise_scheduler.prediction_type=="epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
+            target = noise if noise_scheduler.prediction_type == "epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
             loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
             accelerator.backward(loss)
@@ -583,10 +587,7 @@ for epoch in range(1, NUM_EPOCHS+1):
             optimizer.step()
             optimizer.zero_grad()
         global_step += 1
-        if step % 5 == 0:
-            print(f"    Batch {step+1} - Loss: {loss.item():.6f} - Global step: {global_step}")
-
-    print(f"Finished epoch {epoch}/{NUM_EPOCHS}")
+        train_bar.set_postfix({"loss": f"{loss.item():.6f}"})
 
     # ----------------------- Validation / save GIFs
     if accelerator.is_main_process:
@@ -600,7 +601,6 @@ for epoch in range(1, NUM_EPOCHS+1):
                 video_length=video_length
             ).videos
             save_videos_grid(sample, f"{OUTPUT_DIR}/samples/sample-{epoch}/{i}.gif")
-            print(f"      Saved GIF for clip {i}")
 
 # ----------------------- Save final pipeline
 accelerator.wait_for_everyone()
