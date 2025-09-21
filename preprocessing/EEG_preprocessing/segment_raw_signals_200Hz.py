@@ -98,6 +98,10 @@ for subname in sub_list:
 
                 save_name = f"class{true_class:02d}_clip{clip_id+1:02d}.npy"
                 save_path = os.path.join(block_save_dir, save_name)
+
+                # ensure parent directory exists (extra safety)
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
                 np.save(save_path, clip_data)
 
     processed_count += 1
