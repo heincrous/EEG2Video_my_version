@@ -566,15 +566,17 @@ for epoch in tqdm(range(1, num_epochs+1)):
     unet.train()
     for step, batch in enumerate(train_dataloader):
         with accelerator.accumulate(unet):
-            pixel_values = batch["pixel_values"].unsqueeze(0).to(weight_dtype)  # add batch dim
-            video_length = pixel_values.shape[1]
-            latents = rearrange(pixel_values, "(b f) c h w -> b c f h w", f=video_length)
+            pixel_values = batch["pixel_values"].to(weight_dtype)  # remove extra unsqueeze
+            # ensure 5D: [batch, frames, channels, H, W]
+            if pixel_values.ndim == 4:
+                pixel_values = pixel_values.unsqueeze(0)
+            latents = rearrange(pixel_values, "b f c h w -> b c f h w")
 
             noise = torch.randn_like(latents)
             timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device=latents.device).long()
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-            encoder_hidden_states = batch["prompt_ids"].unsqueeze(0).to(weight_dtype)  # add batch dim
+            encoder_hidden_states = batch["prompt_ids"].to(weight_dtype)  # remove extra unsqueeze
             target = noise if noise_scheduler.prediction_type=="epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
 
             model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
