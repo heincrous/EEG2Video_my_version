@@ -1,16 +1,16 @@
 import sys
 import os
-import torch
-import numpy as np
-import imageio
+
+# Add your repo root to Python path
+repo_root = "/content/EEG2Video_my_version"  # change to your repo folder
+sys.path.append(repo_root)
+
+# Now imports will work
 from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
 from core_files.unet import UNet3DConditionModel
-from transformers import CLIPTextModel
 from diffusers import AutoencoderKL, DDIMScheduler
+from transformers import CLIPTextModel
 
-# ---------------- Add repo root ----------------
-repo_root = "/content/EEG2Video_my_version"
-sys.path.append(repo_root)
 
 # ---------------- CONFIG ----------------
 CHECKPOINT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
