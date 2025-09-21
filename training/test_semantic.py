@@ -1,7 +1,7 @@
 import os
 import torch
 import numpy as np
-from training.train_semantic_predictor import SemanticPredictor
+from train_semantic_predictor import SemanticPredictor
 
 # ---------------- Paths ----------------
 SEMANTIC_CKPT = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor.pt"
