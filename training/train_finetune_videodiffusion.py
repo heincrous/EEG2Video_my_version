@@ -412,6 +412,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 import imageio
+import numpy as np
 
 from accelerate import Accelerator
 from accelerate.logging import get_logger
@@ -508,7 +509,7 @@ LEARNING_RATE = 3e-5
 GRAD_ACCUM_STEPS = 1
 MIXED_PRECISION = "fp16"
 SEED = 42
-NUM_EPOCHS = 2
+NUM_EPOCHS = 1
 MAX_FRAMES = None
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -590,17 +591,33 @@ for epoch in range(1, NUM_EPOCHS + 1):
         train_bar.set_postfix({"loss": f"{loss.item():.6f}"})
 
     # ----------------------- Validation / save GIFs
-    if accelerator.is_main_process:
-        for i, text_path in enumerate(TEXT_PATHS):
-            with open(text_path, 'r') as f:
-                prompt_text = f.read().strip()
-            sample = validation_pipeline(
-                prompt_text,
-                generator=None,
-                latents=None,
-                video_length=video_length
-            ).videos
-            save_videos_grid(sample, f"{OUTPUT_DIR}/samples/sample-{epoch}/{i}.gif")
+    def save_videos_grid(videos, path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        if isinstance(videos, torch.Tensor):
+            videos = videos.cpu().numpy()
+
+        if videos.ndim == 5:  # [B, F, C, H, W]
+            for i, video in enumerate(videos):
+                frames = []
+                for frame in video:  # [C, H, W]
+                    if frame.shape[0] == 1:  # single channel
+                        frame = frame.squeeze(0)  # [H, W]
+                    else:  # multi-channel
+                        frame = frame.transpose(1, 2, 0)  # [H, W, C]
+                    frame = np.clip(frame * 255, 0, 255).astype(np.uint8)
+                    frames.append(frame)
+                imageio.mimsave(f"{path}_{i}.gif", frames, fps=5)
+
+        elif videos.ndim == 4:  # [F, C, H, W]
+            frames = []
+            for frame in videos:
+                if frame.shape[0] == 1:
+                    frame = frame.squeeze(0)  # [H, W]
+                else:
+                    frame = frame.transpose(1, 2, 0)  # [H, W, C]
+                frame = np.clip(frame * 255, 0, 255).astype(np.uint8)
+                frames.append(frame)
+            imageio.mimsave(path, frames, fps=5)
 
 # ----------------------- Save final pipeline
 accelerator.wait_for_everyone()
