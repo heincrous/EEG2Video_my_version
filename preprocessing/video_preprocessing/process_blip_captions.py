@@ -7,8 +7,6 @@ import clip
 # CONFIG
 RAW_BLIP_DIR = "/content/drive/MyDrive/EEG2Video_data/raw/BLIP-caption/"
 SAVE_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/"
-LOG_FILE = "/content/drive/MyDrive/EEG2Video_data/processed/processed_log.txt"
-PROCESS_TAG = "[BLIP]"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 os.makedirs(SAVE_DIR, exist_ok=True)
@@ -17,30 +15,33 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 model, preprocess = clip.load("ViT-B/32", device=device)
 model.eval()
 
-def get_files_in_directory(directory):
+def get_blip_files(directory):
     files = [f for f in os.listdir(directory) if f.endswith(".txt")]
     return sorted(files, key=lambda x: int(re.findall(r'\d+', x)[0]))
 
-def load_processed_log():
-    if not os.path.exists(LOG_FILE):
-        return set()
-    with open(LOG_FILE, "r") as f:
-        return set(line.strip() for line in f.readlines())
+# -----------------------------
+# Ask user which BLIP caption files to process
+# -----------------------------
+all_blip_files = get_blip_files(RAW_BLIP_DIR)
+print("Available BLIP caption files:", all_blip_files)
 
-def update_processed_log(entry):
-    if entry not in load_processed_log():
-        with open(LOG_FILE, "a") as f:
-            f.write(entry + "\n")
+user_input = input("Enter BLIP caption files to process (comma separated, e.g. block1.txt,block2.txt): ")
+blip_list = [f.strip() for f in user_input.split(",") if f.strip() in all_blip_files]
 
-# Main loop
-blip_files = get_files_in_directory(RAW_BLIP_DIR)
-processed = load_processed_log()
-processed_count, skipped_count = 0, 0
+if not blip_list:
+    raise ValueError("No valid BLIP caption files selected!")
 
-for block_idx, blip_file in enumerate(blip_files, start=1):
-    block_name = f"Block{block_idx}"
+processed_count = 0
+
+# -----------------------------
+# Process selected caption files
+# -----------------------------
+for block_idx, blip_file in enumerate(blip_list, start=1):
+    block_name = f"Block{all_blip_files.index(blip_file) + 1}"
     block_save_dir = os.path.join(SAVE_DIR, block_name)
     os.makedirs(block_save_dir, exist_ok=True)
+
+    print(f"\nProcessing {blip_file} -> {block_name}")
 
     with open(os.path.join(RAW_BLIP_DIR, blip_file), "r") as f:
         lines = [line.strip() for line in f.readlines() if line.strip()]
@@ -54,10 +55,6 @@ for block_idx, blip_file in enumerate(blip_files, start=1):
             if idx >= len(lines):
                 continue
             caption = lines[idx]
-            entry = f"{PROCESS_TAG} {block_name}/class{class_id+1:02d}_clip{clip_id+1:02d}"
-            if entry in processed:
-                skipped_count += 1
-                continue
 
             with torch.no_grad():
                 text = clip.tokenize([caption]).to(device)
@@ -68,7 +65,8 @@ for block_idx, blip_file in enumerate(blip_files, start=1):
             save_path = os.path.join(block_save_dir, f"class{class_id+1:02d}_clip{clip_id+1:02d}.npy")
             np.save(save_path, embedding)
 
-            update_processed_log(entry)
             processed_count += 1
 
-print(f"\nSummary: {processed_count} captions embedded, {skipped_count} skipped")
+    print(f"Finished {blip_file}, saved {processed_count} embeddings so far")
+
+print(f"\nSummary: {processed_count} captions embedded")
