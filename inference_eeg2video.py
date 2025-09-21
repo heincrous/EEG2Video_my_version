@@ -200,11 +200,12 @@ for i, (eeg, vid) in enumerate(test_loader):
     # Generate semantic embedding
     with torch.no_grad():
         semantic_embed = semantic_model(eeg)  # [B, 77*768]
+        semantic_embed = semantic_embed.view(eeg.shape[0], 77, 768)  # reshape to [B, 77, 768]
 
     # Diffusion inference (DANA) — no added noise
     with torch.no_grad():
         video_out = pipe(
-            prompt_embeddings=semantic_embed.unsqueeze(1),
+            prompt_embeddings=semantic_embed,
             latents=seq2seq_latent.unsqueeze(2),
             video_length=VIDEO_LENGTH,
             height=288,
@@ -221,3 +222,4 @@ for i, (eeg, vid) in enumerate(test_loader):
 
     if i == 2:  # limit for quick test
         break
+
