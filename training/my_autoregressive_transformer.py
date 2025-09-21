@@ -392,183 +392,170 @@
 # ---------------------------------------------------------------------------------------------------------------
 import os
 import math
+import random
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from einops import rearrange
+from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
+from sklearn.preprocessing import StandardScaler
 
-# -----------------------------
-# User parameters
-# -----------------------------
-NUM_EPOCHS = 5  # <--- set epochs here
-EEG_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments/"
-LATENT_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/Video_latents/"
-CHECKPOINT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/"
-os.makedirs(CHECKPOINT_DIR, exist_ok=True)
-
-# -----------------------------
-# Model definitions
-# -----------------------------
+# -----------------------
+# EEGNet embedding
+# -----------------------
 class MyEEGNet_embedding(nn.Module):
     def __init__(self, d_model=128, C=62, T=200, F1=16, D=4, F2=16, cross_subject=False):
-        super().__init__()
+        super(MyEEGNet_embedding, self).__init__()
         self.drop_out = 0.25 if cross_subject else 0.5
+
         self.block_1 = nn.Sequential(
             nn.ZeroPad2d((31, 32, 0, 0)),
-            nn.Conv2d(1, F1, (1, 64), bias=False),
+            nn.Conv2d(1, F1, kernel_size=(1, 64), bias=False),
             nn.BatchNorm2d(F1)
         )
         self.block_2 = nn.Sequential(
-            nn.Conv2d(F1, F1 * D, (C, 1), groups=F1, bias=False),
-            nn.BatchNorm2d(F1 * D), nn.ELU(),
-            nn.AvgPool2d((1, 4)), nn.Dropout(self.drop_out)
+            nn.Conv2d(F1, F1 * D, kernel_size=(C, 1), groups=F1, bias=False),
+            nn.BatchNorm2d(F1 * D),
+            nn.ELU(),
+            nn.AvgPool2d((1, 4)),
+            nn.Dropout(self.drop_out)
         )
         self.block_3 = nn.Sequential(
             nn.ZeroPad2d((7, 8, 0, 0)),
-            nn.Conv2d(F1 * D, F1 * D, (1, 16), groups=F1 * D, bias=False),
-            nn.Conv2d(F1 * D, F2, (1, 1), bias=False),
-            nn.BatchNorm2d(F2), nn.ELU(),
-            nn.AvgPool2d((1, 8)), nn.Dropout(self.drop_out)
+            nn.Conv2d(F1 * D, F1 * D, kernel_size=(1, 16), groups=F1 * D, bias=False),
+            nn.Conv2d(F1 * D, F2, kernel_size=(1, 1), bias=False),
+            nn.BatchNorm2d(F2),
+            nn.ELU(),
+            nn.AvgPool2d((1, 8)),
+            nn.Dropout(self.drop_out)
         )
         self.embedding = nn.Linear(48, d_model)
+
     def forward(self, x):
         x = self.block_1(x)
         x = self.block_2(x)
         x = self.block_3(x)
         x = x.view(x.shape[0], -1)
-        return self.embedding(x)
+        x = self.embedding(x)
+        return x
 
+# -----------------------
+# Positional encoding
+# -----------------------
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, dropout, max_len=5000):
-        super().__init__()
+    def __init__(self, d_model, dropout=0, max_len=5000):
+        super(PositionalEncoding, self).__init__()
         self.dropout = nn.Dropout(p=dropout)
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2) * -(math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-        self.register_buffer("pe", pe.unsqueeze(0))
-    def forward(self, x):
-        return self.dropout(x + self.pe[:, : x.size(1)].requires_grad_(False))
+        pe = pe.unsqueeze(0)
+        self.register_buffer("pe", pe)
 
+    def forward(self, x):
+        x = x + self.pe[:, : x.size(1)].requires_grad_(False)
+        return self.dropout(x)
+
+# -----------------------
+# Transformer model
+# -----------------------
 class myTransformer(nn.Module):
     def __init__(self, d_model=512):
-        super().__init__()
+        super(myTransformer, self).__init__()
         self.img_embedding = nn.Linear(4 * 36 * 64, d_model)
         self.eeg_embedding = MyEEGNet_embedding(d_model=d_model, C=62, T=100)
-        self.encoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model=d_model, nhead=4, batch_first=True), num_layers=2
+        self.transformer_encoder = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(d_model=d_model, nhead=4, batch_first=True),
+            num_layers=2
         )
-        self.decoder = nn.TransformerDecoder(
-            nn.TransformerDecoderLayer(d_model=d_model, nhead=4, batch_first=True), num_layers=4
+        self.transformer_decoder = nn.TransformerDecoder(
+            nn.TransformerDecoderLayer(d_model=d_model, nhead=4, batch_first=True),
+            num_layers=4
         )
         self.positional_encoding = PositionalEncoding(d_model, dropout=0)
-        self.txtpredictor = nn.Linear(512, 13)
-        self.predictor = nn.Linear(512, 4 * 36 * 64)
+        self.txtpredictor = nn.Linear(d_model, 13)
+        self.predictor = nn.Linear(d_model, 4 * 36 * 64)
+
     def forward(self, src, tgt):
-        src = self.eeg_embedding(src.reshape(src.shape[0] * src.shape[1], 1, 62, 100)).reshape(src.shape[0], 7, -1)
-        tgt = self.img_embedding(tgt.reshape(tgt.shape[0], tgt.shape[1], -1))
-        src, tgt = self.positional_encoding(src), self.positional_encoding(tgt)
-        tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt.size()[-2]).to(tgt.device)
-        enc_out = self.encoder(src)
+        src = self.eeg_embedding(src.reshape(src.shape[0] * src.shape[1], 1, 62, 100))
+        src = src.reshape(src.shape[0] // src.shape[1], src.shape[1], -1) if len(src.shape) == 3 else src
+        tgt = tgt.reshape(tgt.shape[0], tgt.shape[1], -1)
+        tgt = self.img_embedding(tgt)
+        src = self.positional_encoding(src)
+        tgt = self.positional_encoding(tgt)
+        tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt.size(1)).to(tgt.device)
+
+        encoder_output = self.transformer_encoder(src)
         new_tgt = torch.zeros((tgt.shape[0], 1, tgt.shape[2])).to(tgt.device)
         for i in range(6):
-            dec_out = self.decoder(new_tgt, enc_out, tgt_mask=tgt_mask[:i+1, :i+1])
-            new_tgt = torch.cat((new_tgt, dec_out[:, -1:, :]), dim=1)
-        enc_out = torch.mean(enc_out, dim=1)
-        return self.txtpredictor(enc_out), self.predictor(new_tgt).reshape(new_tgt.shape[0], new_tgt.shape[1], 4, 36, 64)
+            decoder_output = self.transformer_decoder(new_tgt, encoder_output, tgt_mask=tgt_mask[:i+1, :i+1])
+            new_tgt = torch.cat((new_tgt, decoder_output[:, -1:, :]), dim=1)
+        encoder_output = torch.mean(encoder_output, dim=1)
+        return self.txtpredictor(encoder_output), self.predictor(new_tgt).reshape(new_tgt.shape[0], new_tgt.shape[1], 4, 36, 64)
 
-class Dataset(torch.utils.data.Dataset):
-    def __init__(self, eeg, video):
-        self.eeg, self.video = eeg, video
-    def __len__(self): return self.eeg.shape[0]
-    def __getitem__(self, idx): return self.eeg[idx], self.video[idx]
+# -----------------------
+# Dataset
+# -----------------------
+class EEGVideoDataset(Dataset):
+    def __init__(self, eeg_dir, video_dir):
+        self.samples = []
+        for block in os.listdir(video_dir):
+            for f in os.listdir(os.path.join(video_dir, block)):
+                clip_id = f.replace(".npy", "")
+                # pick sub1 EEG as default (others can be added similarly)
+                eeg_file = os.path.join(eeg_dir, "sub1", block, clip_id + ".npy")
+                vid_file = os.path.join(video_dir, block, f)
+                if os.path.exists(eeg_file) and os.path.exists(vid_file):
+                    self.samples.append((eeg_file, vid_file))
 
-def loss(true, pred): return nn.MSELoss()(true, pred)
+    def __len__(self):
+        return len(self.samples)
 
-# -----------------------------
-# Data loading utility
-# -----------------------------
-def load_all_data(eeg_dir, latent_dir, window_size=100, stride=50):
-    # ---- EEG ----
-    eeg_files = sorted([f for f in os.listdir(eeg_dir) if f.endswith(".npy")])
-    print("Found EEG files:", eeg_files)
-    eeg_raw = np.load(os.path.join(eeg_dir, eeg_files[0]))  # (7,40,5,62,400)
-    print("Raw EEG shape:", eeg_raw.shape)
+    def __getitem__(self, idx):
+        eeg_file, vid_file = self.samples[idx]
+        eeg = np.load(eeg_file)   # shape (62, 100) or (62, T)
+        vid = np.load(vid_file)   # shape (F, 4, 36, 64)
+        eeg = torch.tensor(eeg, dtype=torch.float32)
+        vid = torch.tensor(vid, dtype=torch.float32)
+        return eeg, vid
 
-    # Flatten to clips: (7*40*5, 62, 400) = (1400, 62, 400)
-    eeg_clips = eeg_raw.reshape(-1, 62, 400)
-
-    # ---- Video latents ----
-    latent_files = sorted(
-        os.path.join(root, f)
-        for root, _, files in os.walk(latent_dir)
-        for f in files if f.endswith(".npy")
-    )
-    print("Found latent files:", len(latent_files))
-    latents = [np.load(f) for f in latent_files]
-    latent_data = np.stack(latents, axis=0)  # (N, frames, 4, 36, 64)
-
-    # ---- Restrict EEG to number of latents ----
-    num_latents = latent_data.shape[0]
-    eeg_clips = eeg_clips[:num_latents]  # (N, 62, 400)
-
-    # ---- Segment each clip into windows (62,400 -> 7x(62,100)) ----
-    eeg_windowed = []
-    for clip in eeg_clips:
-        clip_windows = []
-        for start in range(0, clip.shape[-1] - window_size + 1, stride):
-            window = clip[:, start:start+window_size]  # (62,100)
-            clip_windows.append(window)
-        clip_windows = np.stack(clip_windows, axis=0)  # (7,62,100)
-        eeg_windowed.append(clip_windows)
-    eeg_proc = np.stack(eeg_windowed, axis=0)  # (N,7,62,100)
-
-    # ---- Sanity checks ----
-    print("Processed EEG shape:", eeg_proc.shape)
-    print("Latents shape:", latent_data.shape)
-    assert latent_data.ndim == 5, f"Latents should be 5D (N,frames,4,36,64), got {latent_data.shape}"
-    assert eeg_proc.ndim == 4, f"EEG should be 4D (N,7,62,100), got {eeg_proc.shape}"
-    assert eeg_proc.shape[0] == latent_data.shape[0], (
-        f"EEG/Latent count mismatch: {eeg_proc.shape[0]} vs {latent_data.shape[0]}"
-    )
-    print(f"Verified alignment: {eeg_proc.shape[0]} samples, EEG {eeg_proc.shape[1:]} ↔ Latent {latent_data.shape[1:]}")
-
-    # ---- Convert to torch ----
-    eeg_tensor = torch.from_numpy(eeg_proc).float()
-    latent_tensor = torch.from_numpy(latent_data).float()
-    return eeg_tensor, latent_tensor
-
-# -----------------------------
-# Main training
-# -----------------------------
+# -----------------------
+# Training
+# -----------------------
 if __name__ == "__main__":
-    eegdata, latent_data = load_all_data(EEG_DIR, LATENT_DIR)
-    print("EEG shape:", eegdata.shape, "Latents shape:", latent_data.shape)
+    BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test"
+    train_ds = EEGVideoDataset(
+        os.path.join(BASE, "train/EEG_segments"),
+        os.path.join(BASE, "train/Video_latents")
+    )
+    train_loader = DataLoader(train_ds, batch_size=8, shuffle=True)
 
-    dataset = Dataset(eegdata, latent_data)
-    train_dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    epochs = int(input("Enter number of epochs: "))
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = myTransformer().to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=5e-4)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs * len(train_loader))
+    criterion = nn.MSELoss()
 
-    model = myTransformer().cuda()
-    optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS * len(train_dataloader))
-
-    for epoch in range(NUM_EPOCHS):
+    for epoch in range(epochs):
         model.train()
         epoch_loss = 0
-        for eeg, video in train_dataloader:
-            eeg, video = eeg.float().cuda(), video.float().cuda()
-            padded = torch.zeros((video.size(0), 1, video.size(2), video.size(3), video.size(4))).cuda()
-            full_video = torch.cat((padded, video), dim=1)
-            optimizer.zero_grad()
-            _, out = model(eeg, full_video)
-            l = loss(video, out[:, :-1, :])
-            l.backward()
-            optimizer.step()
-            scheduler.step()
-            epoch_loss += l.item()
-        print(f"Epoch {epoch+1}/{NUM_EPOCHS}, Loss: {epoch_loss:.4f}")
-        ckpt_path = os.path.join(CHECKPOINT_DIR, f"seq2seq_epoch{epoch+1}.pt")
-        torch.save({'state_dict': model.state_dict()}, ckpt_path)
-        print("Saved checkpoint:", ckpt_path)
+        for eeg, vid in train_loader:
+            eeg, vid = eeg.to(device), vid.to(device)
+            b, f, c, h, w = vid.shape
+            padded = torch.zeros((b, 1, c, h, w)).to(device)
+            full_vid = torch.cat((padded, vid), dim=1)
+            opt.zero_grad()
+            _, out = model(eeg, full_vid)
+            loss = criterion(out[:, :-1, :], vid)
+            loss.backward()
+            opt.step()
+            sched.step()
+            epoch_loss += loss.item()
+        print(f"Epoch {epoch+1}/{epochs} - Loss: {epoch_loss:.4f}")
+
+    torch.save({'state_dict': model.state_dict()}, os.path.join(BASE, "seq2seq_checkpoint.pt"))
+    print("Training complete. Checkpoint saved.")
