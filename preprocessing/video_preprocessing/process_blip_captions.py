@@ -2,7 +2,7 @@ import os
 import re
 import torch
 import numpy as np
-from transformers import BlipProcessor, BlipForConditionalGeneration
+from transformers import BertTokenizer, BertModel
 from gt_label import GT_LABEL
 
 # CONFIG
@@ -12,10 +12,10 @@ CAP_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_captions/"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Load BLIP text encoder
-processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base").to(device)
-model.eval()
+# Load BLIP text encoder (BERT backbone)
+tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+text_encoder = BertModel.from_pretrained("bert-base-uncased").to(device)
+text_encoder.eval()
 
 os.makedirs(EMB_DIR, exist_ok=True)
 os.makedirs(CAP_DIR, exist_ok=True)
@@ -72,10 +72,9 @@ for blip_file in blip_list:
             caption = lines[idx]
 
             with torch.no_grad():
-                inputs = processor(text=[caption], return_tensors="pt", padding="max_length", max_length=77, truncation=True).to(device)
-                # Hidden states from the text encoder, shape (1,77,768)
-                text_outputs = model.text_encoder(**inputs, output_hidden_states=True)
-                embedding = text_outputs.last_hidden_state.squeeze(0).cpu().numpy()  # (77,768)
+                inputs = tokenizer(caption, return_tensors="pt", padding="max_length", max_length=77, truncation=True).to(device)
+                outputs = text_encoder(**inputs)
+                embedding = outputs.last_hidden_state.squeeze(0).cpu().numpy()  # (77,768)
 
             base_name = f"class{true_class:02d}_clip{clip_id+1:02d}"
 
