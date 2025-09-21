@@ -174,15 +174,16 @@ semantic_model = semantic_model.to(device).eval()
 # -------------------------
 eeg_dir = os.path.join(BASE, "EEG_segments")
 vid_dir = os.path.join(BASE, "Video_latents")
-blocks = os.listdir(eeg_dir)
-block = random.choice(blocks)
-block_path = os.path.join(eeg_dir, block)
-clip_file = random.choice(os.listdir(block_path))
-eeg_file = os.path.join(block_path, clip_file)
+
+subj = random.choice(os.listdir(eeg_dir))  # e.g. "sub1"
+block = random.choice(os.listdir(os.path.join(eeg_dir, subj)))  # e.g. "Block1"
+clip_file = random.choice(os.listdir(os.path.join(eeg_dir, subj, block)))  # e.g. "class01_clip02.npy"
+
+eeg_file = os.path.join(eeg_dir, subj, block, clip_file)
 vid_file = os.path.join(vid_dir, block, clip_file)
 gt_gif_file = os.path.join(GT_GIF_BASE, block, clip_file.replace(".npy", ".gif"))
 
-print(f"Chosen test sample: {clip_file}")
+print(f"Chosen test sample: subj={subj}, block={block}, clip={clip_file}")
 
 # -------------------------
 # Load EEG + Video latent
