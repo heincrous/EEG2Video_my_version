@@ -387,4 +387,157 @@ if __name__ == "__main__":
     model_dict = model.state_dict()
     torch.save({'state_dict': model_dict}, f'../checkpoints/seq2seqmodel.pt')
 
+# ---------------------------------------------------------------------------------------------------------------
+# NEW VERSION
+# ---------------------------------------------------------------------------------------------------------------
+import os
+import math
+import numpy as np
+import torch
+import torch.nn as nn
+from einops import rearrange
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+from sklearn.preprocessing import StandardScaler
 
+# -----------------------------
+# User parameters
+# -----------------------------
+NUM_EPOCHS = 5  # <--- set number of epochs here
+
+LOG_FILE = "/content/drive/MyDrive/EEG2Video_data/processed/processed_log.txt"
+CHECKPOINT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/"
+EEG_PATH = "/content/drive/MyDrive/EEG2Video_data/Processed/EEG_segments/sub1.npy"
+LATENT_PATH = "/content/drive/MyDrive/EEG2Video_data/Processed/Video_latents/latents_sub1.npy"
+
+# -----------------------------
+# Model definitions (unchanged)
+# -----------------------------
+class MyEEGNet_embedding(nn.Module):
+    def __init__(self, d_model=128, C=62, T=200, F1=16, D=4, F2=16, cross_subject=False):
+        super().__init__()
+        self.drop_out = 0.25 if cross_subject else 0.5
+        self.block_1 = nn.Sequential(
+            nn.ZeroPad2d((31, 32, 0, 0)),
+            nn.Conv2d(1, F1, (1, 64), bias=False),
+            nn.BatchNorm2d(F1)
+        )
+        self.block_2 = nn.Sequential(
+            nn.Conv2d(F1, F1 * D, (C, 1), groups=F1, bias=False),
+            nn.BatchNorm2d(F1 * D), nn.ELU(),
+            nn.AvgPool2d((1, 4)), nn.Dropout(self.drop_out)
+        )
+        self.block_3 = nn.Sequential(
+            nn.ZeroPad2d((7, 8, 0, 0)),
+            nn.Conv2d(F1 * D, F1 * D, (1, 16), groups=F1 * D, bias=False),
+            nn.Conv2d(F1 * D, F2, (1, 1), bias=False),
+            nn.BatchNorm2d(F2), nn.ELU(),
+            nn.AvgPool2d((1, 8)), nn.Dropout(self.drop_out)
+        )
+        self.embedding = nn.Linear(48, d_model)
+    def forward(self, x):
+        x = self.block_1(x)
+        x = self.block_2(x)
+        x = self.block_3(x)
+        x = x.view(x.shape[0], -1)
+        return self.embedding(x)
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, dropout, max_len=5000):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * -(math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.register_buffer("pe", pe.unsqueeze(0))
+    def forward(self, x):
+        return self.dropout(x + self.pe[:, : x.size(1)].requires_grad_(False))
+
+class myTransformer(nn.Module):
+    def __init__(self, d_model=512):
+        super().__init__()
+        self.img_embedding = nn.Linear(4 * 36 * 64, d_model)
+        self.eeg_embedding = MyEEGNet_embedding(d_model=d_model, C=62, T=100)
+        self.encoder = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(d_model=d_model, nhead=4, batch_first=True), num_layers=2
+        )
+        self.decoder = nn.TransformerDecoder(
+            nn.TransformerDecoderLayer(d_model=d_model, nhead=4, batch_first=True), num_layers=4
+        )
+        self.positional_encoding = PositionalEncoding(d_model, dropout=0)
+        self.txtpredictor = nn.Linear(512, 13)
+        self.predictor = nn.Linear(512, 4 * 36 * 64)
+    def forward(self, src, tgt):
+        src = self.eeg_embedding(src.reshape(src.shape[0] * src.shape[1], 1, 62, 100)).reshape(src.shape[0], 7, -1)
+        tgt = self.img_embedding(tgt.reshape(tgt.shape[0], tgt.shape[1], -1))
+        src, tgt = self.positional_encoding(src), self.positional_encoding(tgt)
+        tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt.size()[-2]).to(tgt.device)
+        enc_out = self.encoder(src)
+        new_tgt = torch.zeros((tgt.shape[0], 1, tgt.shape[2])).to(tgt.device)
+        for i in range(6):
+            dec_out = self.decoder(new_tgt, enc_out, tgt_mask=tgt_mask[:i+1, :i+1])
+            new_tgt = torch.cat((new_tgt, dec_out[:, -1:, :]), dim=1)
+        enc_out = torch.mean(enc_out, dim=1)
+        return self.txtpredictor(enc_out), self.predictor(new_tgt).reshape(new_tgt.shape[0], new_tgt.shape[1], 4, 36, 64)
+
+class Dataset(torch.utils.data.Dataset):
+    def __init__(self, eeg, video):
+        self.eeg, self.video = eeg, video
+    def __len__(self): return self.eeg.shape[0]
+    def __getitem__(self, idx): return self.eeg[idx], self.video[idx]
+
+def loss(true, pred): return nn.MSELoss()(true, pred)
+
+# -----------------------------
+# Main
+# -----------------------------
+if __name__ == "__main__":
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+
+    # Check processed log
+    required_tags = ["[SEGMENT]", "[VIDEO_LATENT]", "[BLIP]", "[META]"]
+    if not os.path.exists(LOG_FILE):
+        raise RuntimeError("processed_log.txt not found, cannot start training.")
+    with open(LOG_FILE, "r") as f:
+        log_content = f.read()
+    missing = [tag for tag in required_tags if tag not in log_content]
+    if missing:
+        raise RuntimeError(f"Missing processed steps in log: {missing}")
+    print("Processed log confirms:", required_tags)
+    print("Training will use EEG segments and video latents listed in Processed/.")
+
+    # Load processed data
+    eegdata = np.load(EEG_PATH)
+    latent_data = np.load(LATENT_PATH)
+    eegdata = torch.from_numpy(eegdata)
+    latent_data = torch.from_numpy(latent_data)
+
+    print("EEG shape:", eegdata.shape, "Latents shape:", latent_data.shape)
+
+    dataset = Dataset(eegdata, latent_data)
+    train_dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+    model = myTransformer().cuda()
+    optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS * len(train_dataloader))
+
+    for epoch in range(NUM_EPOCHS):
+        model.train()
+        epoch_loss = 0
+        for eeg, video in train_dataloader:
+            eeg, video = eeg.float().cuda(), video.float().cuda()
+            padded = torch.zeros((video.size(0), 1, video.size(2), video.size(3), video.size(4))).cuda()
+            full_video = torch.cat((padded, video), dim=1)
+            optimizer.zero_grad()
+            _, out = model(eeg, full_video)
+            l = loss(video, out[:, :-1, :])
+            l.backward()
+            optimizer.step()
+            scheduler.step()
+            epoch_loss += l.item()
+        print(f"Epoch {epoch+1}/{NUM_EPOCHS}, Loss: {epoch_loss:.4f}")
+        ckpt_path = os.path.join(CHECKPOINT_DIR, f"seq2seq_epoch{epoch+1}.pt")
+        torch.save({'state_dict': model.state_dict()}, ckpt_path)
+        print("Saved checkpoint:", ckpt_path)
