@@ -452,10 +452,9 @@ class LatentDataset(Dataset):
         return len(self.latent_paths)
 
     def __getitem__(self, idx):
-        latent = torch.from_numpy(np.load(self.latent_paths[idx]))
+        latent = torch.from_numpy(np.load(self.latent_paths[idx]))  # [F, C, H, W]
         if self.max_frames is not None:
             latent = latent[:self.max_frames, :, :, :]
-        # Load text from .txt
         with open(self.text_paths[idx], 'r') as f:
             text = f.read().strip()
         prompt_ids = self.tokenizer(
@@ -464,14 +463,13 @@ class LatentDataset(Dataset):
             padding="max_length",
             truncation=True,
             return_tensors="pt"
-        ).input_ids.squeeze(0)
+        ).input_ids.squeeze(0)  # [seq_len]
         return {"pixel_values": latent, "prompt_ids": prompt_ids}
 
 # ----------------------- Paths & hyperparameters
 PRETRAINED_MODEL_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 TRAIN_BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/train"
 BLIP_TEXT_BASE = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_captions"
-
 OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
 
 VIDEO_LATENT_PATH, TEXT_PATHS = [], []
@@ -543,21 +541,22 @@ for epoch in tqdm(range(1, NUM_EPOCHS+1)):
     unet.train()
     for step, batch in enumerate(train_dataloader):
         with accelerator.accumulate(unet):
-            pixel_values = batch["pixel_values"].to(weight_dtype)
+            # ----------------------- Prepare latents [B, C, F, H, W]
+            pixel_values = batch["pixel_values"].to(weight_dtype)  # [B?, F, C, H, W]
             if pixel_values.ndim == 4:
-                pixel_values = pixel_values.unsqueeze(0)
+                pixel_values = pixel_values.unsqueeze(0)  # [1, F, C, H, W]
+            B, F_frames, C, H, W = pixel_values.shape
+            latents = pixel_values.permute(0,2,1,3,4).contiguous()  # [B, C, F, H, W]
 
-            # Rearrange latents for 2D UNet
-            B, F_frames = pixel_values.shape[0], pixel_values.shape[1]
-            latents = pixel_values.permute(0,2,1,3,4).reshape(B*pixel_values.shape[2], pixel_values.shape[3], pixel_values.shape[1], pixel_values.shape[4])
-
+            # ----------------------- Add noise
             noise = torch.randn_like(latents)
             timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (B,), device=latents.device).long()
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-            # ----------------------- Encode prompts correctly (no repeat)
+            # ----------------------- Encode text
             encoder_hidden_states = text_encoder(batch["prompt_ids"].to(accelerator.device))[0]  # [B, seq_len, hidden_dim]
 
+            # ----------------------- UNet forward
             model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
             target = noise if noise_scheduler.prediction_type=="epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
             loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
