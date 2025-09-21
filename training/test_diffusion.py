@@ -4,18 +4,15 @@ import torch
 import numpy as np
 import imageio
 
-# ---------------- Add repo root to Python path ----------------
-repo_root = "/content/EEG2Video_my_version"  # your repo root
+# ---------------- Add repo root ----------------
+repo_root = "/content/EEG2Video_my_version"
 sys.path.append(repo_root)
 
 # ---------------- Imports ----------------
 from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
-from core_files.unet import UNet3DConditionModel
-from diffusers import AutoencoderKL, DDIMScheduler
-from transformers import CLIPTextModel
 
 # ---------------- CONFIG ----------------
-CHECKPOINT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
+OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
 BLIP_CAP_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_captions"
 TEST_SPLIT_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/test/Video_latents"
 SAVE_DIR = "/content/drive/MyDrive/EEG2Video_inference"
@@ -27,8 +24,7 @@ def save_videos_grid(videos, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if isinstance(videos, torch.Tensor):
         videos = videos.cpu().numpy()
-
-    if videos.ndim == 5:  # [B, F, C, H, W]
+    if videos.ndim == 5:
         for i, video in enumerate(videos):
             frames = []
             for frame in video:
@@ -39,7 +35,7 @@ def save_videos_grid(videos, path):
                 frame = np.clip(frame*255,0,255).astype(np.uint8)
                 frames.append(frame)
             imageio.mimsave(f"{path}_{i}.gif", frames, fps=5)
-    elif videos.ndim == 4:  # [F, C, H, W]
+    elif videos.ndim == 4:
         frames = []
         for frame in videos:
             if frame.shape[0] == 1:
@@ -50,40 +46,12 @@ def save_videos_grid(videos, path):
             frames.append(frame)
         imageio.mimsave(path, frames, fps=5)
 
-# ---------------- LOAD MODELS MANUALLY ----------------
-unet = UNet3DConditionModel(
-    in_channels=4,
-    out_channels=4,
-    layers_per_block=2,
-    block_out_channels=(320, 640, 1280),
-    downsample_padding=1,
-    attention_resolutions=(2,1),
-    use_checkpoint=True
-)
-unet_weights = torch.load(os.path.join(CHECKPOINT_DIR, "unet/pytorch_model.bin"), map_location="cuda")
-unet.load_state_dict(unet_weights)
-unet.to("cuda")
-unet.eval()
-
-vae = AutoencoderKL.from_pretrained(os.path.join(CHECKPOINT_DIR, "vae")).to("cuda")
-vae.eval()
-
-text_encoder = CLIPTextModel.from_pretrained(os.path.join(CHECKPOINT_DIR, "text_encoder")).to("cuda")
-text_encoder.eval()
-
-scheduler = DDIMScheduler.from_pretrained(os.path.join(CHECKPOINT_DIR, "scheduler"))
-
-pipeline = TuneAVideoPipeline(
-    unet=unet,
-    vae=vae,
-    text_encoder=text_encoder,
-    scheduler=scheduler,
-    tokenizer=None
-)
+# ---------------- LOAD PIPELINE DIRECTLY ----------------
+pipeline = TuneAVideoPipeline.from_pretrained(OUTPUT_DIR)
 pipeline.enable_vae_slicing()
 pipeline.to("cuda")
 
-# ---------------- FIND TEST CAPTIONS ----------------
+# ---------------- CROSS-CHECK TEST CAPTIONS ----------------
 test_blocks = sorted(os.listdir(TEST_SPLIT_DIR))
 test_captions = []
 
