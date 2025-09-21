@@ -116,7 +116,7 @@ SEMANTIC_CKPT = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor
 DIFFUSION_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
 BLIP_CAP_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_captions"
 TEST_VIDEO_DIR = os.path.join(BASE, "test/Video_latents")
-DE_TEST_DIR = os.path.join(BASE, "EEG_features/DE_1per2s")  # precomputed DE features
+DE_TEST_DIR = os.path.join(BASE, "test/EEG_features/DE_1per2s")  # correct DE path
 SAVE_DIR = "/content/drive/MyDrive/EEG2Video_inference"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
@@ -139,11 +139,16 @@ def save_videos_grid(videos, path):
         frames.append(np.clip(frame*255, 0, 255).astype(np.uint8))
     imageio.mimsave(path, frames, fps=4)
 
-# ---------------- Load test dataset (using DE features) ----------------
-test_ds = EEGVideoDataset(
-    os.path.join(DE_TEST_DIR),
-    TEST_VIDEO_DIR
-)
+# ---------------- Check DE test dataset ----------------
+if not os.path.exists(DE_TEST_DIR):
+    raise RuntimeError(f"DE test folder does not exist: {DE_TEST_DIR}")
+
+# ---------------- Load test dataset ----------------
+test_ds = EEGVideoDataset(DE_TEST_DIR, TEST_VIDEO_DIR)
+
+if len(test_ds) == 0:
+    raise RuntimeError(f"No DE feature files found under {DE_TEST_DIR}. Check folder structure (subX/BlockY/*.npy).")
+
 test_loader = DataLoader(test_ds, batch_size=1, shuffle=False)
 
 # ---------------- Load Seq2Seq model ----------------
@@ -187,7 +192,7 @@ with open(txt_path, "r") as f:
     prompt_text = f.read().strip()
 
 for i, (eeg, vid) in enumerate(tqdm(test_loader, desc="Running EEG2Video inference")):
-    eeg = eeg.to(device)   # [B, 310] precomputed DE features
+    eeg = eeg.to(device)   # already [B, 310] DE features
     vid = vid.to(device)
 
     # ---------------- Generate Seq2Seq latent ----------------
