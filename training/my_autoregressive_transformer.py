@@ -407,7 +407,7 @@ NUM_EPOCHS = 5  # <--- set number of epochs here
 
 LOG_FILE = "/content/drive/MyDrive/EEG2Video_data/processed/processed_log.txt"
 CHECKPOINT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/"
-EEG_PATH = "/content/drive/MyDrive/EEG2Video_data/Processed/EEG_segments/sub1.npy"
+EEG_PATH = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments/sub1.npy"
 LATENT_PATH = "/content/drive/MyDrive/EEG2Video_data/Processed/Video_latents/latents_sub1.npy"
 
 # -----------------------------
