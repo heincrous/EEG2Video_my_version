@@ -98,6 +98,8 @@ from training.my_autoregressive_transformer import myTransformer
 
 # ----------------------- Base paths -----------------------
 TEST_BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/test"
+EEG_SEG_DIR = os.path.join(TEST_BASE, "EEG_segments")
+VIDEO_GIF_DIR = os.path.join(TEST_BASE, "Video_latents")  # optional for ground-truth comparison
 SAVE_DIR = "/content/drive/MyDrive/EEG2Video_inference"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
@@ -107,17 +109,17 @@ DIFFUSION_UNET_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_dif
 VIDEO_LENGTH = 6
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ----------------------- Pick random test clip -----------------------
-subdirs = [d for d in os.listdir(os.path.join(TEST_BASE, "EEG_features/DE_1per2s")) if os.path.isdir(os.path.join(TEST_BASE, "EEG_features/DE_1per2s", d))]
+# ----------------------- Select a random test clip from EEG_segments -----------------------
+subdirs = [d for d in os.listdir(EEG_SEG_DIR) if os.path.isdir(os.path.join(EEG_SEG_DIR, d))]
 random_subj = random.choice(subdirs)
-block_dir = os.path.join(TEST_BASE, "EEG_features/DE_1per2s", random_subj)
+block_dir = os.path.join(EEG_SEG_DIR, random_subj)
 blocks = [b for b in os.listdir(block_dir) if os.path.isdir(os.path.join(block_dir, b))]
 random_block = random.choice(blocks)
 class_dir = os.path.join(block_dir, random_block)
 classes = [f for f in os.listdir(class_dir) if f.endswith(".npy")]
 TEST_EEG_PATH = os.path.join(class_dir, random.choice(classes))
 
-print(f"Selected random clip: Block={random_block}, Class={os.path.basename(TEST_EEG_PATH)}")
+print(f"Selected random clip: Subject={random_subj}, Block={random_block}, File={os.path.basename(TEST_EEG_PATH)}")
 print(f"EEG path: {TEST_EEG_PATH}")
 
 # ----------------------- GIF saving -----------------------
@@ -181,7 +183,7 @@ with torch.no_grad():
     ).videos
 save_gif(random_video, os.path.join(SAVE_DIR, "clip_random.gif"))
 
-# ----------------------- Ground-truth GIF -----------------------
+# ----------------------- Copy Ground-truth GIF -----------------------
 PROCESSED_GIF_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/Video_Gif/Block1"
 gt_gif_files = [f for f in os.listdir(PROCESSED_GIF_DIR) if f.endswith(".gif")]
 if gt_gif_files:
