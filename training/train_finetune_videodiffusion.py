@@ -465,7 +465,7 @@ class LatentDataset(Dataset):
             padding="max_length",
             truncation=True,
             return_tensors="pt"
-        ).input_ids.squeeze(0)  # [seq_len]
+        ).input_ids.squeeze(0)
         return {"pixel_values": latent, "prompt_ids": prompt_ids}
 
 # ----------------------- Paths & hyperparameters
@@ -559,9 +559,9 @@ for epoch in tqdm(range(1, NUM_EPOCHS+1)):
             B, seq_len, hidden_dim = encoder_hidden_states.shape
             F_frames = latents.shape[2]
             encoder_hidden_states = einops.repeat(encoder_hidden_states, 'b n c -> b f n c', f=F_frames)
-            encoder_hidden_states = encoder_hidden_states.view(B*F_frames, seq_len, hidden_dim)
+            encoder_hidden_states = encoder_hidden_states.reshape(B*F_frames, seq_len, hidden_dim)
 
-            latents = latents.view(B*F_frames, latents.shape[1], latents.shape[3], latents.shape[4])
+            latents = latents.reshape(B*F_frames, latents.shape[1], latents.shape[3], latents.shape[4])
 
             model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
             target = noise if noise_scheduler.prediction_type=="epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
