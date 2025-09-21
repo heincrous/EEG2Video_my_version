@@ -451,7 +451,7 @@ class LatentDataset(Dataset):
         return len(self.latent_paths)
 
     def __getitem__(self, idx):
-        latent = torch.from_numpy(np.load(self.latent_paths[idx]))  # [frames,4,H,W]
+        latent = torch.from_numpy(np.load(self.latent_paths[idx]))
         if self.max_frames is not None:
             latent = latent[:self.max_frames, :, :, :]
         prompt_id = torch.from_numpy(np.load(self.blip_paths[idx]))
@@ -531,27 +531,23 @@ for epoch in tqdm(range(1, NUM_EPOCHS+1)):
     unet.train()
     for step, batch in enumerate(train_dataloader):
         with accelerator.accumulate(unet):
-            pixel_values = batch["pixel_values"].to(weight_dtype)  # [frames,4,H,W]
+            pixel_values = batch["pixel_values"].to(weight_dtype)
             if pixel_values.ndim == 4:
-                pixel_values = pixel_values.unsqueeze(0)  # [1, frames,4,H,W]
+                pixel_values = pixel_values.unsqueeze(0)
 
-            # Rearrange to [B,C,F,H,W] for UNet
             latents = pixel_values.permute(0,2,1,3,4)  # [B,4,F,H,W]
 
             noise = torch.randn_like(latents)
             timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device=latents.device).long()
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-            # ----------------------- Encode prompts correctly
-            encoder_hidden_states = text_encoder(batch["prompt_ids"].squeeze(0).to(weight_dtype))[0]  # [B, seq_len, dim]
+            encoder_hidden_states = text_encoder(batch["prompt_ids"].squeeze(0).to(weight_dtype))[0]
             B, seq_len, hidden_dim = encoder_hidden_states.shape
-            F = latents.shape[2]  # frames
-            # repeat embeddings along frames
-            encoder_hidden_states = einops.repeat(encoder_hidden_states, 'b n c -> b f n c', f=F)
-            encoder_hidden_states = encoder_hidden_states.view(B*F, seq_len, hidden_dim)
+            F_frames = latents.shape[2]
+            encoder_hidden_states = einops.repeat(encoder_hidden_states, 'b n c -> b f n c', f=F_frames)
+            encoder_hidden_states = encoder_hidden_states.view(B*F_frames, seq_len, hidden_dim)
 
-            # Flatten latents for UNet
-            latents = latents.view(B*F, latents.shape[1], latents.shape[3], latents.shape[4])
+            latents = latents.view(B*F_frames, latents.shape[1], latents.shape[3], latents.shape[4])
 
             model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
             target = noise if noise_scheduler.prediction_type=="epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
@@ -563,7 +559,7 @@ for epoch in tqdm(range(1, NUM_EPOCHS+1)):
             optimizer.zero_grad()
         global_step += 1
 
-    # ----------------------- Validation
+    # ----------------------- Inline validation / save GIFs
     if accelerator.is_main_process:
         for i, prompt_path in enumerate(train_dataset.blip_paths):
             prompt = torch.from_numpy(np.load(prompt_path)).to(weight_dtype)
