@@ -116,7 +116,7 @@ SEMANTIC_CKPT = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor
 DIFFUSION_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
 BLIP_CAP_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_captions"
 TEST_VIDEO_DIR = os.path.join(BASE, "test/Video_latents")
-DE_TEST_DIR = os.path.join(BASE, "test/EEG_features/DE_1per2s")  # correct DE path
+DE_TEST_DIR = os.path.join(BASE, "test/EEG_features/DE_1per2s")  # DE features for test
 SAVE_DIR = "/content/drive/MyDrive/EEG2Video_inference"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
@@ -143,11 +143,10 @@ def save_videos_grid(videos, path):
 if not os.path.exists(DE_TEST_DIR):
     raise RuntimeError(f"DE test folder does not exist: {DE_TEST_DIR}")
 
-# ---------------- Load test dataset using DE features ----------------
+# ---------------- Load test dataset ----------------
 test_ds = EEGVideoDataset(DE_TEST_DIR, TEST_VIDEO_DIR)
-
 if len(test_ds) == 0:
-    raise RuntimeError(f"No DE feature files found under {DE_TEST_DIR}. Check folder structure (subX/BlockY/*.npy).")
+    raise RuntimeError(f"No DE feature files found in {DE_TEST_DIR}")
 
 test_loader = DataLoader(test_ds, batch_size=1, shuffle=False)
 
@@ -163,14 +162,14 @@ semantic_state = torch.load(SEMANTIC_CKPT, map_location=device)
 semantic_model.load_state_dict(semantic_state["state_dict"])
 semantic_model.eval()
 
-# ---------------- Load finetuned diffusion model (DANA) ----------------
+# ---------------- Load diffusion model (DANA) ----------------
 unet = UNet3DConditionModel.from_pretrained_2d(DIFFUSION_DIR, subfolder="unet").to(device)
 pipe = TuneAVideoPipeline.from_pretrained(DIFFUSION_DIR, unet=unet)
 pipe.to(device)
 pipe.enable_vae_slicing()
 pipe.enable_attention_slicing()
 
-# ---------------- Collect BLIP captions that exist in test set ----------------
+# ---------------- Collect test BLIP captions ----------------
 test_captions = []
 for block in sorted(os.listdir(BLIP_CAP_DIR)):
     blip_block_dir = os.path.join(BLIP_CAP_DIR, block)
@@ -192,7 +191,9 @@ with open(txt_path, "r") as f:
     prompt_text = f.read().strip()
 
 for i, (eeg, vid) in enumerate(tqdm(test_loader, desc="Running EEG2Video inference")):
-    eeg = eeg.to(device)   # [B, 310] DE features, already correct shape
+    # ---------------- Flatten DE features to match training ----------------
+    eeg_flat = eeg.reshape(eeg.shape[0], -1).to(device)  # [B, 310]
+
     vid = vid.to(device)
 
     # ---------------- Generate Seq2Seq latent ----------------
@@ -200,15 +201,15 @@ for i, (eeg, vid) in enumerate(tqdm(test_loader, desc="Running EEG2Video inferen
     padded = torch.zeros((b, 1, c, h, w), device=device)
     full_vid = torch.cat((padded, vid), dim=1)
     with torch.no_grad():
-        _, seq2seq_latent = seq2seq_model(eeg, full_vid)
+        _, seq2seq_latent = seq2seq_model(eeg_flat, full_vid)
     seq2seq_latent = seq2seq_latent[:, :-1, :]
 
     # ---------------- Generate semantic embedding ----------------
     with torch.no_grad():
-        semantic_embed = semantic_model(eeg)  # [B, 77*768]
-        semantic_embed = semantic_embed.view(eeg.shape[0], 77, 768)  # reshape for DANA
+        semantic_embed = semantic_model(eeg_flat)  # [B, 77*768]
+        semantic_embed = semantic_embed.view(eeg_flat.shape[0], 77, 768)  # reshape for DANA
 
-    # ---------------- Diffusion inference (DANA) ----------------
+    # ---------------- Diffusion inference ----------------
     with torch.no_grad():
         video_out = pipe(
             prompt_embeddings=semantic_embed,
@@ -228,5 +229,6 @@ for i, (eeg, vid) in enumerate(tqdm(test_loader, desc="Running EEG2Video inferen
 
     if i == 2:  # limit for quick test
         break
+
 
 
