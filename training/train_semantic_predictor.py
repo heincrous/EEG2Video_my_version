@@ -149,3 +149,121 @@
 # ---------------------------------------------------------------------------------------------------------------
 # NEW VERSION
 # ---------------------------------------------------------------------------------------------------------------
+import os
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from sklearn.preprocessing import StandardScaler
+from tqdm import tqdm
+
+# -----------------------
+# Model (authors’ semantic predictor, DE -> text embeddings)
+# -----------------------
+class CLIP(nn.Module):
+    def __init__(self, input_dim=310):
+        super(CLIP, self).__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, 77 * 768)
+        )
+
+    def forward(self, eeg):
+        return self.mlp(eeg)
+
+# -----------------------
+# Dataset (DE features + BLIP embeddings)
+# -----------------------
+class EEGTextDataset(Dataset):
+    def __init__(self, de_root, text_root):
+        self.samples = []
+
+        # walk subject → block → clips for DE features
+        for subj in os.listdir(de_root):
+            subj_path = os.path.join(de_root, subj)
+            if not os.path.isdir(subj_path):
+                continue
+            for block in os.listdir(subj_path):
+                eeg_block = os.path.join(subj_path, block)
+                txt_block = os.path.join(text_root, block)
+                if not os.path.isdir(eeg_block) or not os.path.isdir(txt_block):
+                    continue
+                for f in os.listdir(eeg_block):
+                    eeg_file = os.path.join(eeg_block, f)
+                    txt_file = os.path.join(txt_block, f)
+                    if os.path.exists(txt_file):
+                        self.samples.append((eeg_file, txt_file))
+
+        if len(self.samples) == 0:
+            raise RuntimeError("No DE–BLIP pairs found. Check directory structure.")
+
+        # fit StandardScaler across all DE features
+        all_eeg = []
+        for eeg_file, _ in self.samples:
+            eeg = np.load(eeg_file)   # shape (310,)
+            all_eeg.append(eeg)
+        all_eeg = np.stack(all_eeg, axis=0)
+        self.scaler = StandardScaler().fit(all_eeg)
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        eeg_file, txt_file = self.samples[idx]
+        eeg = np.load(eeg_file)            # (310,)
+        eeg = self.scaler.transform([eeg])[0]
+        text = np.load(txt_file).reshape(-1)  # (77*768,)
+        eeg = torch.tensor(eeg, dtype=torch.float32)
+        text = torch.tensor(text, dtype=torch.float32)
+        return eeg, text
+
+# -----------------------
+# Training loop
+# -----------------------
+if __name__ == "__main__":
+    BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/train"
+    CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints"
+    os.makedirs(CKPT_DIR, exist_ok=True)
+
+    de_dir = os.path.join(BASE, "EEG_features/DE_1per2s")
+    text_dir = os.path.join(BASE, "BLIP_embeddings")
+
+    dataset = EEGTextDataset(de_dir, text_dir)
+    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = CLIP(input_dim=310).to(device)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=200 * len(dataloader)
+    )
+
+    # ask user for epochs
+    epochs = int(input("Enter number of epochs: "))
+
+    for epoch in range(epochs):
+        model.train()
+        epoch_loss = 0
+        for eeg, text in dataloader:
+            eeg, text = eeg.to(device), text.to(device)
+            optimizer.zero_grad()
+            preds = model(eeg)
+            loss = F.mse_loss(preds, text)
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+            epoch_loss += loss.item()
+        print(f"Epoch {epoch+1}/{epochs} - Loss: {epoch_loss:.4f}")
+
+    ckpt_path = os.path.join(CKPT_DIR, "semantic_predictor.pt")
+    torch.save({"state_dict": model.state_dict()}, ckpt_path)
+    print(f"Training complete. Checkpoint saved to {ckpt_path}")
