@@ -139,37 +139,34 @@ def save_videos_grid(videos, path):
         frames.append(np.clip(frame*255, 0, 255).astype(np.uint8))
     imageio.mimsave(path, frames, fps=4)
 
-# ---------------- Check DE test dataset ----------------
+# ---------------- Load test dataset ----------------
 if not os.path.exists(DE_TEST_DIR):
     raise RuntimeError(f"DE test folder does not exist: {DE_TEST_DIR}")
 
-# ---------------- Load test dataset ----------------
 test_ds = EEGVideoDataset(DE_TEST_DIR, TEST_VIDEO_DIR)
 if len(test_ds) == 0:
     raise RuntimeError(f"No DE feature files found in {DE_TEST_DIR}")
 
 test_loader = DataLoader(test_ds, batch_size=1, shuffle=False)
 
-# ---------------- Load Seq2Seq model ----------------
+# ---------------- Load models ----------------
 seq2seq_model = myTransformer().to(device)
 seq2seq_state = torch.load(SEQ2SEQ_CKPT, map_location=device)
 seq2seq_model.load_state_dict(seq2seq_state["state_dict"])
 seq2seq_model.eval()
 
-# ---------------- Load Semantic Predictor ----------------
 semantic_model = SemanticPredictor(input_dim=310).to(device)
 semantic_state = torch.load(SEMANTIC_CKPT, map_location=device)
 semantic_model.load_state_dict(semantic_state["state_dict"])
 semantic_model.eval()
 
-# ---------------- Load diffusion model (DANA) ----------------
 unet = UNet3DConditionModel.from_pretrained_2d(DIFFUSION_DIR, subfolder="unet").to(device)
 pipe = TuneAVideoPipeline.from_pretrained(DIFFUSION_DIR, unet=unet)
 pipe.to(device)
 pipe.enable_vae_slicing()
 pipe.enable_attention_slicing()
 
-# ---------------- Collect test BLIP captions ----------------
+# ---------------- Collect BLIP captions ----------------
 test_captions = []
 for block in sorted(os.listdir(BLIP_CAP_DIR)):
     blip_block_dir = os.path.join(BLIP_CAP_DIR, block)
@@ -190,10 +187,10 @@ block, txt_file, txt_path = test_captions[0]
 with open(txt_path, "r") as f:
     prompt_text = f.read().strip()
 
-for i, (eeg, vid) in enumerate(tqdm(test_loader, desc="Running EEG2Video inference")):
-    # ---------------- Flatten DE features to match training ----------------
-    eeg_flat = eeg.reshape(eeg.shape[0], -1).to(device)  # [B, 310]
-
+for i, (eeg_raw, vid) in enumerate(tqdm(test_loader, desc="Running EEG2Video inference")):
+    # ---------------- Prepare inputs ----------------
+    eeg_seq = eeg_raw.to(device)                   # [B, 7, 62, 200] for Seq2Seq
+    eeg_flat = eeg_raw.reshape(eeg_raw.shape[0], -1).to(device)  # [B, 310] for semantic predictor
     vid = vid.to(device)
 
     # ---------------- Generate Seq2Seq latent ----------------
@@ -201,7 +198,7 @@ for i, (eeg, vid) in enumerate(tqdm(test_loader, desc="Running EEG2Video inferen
     padded = torch.zeros((b, 1, c, h, w), device=device)
     full_vid = torch.cat((padded, vid), dim=1)
     with torch.no_grad():
-        _, seq2seq_latent = seq2seq_model(eeg_flat, full_vid)
+        _, seq2seq_latent = seq2seq_model(eeg_seq, full_vid)
     seq2seq_latent = seq2seq_latent[:, :-1, :]
 
     # ---------------- Generate semantic embedding ----------------
