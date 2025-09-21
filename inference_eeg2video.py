@@ -94,7 +94,8 @@ import imageio
 from einops import rearrange
 
 from transformers import CLIPTokenizer
-from diffusers import DDIMScheduler, AutoencoderKL, CLIPTextModel
+from diffusers import DDIMScheduler, AutoencoderKL
+from transformers import CLIPTextModel
 
 from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 from core_files.unet import UNet3DConditionModel
