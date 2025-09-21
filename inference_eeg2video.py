@@ -148,13 +148,28 @@ sub, block, EEG_PATH = pick_random_eeg_clip(EEG_SEG_DIR)
 print(f"Selected random clip: Subject={sub}, Block={block}, File={os.path.basename(EEG_PATH)}")
 print(f"EEG path: {EEG_PATH}")
 
-# ----------------------- Load raw EEG -----------------------
-eeg_np = np.load(EEG_PATH)  # expected [7, 62, 200]
-if eeg_np.ndim != 3:
-    raise RuntimeError(f"EEG array must be 3D [segments,62,200], got shape {eeg_np.shape}")
-if eeg_np.shape[1:] != (62, 200):
-    raise RuntimeError(f"EEG inner shape must be [62,200], got {eeg_np.shape[1:]}")
+# ----------------------- Load raw EEG (robust) -----------------------
+eeg_np = np.load(EEG_PATH)
 
+def to_7x62x200(arr):
+    # cases:
+    # [7,62,200] -> return
+    # [62, 200*k] -> reshape to [k,62,200], then pad/trim to 7
+    # [62,200] -> [1,62,200] then pad to 7
+    if arr.ndim == 3 and arr.shape == (7, 62, 200):
+        return arr
+    if arr.ndim == 2 and arr.shape[0] == 62 and arr.shape[1] % 200 == 0:
+        k = arr.shape[1] // 200
+        arr = arr.reshape(62, k, 200).transpose(1, 0, 2)  # [k,62,200]
+        if k < 7:
+            pad = np.repeat(arr[-1:, ...], 7 - k, axis=0)  # repeat last
+            arr = np.concatenate([arr, pad], axis=0)
+        elif k > 7:
+            arr = arr[:7, ...]
+        return arr
+    raise RuntimeError(f"Unsupported EEG shape {arr.shape}. Expected [7,62,200] or [62,200*k].")
+
+eeg_np = to_7x62x200(eeg_np)
 eeg_raw = torch.from_numpy(eeg_np).unsqueeze(0).to(device)  # [1,7,62,200]
 negative_eeg_raw = eeg_raw.mean(dim=1, keepdim=True)        # [1,1,62,200]
 
