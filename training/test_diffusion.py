@@ -3,23 +3,24 @@ import os
 import torch
 import numpy as np
 import imageio
+from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
+from core_files.unet import UNet3DConditionModel
+from transformers import CLIPTextModel
+from diffusers import AutoencoderKL, DDIMScheduler
 
 # ---------------- Add repo root ----------------
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(repo_root)
 
-# ---------------- Imports ----------------
-from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
-
 # ---------------- CONFIG ----------------
-OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
+CHECKPOINT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
 BLIP_CAP_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_captions"
 TEST_SPLIT_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/test/Video_latents"
 SAVE_DIR = "/content/drive/MyDrive/EEG2Video_inference"
 os.makedirs(SAVE_DIR, exist_ok=True)
 VIDEO_LENGTH = 6
 
-# ---------------- INLINE GIF SAVING ----------------
+# ---------------- INLINE GIF SAVE ----------------
 def save_videos_grid(videos, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if isinstance(videos, torch.Tensor):
@@ -46,12 +47,20 @@ def save_videos_grid(videos, path):
             frames.append(frame)
         imageio.mimsave(path, frames, fps=5)
 
-# ---------------- LOAD PIPELINE DIRECTLY ----------------
-pipeline = TuneAVideoPipeline.from_pretrained(OUTPUT_DIR)
-pipeline.enable_vae_slicing()
-pipeline.to("cuda")
+# ---------------- LOAD UNET FIRST ----------------
+unet_path = os.path.join(CHECKPOINT_DIR, "unet")
+unet = UNet3DConditionModel.from_pretrained_2d(unet_path, torch_dtype=torch.float16).to("cuda")
 
-# ---------------- CROSS-CHECK TEST CAPTIONS ----------------
+# ---------------- LOAD PIPELINE ----------------
+pipeline = TuneAVideoPipeline.from_pretrained(
+    CHECKPOINT_DIR,
+    unet=unet,               # pass the UNet manually
+    torch_dtype=torch.float16
+).to("cuda")
+
+pipeline.enable_vae_slicing()
+
+# ---------------- FIND TEST CAPTIONS ----------------
 test_blocks = sorted(os.listdir(TEST_SPLIT_DIR))
 test_captions = []
 
