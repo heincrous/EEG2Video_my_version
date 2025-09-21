@@ -426,17 +426,31 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core_files.unet import UNet3DConditionModel
 from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
 
-# ----------------------- Inline save_videos_grid
+# ----------------------- Inline save_videos_grid with single-channel fix
 def save_videos_grid(videos, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if isinstance(videos, torch.Tensor):
         videos = videos.cpu().numpy()
-    if videos.ndim == 5:
+    if videos.ndim == 5:  # [B, F, C, H, W]
         for i, video in enumerate(videos):
-            frames = [(frame.transpose(1,2,0)*255).astype('uint8') for frame in video]
+            frames = []
+            for frame in video:
+                frame = frame.squeeze(0)  # remove channel dimension if C=1
+                if frame.ndim == 2:  # grayscale, convert to uint8
+                    frame = (frame * 255).astype('uint8')
+                else:  # for safety, convert any remaining channels
+                    frame = (frame.transpose(1,2,0) * 255).astype('uint8')
+                frames.append(frame)
             imageio.mimsave(f"{path}_{i}.gif", frames, fps=5)
-    elif videos.ndim == 4:
-        frames = [(frame.transpose(1,2,0)*255).astype('uint8') for frame in videos]
+    elif videos.ndim == 4:  # [F, C, H, W]
+        frames = []
+        for frame in videos:
+            frame = frame.squeeze(0)
+            if frame.ndim == 2:
+                frame = (frame * 255).astype('uint8')
+            else:
+                frame = (frame.transpose(1,2,0) * 255).astype('uint8')
+            frames.append(frame)
         imageio.mimsave(path, frames, fps=5)
 
 # ----------------------- Dataset
@@ -463,7 +477,7 @@ class LatentDataset(Dataset):
             padding="max_length",
             truncation=True,
             return_tensors="pt"
-        ).input_ids.squeeze(0)  # [seq_len]
+        ).input_ids.squeeze(0)
         return {"pixel_values": latent, "prompt_ids": prompt_ids}
 
 # ----------------------- Paths & hyperparameters
@@ -519,12 +533,9 @@ train_dataset = LatentDataset(VIDEO_LATENT_PATH, TEXT_PATHS, tokenizer, max_fram
 train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True)
 train_dataloader = accelerator.prepare(train_dataloader)
 
-# ----------------------- Automatically infer video_length from first latent
-video_length = None
-if len(train_dataset) > 0:
-    first_latent = train_dataset[0]["pixel_values"]
-    video_length = first_latent.shape[0]  # number of frames
-    print(f"Inferred video_length: {video_length}")
+# ----------------------- Automatically infer video_length
+video_length = train_dataset[0]["pixel_values"].shape[0]  # number of frames
+print(f"Inferred video_length: {video_length}")
 
 # ----------------------- Validation pipeline
 validation_pipeline = TuneAVideoPipeline(
@@ -542,7 +553,7 @@ text_encoder.to(accelerator.device, dtype=weight_dtype)
 vae.to(accelerator.device, dtype=weight_dtype)
 unet, optimizer = accelerator.prepare(unet, optimizer)
 
-# ----------------------- Training loop with logs
+# ----------------------- Training loop
 global_step = 0
 for epoch in range(1, NUM_EPOCHS+1):
     print(f"Starting epoch {epoch}/{NUM_EPOCHS}")
@@ -561,7 +572,7 @@ for epoch in range(1, NUM_EPOCHS+1):
             timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (B,), device=latents.device).long()
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-            encoder_hidden_states = text_encoder(batch["prompt_ids"].to(accelerator.device))[0]  # [B, seq_len, hidden_dim]
+            encoder_hidden_states = text_encoder(batch["prompt_ids"].to(accelerator.device))[0]
 
             model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
             target = noise if noise_scheduler.prediction_type=="epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
