@@ -212,12 +212,14 @@ eeg_tensor = torch.tensor(eeg, dtype=torch.float32).unsqueeze(0).to(device)  # [
 # Run Seq2Seq → predicted latents
 # -------------------------
 
-# Start decoding from zero latents [B, F, C, H, W], with F=4
-init_latents = torch.zeros((1, 4, 4, 36, 64), device=device)
+# Start with 1 padding + 4 empty slots = 5 frames
+init_latents = torch.zeros((1, 5, 4, 36, 64), device=device)
 
 with torch.no_grad():
     _, pred_latents = seq2seq(eeg_tensor, init_latents)
 
+# Drop the first dummy frame
+pred_latents = pred_latents[:, 1:, :, :, :]  # keep only 4 decoded frames
 pred_latents = pred_latents.to(torch.float16)
 
 # Rearrange to [B, C, F, H, W] for diffusion
