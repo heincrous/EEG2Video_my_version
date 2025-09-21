@@ -406,26 +406,73 @@
 # NEW VERSION
 # ---------------------------------------------------------------------------------------------------------------
 import os
+import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
+import imageio
+from einops import rearrange
+
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed
-from diffusers import AutoencoderKL, DDIMScheduler, DDPMScheduler, get_scheduler
+
+from diffusers import AutoencoderKL, DDPMScheduler, DDIMScheduler
 from transformers import CLIPTextModel, CLIPTokenizer
-import numpy as np
 
-from tuneavideo.data.dataset import TuneMultiVideoDataset
-from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
+# ----------------------- Fix sys.path for your repo
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from core_files.unet import UNet3DConditionModel
-from tuneavideo.util import save_videos_grid
+from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
 
-# ----------------------- Config
+# ----------------------- Minimal save_videos_grid (inline)
+def save_videos_grid(videos, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if isinstance(videos, torch.Tensor):
+        videos = videos.cpu().numpy()
+    if videos.ndim == 5:
+        for i, video in enumerate(videos):
+            frames = [(frame.transpose(1,2,0)*255).astype('uint8') for frame in video]
+            imageio.mimsave(f"{path}_{i}.gif", frames, fps=5)
+    elif videos.ndim == 4:
+        frames = [(frame.transpose(1,2,0)*255).astype('uint8') for frame in videos]
+        imageio.mimsave(path, frames, fps=5)
+
+# ----------------------- Dataset
+class LatentDataset(Dataset):
+    def __init__(self, latent_paths, blip_paths, max_frames=None):
+        self.latent_paths = latent_paths
+        self.blip_paths = blip_paths
+        self.max_frames = max_frames
+
+    def __len__(self):
+        return len(self.latent_paths)
+
+    def __getitem__(self, idx):
+        latent = torch.from_numpy(np.load(self.latent_paths[idx]))  # 4D: frames, 4, 36, 64
+        if self.max_frames is not None:
+            latent = latent[:self.max_frames, :, :, :]
+        prompt_id = torch.from_numpy(np.load(self.blip_paths[idx]))
+        return {"pixel_values": latent, "prompt_ids": prompt_id}
+
+# ----------------------- Hardcoded paths & hyperparameters
 PRETRAINED_MODEL_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 TRAIN_BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/train"
-OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_authors"
+OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
+
+VIDEO_LATENT_PATH, BLIP_PATH = [], []
+video_base = os.path.join(TRAIN_BASE, "Video_latents")
+blip_base = os.path.join(TRAIN_BASE, "BLIP_embeddings")
+for block in sorted(os.listdir(video_base)):
+    block_path = os.path.join(video_base, block)
+    blip_block_path = os.path.join(blip_base, block)
+    for npy_file in sorted(os.listdir(block_path)):
+        if npy_file.endswith(".npy"):
+            VIDEO_LATENT_PATH.append(os.path.join(block_path, npy_file))
+            BLIP_PATH.append(os.path.join(blip_block_path, npy_file))
 
 TRAIN_BATCH_SIZE = 1
 LEARNING_RATE = 3e-5
@@ -433,7 +480,7 @@ GRAD_ACCUM_STEPS = 1
 MIXED_PRECISION = "fp16"
 SEED = 42
 NUM_EPOCHS = 10
-MAX_FRAMES = None  # use full frames as in author's method
+MAX_FRAMES = None
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 accelerator = Accelerator(gradient_accumulation_steps=GRAD_ACCUM_STEPS, mixed_precision=MIXED_PRECISION)
@@ -459,11 +506,7 @@ for name, module in unet.named_modules():
 optimizer = torch.optim.AdamW(unet.parameters(), lr=LEARNING_RATE)
 
 # ----------------------- Prepare dataset
-train_dataset = TuneMultiVideoDataset(
-    video_path=os.path.join(TRAIN_BASE, "Video_latents"),
-    prompt_path=os.path.join(TRAIN_BASE, "BLIP_embeddings"),
-    max_frames=MAX_FRAMES
-)
+train_dataset = LatentDataset(VIDEO_LATENT_PATH, BLIP_PATH, max_frames=MAX_FRAMES)
 train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True)
 train_dataloader = accelerator.prepare(train_dataloader)
 
@@ -483,57 +526,48 @@ text_encoder.to(accelerator.device, dtype=weight_dtype)
 vae.to(accelerator.device, dtype=weight_dtype)
 unet, optimizer = accelerator.prepare(unet, optimizer)
 
-# ----------------------- Training Loop
+# ----------------------- Training loop
 global_step = 0
-try:
-    for epoch in range(1, NUM_EPOCHS+1):
-        unet.train()
-        for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(unet):
-                pixel_values = batch["pixel_values"].to(weight_dtype)
-                if pixel_values.ndim == 4:
-                    pixel_values = pixel_values.unsqueeze(0)
-                latents = pixel_values  # authors use dataset latents directly
+for epoch in tqdm(range(1, NUM_EPOCHS+1)):
+    unet.train()
+    for step, batch in enumerate(train_dataloader):
+        with accelerator.accumulate(unet):
+            pixel_values = batch["pixel_values"].unsqueeze(0).to(weight_dtype)
+            video_length = pixel_values.shape[1]
+            latents = rearrange(pixel_values, "(b f) c h w -> b c f h w", f=video_length)
 
-                noise = torch.randn_like(latents)
-                timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device=latents.device).long()
-                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+            noise = torch.randn_like(latents)
+            timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device=latents.device).long()
+            noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-                encoder_hidden_states = batch["prompt_ids"].to(weight_dtype)
-                target = noise if noise_scheduler.prediction_type=="epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
+            encoder_hidden_states = batch["prompt_ids"].unsqueeze(0).to(weight_dtype)
+            target = noise if noise_scheduler.prediction_type=="epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
 
-                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+            model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
+            loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
-                accelerator.backward(loss)
-                accelerator.clip_grad_norm_(unet.parameters(), 1.0)
-                optimizer.step()
-                optimizer.zero_grad()
-            global_step += 1
+            accelerator.backward(loss)
+            accelerator.clip_grad_norm_(unet.parameters(), 1.0)
+            optimizer.step()
+            optimizer.zero_grad()
+        global_step += 1
 
-        # ----------------------- Validation: save first sample per epoch
-        if accelerator.is_main_process:
-            prompt = train_dataset[0]["prompt_ids"]
-            sample = validation_pipeline(
-                prompt,
-                video_length=MAX_FRAMES,
-                latents=None,
-                generator=None
-            ).videos
-            save_videos_grid(sample, os.path.join(OUTPUT_DIR, f"sample_epoch{epoch}.gif"))
+    # Validation: save first sample per epoch
+    if accelerator.is_main_process:
+        for i, prompt_path in enumerate(train_dataset.blip_paths):
+            prompt = np.load(prompt_path)
+            sample = validation_pipeline(prompt, generator=None, latents=None).videos
+            save_videos_grid(sample, f"{OUTPUT_DIR}/samples/sample-{epoch}/{i}.gif")
 
-        # ----------------------- Save pipeline checkpoint per epoch
-        if accelerator.is_main_process:
-            unet_model = accelerator.unwrap_model(unet)
-            pipeline_save_path = os.path.join(OUTPUT_DIR, f"pipeline_epoch{epoch}")
-            pipeline = TuneAVideoPipeline.from_pretrained(
-                PRETRAINED_MODEL_PATH,
-                text_encoder=text_encoder,
-                vae=vae,
-                unet=unet_model
-            )
-            pipeline.save_pretrained(pipeline_save_path)
-            print(f"Saved pipeline checkpoint: {pipeline_save_path}")
-
-except Exception as e:
-    print("Training terminated with exception:", e)
+# ----------------------- Save final pipeline
+accelerator.wait_for_everyone()
+if accelerator.is_main_process:
+    unet_model = accelerator.unwrap_model(unet)
+    pipeline = TuneAVideoPipeline.from_pretrained(
+        PRETRAINED_MODEL_PATH,
+        text_encoder=text_encoder,
+        vae=vae,
+        unet=unet_model
+    )
+    pipeline.save_pretrained(OUTPUT_DIR)
+    print(f"Training complete. Saved to {OUTPUT_DIR}")
