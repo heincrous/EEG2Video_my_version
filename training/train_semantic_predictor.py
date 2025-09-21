@@ -221,13 +221,20 @@ class EEGTextDataset(Dataset):
     def __getitem__(self, idx):
         eeg_file, txt_file = self.samples[idx]
         eeg = np.load(eeg_file)
-        if eeg.ndim == 2:  # average across time to match authors
-            eeg = eeg.mean(axis=0)
-        eeg = self.scaler.transform([eeg])[0]
-        text = np.load(txt_file).reshape(-1)  # (77*768,)
-        eeg = torch.tensor(eeg, dtype=torch.float32)
-        text = torch.tensor(text, dtype=torch.float32)
-        return eeg, text
+        if eeg.ndim == 2:
+            # case (T, 62*5)
+            if eeg.shape[1] == 62*5:
+                eeg = eeg.mean(axis=0)          # (310,)
+            else:
+                raise ValueError(f"Unexpected DE shape {eeg.shape} in {eeg_file}")
+        elif eeg.ndim == 3:
+            # case (T, 62, 5)
+            T, C, F = eeg.shape
+            eeg = eeg.reshape(T, C*F).mean(axis=0)  # (310,)
+        elif eeg.ndim == 1 and eeg.shape[0] == 310:
+            pass  # already flattened
+        else:
+            raise ValueError(f"Unhandled DE shape {eeg.shape} in {eeg_file}")
 
 # -----------------------
 # Training loop
