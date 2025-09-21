@@ -220,7 +220,7 @@ with torch.no_grad():
 
 # Drop the first dummy BOS frame
 pred_latents = pred_latents[:, 1:, :, :, :]  # keep 5 frames
-pred_latents = pred_latents.to(torch.float16)
+pred_latents = pred_latents.to(torch.float32)
 
 # Rearrange to [B, C, F, H, W]
 pred_latents = rearrange(pred_latents, "b f c h w -> b c f h w")
