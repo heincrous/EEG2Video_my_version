@@ -407,8 +407,6 @@
 # ---------------------------------------------------------------------------------------------------------------
 import sys
 import os
-import math
-import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
@@ -427,6 +425,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core_files.unet import UNet3DConditionModel
 from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
 
+# ----------------------- Utilities
 def save_videos_grid(videos, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if isinstance(videos, torch.Tensor):
@@ -438,7 +437,8 @@ def save_videos_grid(videos, path):
         frames = [(frame.transpose(1,2,0)*255).astype('uint8') for frame in videos]
         imageio.mimsave(path, frames, fps=5)
 
-class LatentDataset(Dataset):
+# ----------------------- Dataset
+class LazyLatentDataset(Dataset):
     def __init__(self, latent_paths, blip_paths, max_frames=None):
         self.latent_paths = latent_paths
         self.blip_paths = blip_paths
@@ -448,55 +448,42 @@ class LatentDataset(Dataset):
         return len(self.latent_paths)
 
     def __getitem__(self, idx):
+        # Lazy load per sample
         latent = torch.from_numpy(np.load(self.latent_paths[idx]))
-        if self.max_frames is not None:
-            latent = latent[:self.max_frames, :, :, :]
+        if self.max_frames:
+            latent = latent[:self.max_frames]
         prompt_id = torch.from_numpy(np.load(self.blip_paths[idx]))
         return {"pixel_values": latent, "prompt_ids": prompt_id}
 
 # ----------------------- Config
 PRETRAINED_MODEL_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 TRAIN_BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/train"
-OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_full"
+OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_safe"
 
-VIDEO_LATENT_PATH, BLIP_PATH = [], []
-video_base = os.path.join(TRAIN_BASE, "Video_latents")
-blip_base = os.path.join(TRAIN_BASE, "BLIP_embeddings")
-for block in sorted(os.listdir(video_base)):
-    block_path = os.path.join(video_base, block)
-    blip_block_path = os.path.join(blip_base, block)
-    for npy_file in sorted(os.listdir(block_path)):
-        if npy_file.endswith(".npy"):
-            VIDEO_LATENT_PATH.append(os.path.join(block_path, npy_file))
-            BLIP_PATH.append(os.path.join(blip_block_path, npy_file))
-
-# Hyperparameters
 TRAIN_BATCH_SIZE = 1
 LEARNING_RATE = 3e-5
 GRAD_ACCUM_STEPS = 1
 MIXED_PRECISION = "fp16"
 SEED = 42
-MAX_FRAMES = 4      # Moderate number of frames
-NUM_EPOCHS = 10     # Example, can increase later
+MAX_FRAMES = 2  # conservative memory usage
+NUM_EPOCHS = 2
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-
 accelerator = Accelerator(gradient_accumulation_steps=GRAD_ACCUM_STEPS, mixed_precision=MIXED_PRECISION)
 logger = get_logger(__name__, log_level="INFO")
 set_seed(SEED)
 
-# Load model components
+# ----------------------- Load model components
 noise_scheduler = DDPMScheduler.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="scheduler")
 tokenizer = CLIPTokenizer.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="tokenizer")
 text_encoder = CLIPTextModel.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="text_encoder")
 vae = AutoencoderKL.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="vae")
 unet = UNet3DConditionModel.from_pretrained_2d(PRETRAINED_MODEL_PATH, subfolder="unet")
 
-# Freeze VAE and text_encoder
 vae.requires_grad_(False)
 text_encoder.requires_grad_(False)
 unet.requires_grad_(False)
-unet.enable_gradient_checkpointing()  # Save memory
+unet.enable_gradient_checkpointing()
 for name, module in unet.named_modules():
     if name.endswith(("attn1.to_q","attn2.to_q","attn_temp")):
         for p in module.parameters():
@@ -504,11 +491,17 @@ for name, module in unet.named_modules():
 
 optimizer = torch.optim.AdamW(unet.parameters(), lr=LEARNING_RATE)
 
-# Dataset and DataLoader
-train_dataset = LatentDataset(VIDEO_LATENT_PATH, BLIP_PATH, max_frames=MAX_FRAMES)
-train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True)
+# ----------------------- Gather all latent & BLIP paths per block
+blocks = sorted(os.listdir(os.path.join(TRAIN_BASE, "Video_latents")))
+block_paths = []
+for block in blocks:
+    video_dir = os.path.join(TRAIN_BASE, "Video_latents", block)
+    blip_dir = os.path.join(TRAIN_BASE, "BLIP_embeddings", block)
+    latent_files = sorted([os.path.join(video_dir, f) for f in os.listdir(video_dir) if f.endswith(".npy")])
+    blip_files = sorted([os.path.join(blip_dir, f) for f in os.listdir(blip_dir) if f.endswith(".npy")])
+    block_paths.append((latent_files, blip_files))
 
-# Validation pipeline
+# ----------------------- Validation pipeline
 validation_pipeline = TuneAVideoPipeline(
     vae=vae.to("cpu"),
     text_encoder=text_encoder.to("cpu"),
@@ -518,51 +511,56 @@ validation_pipeline = TuneAVideoPipeline(
 )
 validation_pipeline.enable_vae_slicing()
 
-# Prepare for accelerator
-unet, optimizer, train_dataloader = accelerator.prepare(unet, optimizer, train_dataloader)
+# ----------------------- Prepare model
 weight_dtype = torch.float16 if MIXED_PRECISION=="fp16" else torch.float32
 text_encoder.to(accelerator.device, dtype=weight_dtype)
 vae.to(accelerator.device, dtype=weight_dtype)
+unet, optimizer = accelerator.prepare(unet, optimizer)
 
 # ----------------------- Training Loop
 global_step = 0
 try:
-    for epoch in tqdm(range(1, NUM_EPOCHS+1)):
-        unet.train()
-        for step, batch in enumerate(train_dataloader):
-            with accelerator.accumulate(unet):
-                pixel_values = batch["pixel_values"].to(weight_dtype)
-                if pixel_values.ndim == 4:
-                    pixel_values = pixel_values.unsqueeze(0)
-                latents = rearrange(pixel_values, "b f c h w -> b c f h w")
+    for block_idx, (VIDEO_LATENT_PATH, BLIP_PATH) in enumerate(block_paths):
+        print(f"Training on block {block_idx+1}/{len(block_paths)}")
+        train_dataset = LazyLatentDataset(VIDEO_LATENT_PATH, BLIP_PATH, max_frames=MAX_FRAMES)
+        train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True)
+        train_dataloader = accelerator.prepare(train_dataloader)
 
-                noise = torch.randn_like(latents)
-                timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device=latents.device).long()
-                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+        for epoch in tqdm(range(1, NUM_EPOCHS+1)):
+            unet.train()
+            for step, batch in enumerate(train_dataloader):
+                with accelerator.accumulate(unet):
+                    pixel_values = batch["pixel_values"].to(weight_dtype)
+                    if pixel_values.ndim == 4:
+                        pixel_values = pixel_values.unsqueeze(0)
+                    latents = rearrange(pixel_values, "b f c h w -> b c f h w")
 
-                encoder_hidden_states = batch["prompt_ids"].to(weight_dtype)
-                target = noise if noise_scheduler.prediction_type=="epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
+                    noise = torch.randn_like(latents)
+                    timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device=latents.device).long()
+                    noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                    encoder_hidden_states = batch["prompt_ids"].to(weight_dtype)
+                    target = noise if noise_scheduler.prediction_type=="epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
 
-                accelerator.backward(loss)
-                accelerator.clip_grad_norm_(unet.parameters(), 1.0)
-                optimizer.step()
-                optimizer.zero_grad()
-            global_step += 1
+                    model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
+                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
-        # Validation: save a few sample videos
-        if accelerator.is_main_process:
-            for idx in range(min(3, len(train_dataset))):  # first 3 samples
-                prompt = train_dataset.blip_paths[idx]
+                    accelerator.backward(loss)
+                    accelerator.clip_grad_norm_(unet.parameters(), 1.0)
+                    optimizer.step()
+                    optimizer.zero_grad()
+                global_step += 1
+
+            # Validation: save 1 sample per block per epoch
+            if accelerator.is_main_process:
+                prompt = train_dataset.blip_paths[0]
                 sample = validation_pipeline(
                     prompt,
                     video_length=MAX_FRAMES,
                     latents=None,
                     generator=None
                 ).videos
-                save_videos_grid(sample, f"{OUTPUT_DIR}/samples/sample-{epoch}_{idx}.gif")
+                save_videos_grid(sample, f"{OUTPUT_DIR}/samples/block{block_idx+1}_epoch{epoch}.gif")
 
 except Exception as e:
     print("Training terminated with exception:", e)
