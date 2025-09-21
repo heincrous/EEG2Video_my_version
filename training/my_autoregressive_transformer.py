@@ -392,7 +392,6 @@
 # ---------------------------------------------------------------------------------------------------------------
 import os
 import math
-import random
 import numpy as np
 import torch
 import torch.nn as nn
@@ -405,7 +404,7 @@ from sklearn.preprocessing import StandardScaler
 # EEGNet embedding
 # -----------------------
 class MyEEGNet_embedding(nn.Module):
-    def __init__(self, d_model=128, C=62, T=200, F1=16, D=4, F2=16, cross_subject=False):
+    def __init__(self, d_model=128, C=62, T=100, F1=16, D=4, F2=16, cross_subject=False):
         super(MyEEGNet_embedding, self).__init__()
         self.drop_out = 0.25 if cross_subject else 0.5
 
@@ -481,7 +480,7 @@ class myTransformer(nn.Module):
 
     def forward(self, src, tgt):
         src = self.eeg_embedding(src.reshape(src.shape[0] * src.shape[1], 1, 62, 100))
-        src = src.reshape(src.shape[0] // src.shape[1], src.shape[1], -1) if len(src.shape) == 3 else src
+        src = src.reshape(-1, src.shape[-1]).unsqueeze(1)  # (batch, seq, d_model)
         tgt = tgt.reshape(tgt.shape[0], tgt.shape[1], -1)
         tgt = self.img_embedding(tgt)
         src = self.positional_encoding(src)
@@ -497,15 +496,16 @@ class myTransformer(nn.Module):
         return self.txtpredictor(encoder_output), self.predictor(new_tgt).reshape(new_tgt.shape[0], new_tgt.shape[1], 4, 36, 64)
 
 # -----------------------
-# Dataset
+# Dataset with sliding windows
 # -----------------------
 class EEGVideoDataset(Dataset):
-    def __init__(self, eeg_dir, video_dir):
+    def __init__(self, eeg_dir, video_dir, window_size=100, overlap=50):
         self.samples = []
+        self.window_size = window_size
+        self.overlap = overlap
         for block in os.listdir(video_dir):
             for f in os.listdir(os.path.join(video_dir, block)):
                 clip_id = f.replace(".npy", "")
-                # pick sub1 EEG as default (others can be added similarly)
                 eeg_file = os.path.join(eeg_dir, "sub1", block, clip_id + ".npy")
                 vid_file = os.path.join(video_dir, block, f)
                 if os.path.exists(eeg_file) and os.path.exists(vid_file):
@@ -516,8 +516,16 @@ class EEGVideoDataset(Dataset):
 
     def __getitem__(self, idx):
         eeg_file, vid_file = self.samples[idx]
-        eeg = np.load(eeg_file)   # shape (62, 100) or (62, T)
+        eeg = np.load(eeg_file)   # shape (62, T)
         vid = np.load(vid_file)   # shape (F, 4, 36, 64)
+
+        # sliding window segmentation
+        segments = []
+        step = self.window_size - self.overlap
+        for start in range(0, eeg.shape[1] - self.window_size + 1, step):
+            segments.append(eeg[:, start:start+self.window_size])
+        eeg = np.stack(segments, axis=0)  # (num_windows, 62, 100)
+
         eeg = torch.tensor(eeg, dtype=torch.float32)
         vid = torch.tensor(vid, dtype=torch.float32)
         return eeg, vid
