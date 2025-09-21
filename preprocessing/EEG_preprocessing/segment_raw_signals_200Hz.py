@@ -45,6 +45,7 @@ import numpy as np
 import os
 import re
 from tqdm import tqdm
+from core_files.gt_label import GT_LABEL   # <-- import the ground truth order
 
 fre = 200  # sampling frequency
 
@@ -88,13 +89,14 @@ for subname in sub_list:
         now_data = npydata[block_id]  # (62, 104000)
         l = 0
 
-        for class_id in tqdm(range(40), desc=f"{subname} {block_name}"):
-            l += (3 * fre)
+        for class_pos in tqdm(range(40), desc=f"{subname} {block_name}"):
+            true_class = GT_LABEL[block_id, class_pos]  # use GT_LABEL mapping
+            l += (3 * fre)  # skip 3s rest
             for clip_id in range(5):
                 clip_data = now_data[:, l:l+2*fre]  # (62, 400)
                 l += (2 * fre)
 
-                save_name = f"class{class_id+1:02d}_clip{clip_id+1:02d}.npy"
+                save_name = f"class{true_class:02d}_clip{clip_id+1:02d}.npy"
                 save_path = os.path.join(block_save_dir, save_name)
                 np.save(save_path, clip_data)
 
