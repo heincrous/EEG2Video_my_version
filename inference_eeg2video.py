@@ -90,6 +90,7 @@ import torch
 import numpy as np
 from torch.utils.data import DataLoader
 import imageio
+from IPython.display import display, HTML
 
 from training.my_autoregressive_transformer import myTransformer, EEGVideoDataset
 
@@ -98,7 +99,7 @@ from training.my_autoregressive_transformer import myTransformer, EEGVideoDatase
 # -----------------------
 BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test"
 CKPT_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoint.pt"
-SAVE_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_inference"
+SAVE_DIR = "./seq2seq_inference"   # local to Colab runtime
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -162,10 +163,17 @@ for i, (eeg, vid) in enumerate(test_loader):
     save_gif(trained_latents, trained_path)
     save_gif(random_latents, random_path)
 
-    print(f"Saved gifs for sample {i}:")
-    print(f" - {gt_path}")
-    print(f" - {trained_path}")
-    print(f" - {random_path}")
+    print(f"Saved gifs for sample {i} -> {SAVE_DIR}")
 
-    if i == 2:
+    # Show inline side-by-side
+    html = f"""
+    <div style="display:flex; flex-direction:row; gap:20px;">
+      <div><p><b>Sample {i} - Ground Truth</b></p><img src="{gt_path}" style="max-height:240px;"></div>
+      <div><p><b>Trained Seq2Seq</b></p><img src="{trained_path}" style="max-height:240px;"></div>
+      <div><p><b>Random Seq2Seq</b></p><img src="{random_path}" style="max-height:240px;"></div>
+    </div>
+    """
+    display(HTML(html))
+
+    if i == 2:  # just a few samples
         break
