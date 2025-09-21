@@ -1,7 +1,12 @@
-import torch
+import sys
 import os
+repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(repo_root)
+
+import torch
 import numpy as np
 import imageio
+# now the import will work
 from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
 
 # ---------------- CONFIG ----------------
