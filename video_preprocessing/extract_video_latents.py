@@ -10,12 +10,13 @@ from diffusers import AutoencoderKL
 # CONFIG
 GIF_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/Video_Gif/"
 SAVE_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/Video_latents/"
+MASTER_LATENTS_FILE = "/content/drive/MyDrive/EEG2Video_data/processed/40classes_latents.pt"
 LOG_FILE = "/content/drive/MyDrive/EEG2Video_data/processed/processed_log.txt"
 PROCESS_TAG = "[VIDEO_LATENT]"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Load Stable Diffusion VAE (authors' method)
+# Load Stable Diffusion VAE
 vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="vae")
 vae = vae.to(device)
 vae.eval()
@@ -50,14 +51,22 @@ def encode_gif_to_latent(gif_path):
         img = torch.from_numpy(img).permute(2,0,1).unsqueeze(0)
         frames.append(img)
     x = torch.cat(frames, dim=0).to(device)
-    x = 2.0 * x - 1.0  # normalize to [-1,1]
-
+    x = 2.0 * x - 1.0
     with torch.no_grad():
         posterior = vae.encode(x).latent_dist
-        latents = posterior.sample() * 0.18215  # authors' scaling factor
-    return latents.cpu().numpy()
+        latents = posterior.sample() * 0.18215
+    return latents.cpu()
 
-# Main loop: process all blocks, all GIFs
+def append_to_master_latents(new_latents):
+    # Load existing master if available
+    if os.path.exists(MASTER_LATENTS_FILE):
+        master = torch.load(MASTER_LATENTS_FILE)
+        updated = torch.cat([master, new_latents.unsqueeze(0)], dim=0)
+    else:
+        updated = new_latents.unsqueeze(0)
+    torch.save(updated, MASTER_LATENTS_FILE)
+
+# Main loop
 block_folders = get_folders_in_directory(GIF_DIR)
 processed = load_processed_log()
 processed_count, skipped_count = 0, 0
@@ -78,8 +87,16 @@ for block in block_folders:
 
         gif_path = os.path.join(block_path, gif_file)
         latents = encode_gif_to_latent(gif_path)
-        np.save(os.path.join(save_block_path, gif_file.replace(".gif",".npy")), latents)
+
+        # Save per-clip latent
+        np.save(os.path.join(save_block_path, gif_file.replace(".gif",".npy")), latents.numpy())
+
+        # Append to master file
+        append_to_master_latents(latents)
+
+        # Update log
         update_processed_log(f"{block}/{gif_file}")
         processed_count += 1
 
 print(f"\nSummary: {processed_count} clips processed, {skipped_count} skipped")
+print(f"Master latent file: {MASTER_LATENTS_FILE}")
