@@ -519,13 +519,21 @@ class EEGVideoDataset(Dataset):
         eeg = np.load(eeg_file)   # shape (62, T)
         vid = np.load(vid_file)   # shape (F, 4, 36, 64)
 
-        # sliding window segmentation
+        # sliding windows
         segments = []
         step = self.window_size - self.overlap
         for start in range(0, eeg.shape[1] - self.window_size + 1, step):
             segments.append(eeg[:, start:start+self.window_size])
-        eeg = np.stack(segments, axis=0)  # (num_windows, 62, 100)
 
+        # enforce exactly 7 windows like authors
+        if len(segments) >= 7:
+            segments = segments[:7]   # take first 7
+        else:
+            # pad with zeros if less than 7
+            while len(segments) < 7:
+                segments.append(np.zeros((62, self.window_size)))
+
+        eeg = np.stack(segments, axis=0)  # (7, 62, 100)
         eeg = torch.tensor(eeg, dtype=torch.float32)
         vid = torch.tensor(vid, dtype=torch.float32)
         return eeg, vid
