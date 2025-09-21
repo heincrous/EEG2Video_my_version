@@ -6,10 +6,12 @@ import clip
 
 # CONFIG
 RAW_BLIP_DIR = "/content/drive/MyDrive/EEG2Video_data/raw/BLIP-caption/"
-SAVE_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/"
+EMB_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/"
+CAP_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_captions/"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-os.makedirs(SAVE_DIR, exist_ok=True)
+os.makedirs(EMB_DIR, exist_ok=True)
+os.makedirs(CAP_DIR, exist_ok=True)
 
 # Load CLIP model (ViT-B/32)
 model, preprocess = clip.load("ViT-B/32", device=device)
@@ -50,8 +52,11 @@ processed_count = 0
 for blip_file in blip_list:
     block_key = os.path.splitext(blip_file)[0]  # e.g. "1st_10min"
     block_name = BLOCK_MAP.get(block_key, block_key)
-    block_save_dir = os.path.join(SAVE_DIR, block_name)
-    os.makedirs(block_save_dir, exist_ok=True)
+
+    block_emb_dir = os.path.join(EMB_DIR, block_name)
+    block_cap_dir = os.path.join(CAP_DIR, block_name)
+    os.makedirs(block_emb_dir, exist_ok=True)
+    os.makedirs(block_cap_dir, exist_ok=True)
 
     print(f"\nProcessing {blip_file} -> {block_name}")
 
@@ -77,10 +82,10 @@ for blip_file in blip_list:
             base_name = f"class{class_id+1:02d}_clip{clip_id+1:02d}"
 
             # save embedding as .npy (for training)
-            np.save(os.path.join(block_save_dir, base_name + ".npy"), embedding)
+            np.save(os.path.join(block_emb_dir, base_name + ".npy"), embedding)
 
             # save caption as .txt (for inspection/debugging)
-            with open(os.path.join(block_save_dir, base_name + ".txt"), "w") as ftxt:
+            with open(os.path.join(block_cap_dir, base_name + ".txt"), "w") as ftxt:
                 ftxt.write(caption)
 
             processed_count += 1
