@@ -85,141 +85,168 @@
 # ---------------------------------------------------------------------------------------------------------------
 # NEW VERSION
 # ---------------------------------------------------------------------------------------------------------------
-import os, random, shutil, numpy as np, torch, imageio
+import os
+import random
+import numpy as np
+import torch
+import torch.nn as nn
+import imageio
+from einops import rearrange
 
-# ---------------- Paths ----------------
-BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/test"
-EEG_SEG_DIR = os.path.join(BASE, "EEG_segments")
-GT_GIF_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/Video_Gif/Block1"
-SAVE_DIR = "/content/drive/MyDrive/EEG2Video_inference"
-os.makedirs(SAVE_DIR, exist_ok=True)
+from transformers import CLIPTokenizer
+from diffusers import DDIMScheduler, AutoencoderKL, CLIPTextModel
 
-SEQ2SEQ_CKPT = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoint.pt"
-SEMANTIC_CKPT = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor.pt"
-DIFFUSION_UNET_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output/unet"
-SD_BASE_DIR = os.path.dirname(DIFFUSION_UNET_DIR)
-
-VIDEO_LENGTH, HEIGHT, WIDTH = 6, 288, 512
-STEPS, GUIDANCE = 50, 12.5
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# ---------------- Utils ----------------
-def save_gif(frames, path, fps=5):
-    if isinstance(frames, torch.Tensor):
-        frames = frames.cpu().numpy()
-    out = []
-    for f in frames:
-        f = f.squeeze(0) if f.ndim==3 and f.shape[0]==1 else (f.transpose(1,2,0) if f.ndim==3 else f)
-        out.append(np.clip(f*255.0,0,255).astype(np.uint8))
-    imageio.mimsave(path, out, fps=fps)
-
-def pick_valid_7x62x200(root):
-    subs = [d for d in os.listdir(root) if os.path.isdir(os.path.join(root,d))]
-    random.shuffle(subs)
-    for sub in subs:
-        subp = os.path.join(root, sub)
-        blocks = [b for b in os.listdir(subp) if os.path.isdir(os.path.join(subp,b))]
-        random.shuffle(blocks)
-        for blk in blocks:
-            blkp = os.path.join(subp, blk)
-            files = [f for f in os.listdir(blkp) if f.endswith(".npy")]
-            random.shuffle(files)
-            for f in files:
-                p = os.path.join(blkp, f)
-                try:
-                    arr = np.load(p, mmap_mode="r")
-                except Exception:
-                    continue
-                if arr.ndim==3 and arr.shape==(7,62,200):
-                    return sub, blk, p
-    raise RuntimeError("No EEG file with shape (7,62,200) found.")
-
-# ---------------- Select one clip ----------------
-sub, block, EEG_PATH = pick_valid_7x62x200(EEG_SEG_DIR)
-print(f"Selected: Subject={sub}, Block={block}, File={os.path.basename(EEG_PATH)}")
-eeg_raw = torch.from_numpy(np.load(EEG_PATH)).unsqueeze(0).to(device)  # [1,7,62,200]
-neg_raw = eeg_raw.mean(dim=1, keepdim=True)                            # [1,1,62,200]
-
-# ---------------- Load Seq2Seq for embeddings ----------------
-from training.my_autoregressive_transformer import myTransformer
-seq2seq = myTransformer().to(device)
-ckpt = torch.load(SEQ2SEQ_CKPT, map_location=device)
-seq2seq.load_state_dict(ckpt["state_dict"])
-seq2seq.eval()
-with torch.no_grad():
-    emb = seq2seq(eeg_raw)            # [1,77,768]
-    neg_emb = seq2seq(neg_raw)        # [1,77,768]
-
-# ---------------- Optional Semantic Predictor Ablation ----------------
-from training.train_semantic_predictor import SemanticPredictor
-de = np.load(EEG_PATH).reshape(-1)[None, :]  # flatten 62*5 -> [1,310]
-sem = SemanticPredictor(input_dim=310).to(device).eval()
-sem_sd = torch.load(SEMANTIC_CKPT, map_location=device)["state_dict"]
-sem.load_state_dict(sem_sd)
-with torch.no_grad():
-    emb_sem = sem(torch.from_numpy(de).float().to(device))   # [1,59136]
-neg_sem = torch.zeros_like(emb_sem)
-
-# ---------------- Load diffusion UNet and pipeline ----------------
-from core_files.unet import UNet3DConditionModel
 from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
-unet = UNet3DConditionModel.from_pretrained_2d(DIFFUSION_UNET_DIR).to(device)
-pipe = TuneAVideoPipeline.from_pretrained(SD_BASE_DIR, unet=unet)
-pipe.to(device)
+from core_files.unet import UNet3DConditionModel
+
+# -------------------------
+# Helper: save video tensor to GIF
+# -------------------------
+def save_videos_grid(videos, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if isinstance(videos, torch.Tensor):
+        videos = videos.detach().cpu().numpy()
+
+    if videos.ndim == 5:  # [B, F, C, H, W]
+        video = videos[0]
+    else:
+        video = videos
+    frames = []
+    for frame in video:
+        if frame.shape[0] == 1:
+            frame = frame.squeeze(0)
+        else:
+            frame = frame.transpose(1, 2, 0)
+        frame = np.clip(frame * 255, 0, 255).astype(np.uint8)
+        frames.append(frame)
+    imageio.mimsave(path, frames, fps=5)
+
+# -------------------------
+# Paths
+# -------------------------
+BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/test"
+GT_GIF_BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Video_Gif"
+CHECKPOINTS = "/content/drive/MyDrive/EEG2Video_checkpoints"
+
+SEQ2SEQ_CKPT = os.path.join(CHECKPOINTS, "seq2seq_checkpoint.pt")
+SEMANTIC_CKPT = os.path.join(CHECKPOINTS, "semantic_predictor.pt")
+DIFFUSION_CKPT = os.path.join(CHECKPOINTS, "EEG2Video_diffusion_output")
+SD_BASE = os.path.join(CHECKPOINTS, "stable-diffusion-v1-4")
+
+OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_results"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# -------------------------
+# Load models
+# -------------------------
+# Diffusion pipeline
+unet = UNet3DConditionModel.from_pretrained(DIFFUSION_CKPT, subfolder="unet").to(device, dtype=torch.float16)
+vae = AutoencoderKL.from_pretrained(SD_BASE, subfolder="vae").to(device, dtype=torch.float16)
+text_encoder = CLIPTextModel.from_pretrained(SD_BASE, subfolder="text_encoder").to(device, dtype=torch.float16)
+tokenizer = CLIPTokenizer.from_pretrained(SD_BASE, subfolder="tokenizer")
+scheduler = DDIMScheduler.from_pretrained(SD_BASE, subfolder="scheduler")
+
+pipe = TuneAVideoPipeline(
+    vae=vae,
+    text_encoder=text_encoder,
+    tokenizer=tokenizer,
+    unet=unet,
+    scheduler=scheduler,
+).to(device)
 pipe.enable_vae_slicing()
-pipe.enable_attention_slicing()
 
-# ---------------- Trained GIF (Seq2Seq embeddings) ----------------
+# Seq2Seq model
+from training.my_autoregressive_transformer import myTransformer
+seq2seq = myTransformer()
+seq2seq.load_state_dict(torch.load(SEQ2SEQ_CKPT, map_location="cpu")["state_dict"])
+seq2seq = seq2seq.to(device).eval()
+
+# Semantic Predictor
+from training.train_semantic_predictor import SemanticPredictor
+semantic_model = SemanticPredictor(input_dim=310)
+semantic_model.load_state_dict(torch.load(SEMANTIC_CKPT, map_location="cpu")["state_dict"])
+semantic_model = semantic_model.to(device).eval()
+
+# -------------------------
+# Pick random test EEG file
+# -------------------------
+eeg_dir = os.path.join(BASE, "EEG_segments")
+vid_dir = os.path.join(BASE, "Video_latents")
+blocks = os.listdir(eeg_dir)
+block = random.choice(blocks)
+block_path = os.path.join(eeg_dir, block)
+clip_file = random.choice(os.listdir(block_path))
+eeg_file = os.path.join(block_path, clip_file)
+vid_file = os.path.join(vid_dir, block, clip_file)
+gt_gif_file = os.path.join(GT_GIF_BASE, block, clip_file.replace(".npy", ".gif"))
+
+print(f"Chosen test sample: {clip_file}")
+
+# -------------------------
+# Load EEG + Video latent
+# -------------------------
+eeg = np.load(eeg_file)  # (62, 400)
+vid_latent = np.load(vid_file)  # (F, 4, 36, 64)
+
+# Segment EEG into 7 windows of 200
+segments = []
+for start in range(0, eeg.shape[1] - 200 + 1, 100):
+    segments.append(eeg[:, start:start+200])
+while len(segments) < 7:
+    segments.append(np.zeros((62, 200)))
+eeg = np.stack(segments[:7], axis=0)
+
+eeg_tensor = torch.tensor(eeg, dtype=torch.float32).unsqueeze(0).to(device)  # [1, 7, 62, 200]
+
+# -------------------------
+# Run Seq2Seq → predicted latents
+# -------------------------
+vid_tensor = torch.tensor(vid_latent, dtype=torch.float32).unsqueeze(0).to(device)  # [1, F, 4, 36, 64]
+padded = torch.zeros((1, 1, 4, 36, 64), device=device)
+full_vid = torch.cat((padded, vid_tensor), dim=1)
+
 with torch.no_grad():
-    trained = pipe(
-        model=None,
-        eeg=emb.reshape(1,-1),          # flatten to [1,59136] to match pipeline reshape
-        negative_eeg=neg_emb.reshape(1,-1),
-        latents=None,
-        video_length=VIDEO_LENGTH,
-        height=HEIGHT,
-        width=WIDTH,
-        num_inference_steps=STEPS,
-        guidance_scale=GUIDANCE
-    ).videos
-save_gif(trained, os.path.join(SAVE_DIR, "clip_trained.gif"))
+    _, pred_latents = seq2seq(eeg_tensor, full_vid)
+pred_latents = pred_latents[:, :-1, :, :, :]  # remove padding
+pred_latents = pred_latents.to(torch.float16)
 
-# ---------------- Random GIF ----------------
+# -------------------------
+# Run Semantic predictor → embeddings
+# -------------------------
+eeg_de = eeg.reshape(-1)[:310]  # flatten DE features (dummy: first 310 vals)
+eeg_de = torch.tensor(eeg_de, dtype=torch.float32).unsqueeze(0).to(device)
 with torch.no_grad():
-    rand_emb = torch.randn_like(emb).reshape(1,-1)
-    random_vid = pipe(
-        model=None,
-        eeg=rand_emb,
-        negative_eeg=neg_emb.reshape(1,-1),
-        latents=None,
-        video_length=VIDEO_LENGTH,
-        height=HEIGHT,
-        width=WIDTH,
-        num_inference_steps=STEPS,
-        guidance_scale=GUIDANCE
-    ).videos
-save_gif(random_vid, os.path.join(SAVE_DIR, "clip_random.gif"))
+    text_embeds = semantic_model(eeg_de).reshape(1, 77, 768)
 
-# ---------------- Semantic Predictor Ablation GIF ----------------
+# -------------------------
+# Run diffusion pipeline
+# -------------------------
 with torch.no_grad():
-    sem_vid = pipe(
-        model=None,
-        eeg=emb_sem,       # Semantic Predictor output [1,59136]
-        negative_eeg=neg_sem,
-        latents=None,
-        video_length=VIDEO_LENGTH,
-        height=HEIGHT,
-        width=WIDTH,
-        num_inference_steps=STEPS,
-        guidance_scale=GUIDANCE
+    video = pipe(
+        prompt_embeds=text_embeds,
+        negative_prompt=None,
+        latents=pred_latents,
+        video_length=pred_latents.shape[1],
+        height=288,
+        width=512,
+        num_inference_steps=50,
+        guidance_scale=12.5
     ).videos
-save_gif(sem_vid, os.path.join(SAVE_DIR, "clip_semantic.gif"))
 
-# ---------------- Ground-truth GIF ----------------
-if os.path.isdir(GT_GIF_DIR):
-    gts = [f for f in os.listdir(GT_GIF_DIR) if f.endswith(".gif")]
-    if gts:
-        shutil.copy(os.path.join(GT_GIF_DIR, random.choice(gts)),
-                    os.path.join(SAVE_DIR, "clip_ground_truth.gif"))
+# -------------------------
+# Save results
+# -------------------------
+gen_path = os.path.join(OUTPUT_DIR, f"{clip_file.replace('.npy','')}_gen.gif")
+gt_path = os.path.join(OUTPUT_DIR, f"{clip_file.replace('.npy','')}_gt.gif")
 
-print("Saved: clip_trained.gif, clip_random.gif, clip_semantic.gif, clip_ground_truth.gif")
+save_videos_grid(video, gen_path)
+
+# copy ground truth gif
+if os.path.exists(gt_gif_file):
+    import shutil
+    shutil.copy(gt_gif_file, gt_path)
+
+print(f"Generated video saved: {gen_path}")
+print(f"Ground truth video saved: {gt_path}")
