@@ -63,6 +63,7 @@ import imageio
 import numpy as np
 import os
 import re
+from core_files.gt_label import GT_LABEL   # <-- import the true class order
 
 # CONFIG
 RAW_VIDEO_DIR = "/content/drive/MyDrive/EEG2Video_data/raw/Video/"
@@ -97,22 +98,22 @@ if not video_list:
 
 processed_count = 0
 
+BLOCK_MAP = {
+    "1st_10min": "Block1",
+    "2nd_10min": "Block2",
+    "3rd_10min": "Block3",
+    "4th_10min": "Block4",
+    "5th_10min": "Block5",
+    "6th_10min": "Block6",
+    "7th_10min": "Block7",
+}
+
 for video_file in video_list:
     video_path = os.path.join(RAW_VIDEO_DIR, video_file)
-    
-    # map raw video filenames to Block names
-    BLOCK_MAP = {
-        "1st_10min": "Block1",
-        "2nd_10min": "Block2",
-        "3rd_10min": "Block3",
-        "4th_10min": "Block4",
-        "5th_10min": "Block5",
-        "6th_10min": "Block6",
-        "7th_10min": "Block7",
-    }
 
     block_key = os.path.splitext(video_file)[0]  # e.g. "1st_10min"
     block_name = BLOCK_MAP.get(block_key, block_key)
+    block_idx = int(block_name.replace("Block", "")) - 1
     block_save_dir = os.path.join(SAVE_DIR, block_name)
     os.makedirs(block_save_dir, exist_ok=True)
 
@@ -130,9 +131,9 @@ for video_file in video_list:
                      i * (24 * 13) + 3 * 24 + j * 24 * 2 + 24 * 2] = j + 1
 
     i = -1
-    class_idx, clip_idx = 1, 1
+    class_pos, clip_idx = 0, 1
 
-    while i < 12480:
+    while i < 12480 and class_pos < 40:
         i += 1
         success, frame = cap.read()
         if not success:
@@ -153,7 +154,9 @@ for video_file in video_list:
         # sample frames (every 8th, up to 48 total)
         gif_frames = [all_frames[j] for j in range(0, min(48, len(all_frames)), 8)]
 
-        save_name = f"class{class_idx:02d}_clip{clip_idx:02d}.gif"
+        # use GT_LABEL for correct class ID
+        true_class = GT_LABEL[block_idx, class_pos]
+        save_name = f"class{true_class:02d}_clip{clip_idx:02d}.gif"
         gif_path = os.path.join(block_save_dir, save_name)
         imageio.mimsave(gif_path, gif_frames, "GIF", duration=0.3333)
         print("Saved", gif_path)
@@ -162,7 +165,7 @@ for video_file in video_list:
         clip_idx += 1
         if clip_idx > 5:
             clip_idx = 1
-            class_idx += 1
+            class_pos += 1
 
     cap.release()
     processed_count += 1

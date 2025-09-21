@@ -3,6 +3,7 @@ import re
 import torch
 import numpy as np
 import clip
+from core_files.gt_label import GT_LABEL   # <-- import the ground-truth order
 
 # CONFIG
 RAW_BLIP_DIR = "/content/drive/MyDrive/EEG2Video_data/raw/BLIP-caption/"
@@ -52,6 +53,7 @@ processed_count = 0
 for blip_file in blip_list:
     block_key = os.path.splitext(blip_file)[0]  # e.g. "1st_10min"
     block_name = BLOCK_MAP.get(block_key, block_key)
+    block_idx = int(block_name.replace("Block", "")) - 1
 
     block_emb_dir = os.path.join(EMB_DIR, block_name)
     block_cap_dir = os.path.join(CAP_DIR, block_name)
@@ -66,9 +68,10 @@ for blip_file in blip_list:
     if len(lines) != 200:
         print(f"Warning: {blip_file} has {len(lines)} captions (expected 200)")
 
-    for class_id in range(40):
+    for class_pos in range(40):
+        true_class = GT_LABEL[block_idx, class_pos]
         for clip_id in range(5):
-            idx = class_id * 5 + clip_id
+            idx = class_pos * 5 + clip_id
             if idx >= len(lines):
                 continue
             caption = lines[idx]
@@ -79,7 +82,7 @@ for blip_file in blip_list:
                 embedding = embedding / embedding.norm(dim=-1, keepdim=True)
             embedding = embedding.cpu().numpy()
 
-            base_name = f"class{class_id+1:02d}_clip{clip_id+1:02d}"
+            base_name = f"class{true_class:02d}_clip{clip_id+1:02d}"
 
             # save embedding as .npy (for training)
             np.save(os.path.join(block_emb_dir, base_name + ".npy"), embedding)

@@ -96,8 +96,9 @@ for subname in sub_list:
 
             de, psd = DE_PSD(eeg_clip, fre, 2)  # (62,5), (62,5)
 
-            np.save(os.path.join(save_de_block, clip_file), de)
-            np.save(os.path.join(save_psd_block, clip_file), psd)
+            base_name = os.path.splitext(clip_file)[0]  # drop .npy
+            np.save(os.path.join(save_de_block, base_name + ".npy"), de)
+            np.save(os.path.join(save_psd_block, base_name + ".npy"), psd)
 
     processed_count += 1
     print(f"Finished subject {subname}")

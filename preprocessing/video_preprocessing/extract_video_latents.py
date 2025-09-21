@@ -1,5 +1,4 @@
 import os
-import re
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -45,25 +44,12 @@ def encode_gif_to_latent(gif_path):
     return latents.cpu().numpy()
 
 # -----------------------------
-# Block name mapping
-# -----------------------------
-BLOCK_MAP = {
-    "1st_10min": "Block1",
-    "2nd_10min": "Block2",
-    "3rd_10min": "Block3",
-    "4th_10min": "Block4",
-    "5th_10min": "Block5",
-    "6th_10min": "Block6",
-    "7th_10min": "Block7",
-}
-
-# -----------------------------
 # Ask user which blocks to process
 # -----------------------------
 all_blocks = get_block_folders(GIF_DIR)
 print("Available blocks:", all_blocks)
 
-user_input = input("Enter blocks to process (comma separated, e.g. 1st_10min,2nd_10min): ")
+user_input = input("Enter blocks to process (comma separated, e.g. Block1,Block2): ")
 block_list = [b.strip() for b in user_input.split(",") if b.strip() in all_blocks]
 
 if not block_list:
@@ -74,9 +60,7 @@ first_shape_printed = False
 
 for block in block_list:
     block_path = os.path.join(GIF_DIR, block)
-    # remap to BlockX
-    block_name = BLOCK_MAP.get(block, block)
-    save_block_path = os.path.join(SAVE_DIR, block_name)
+    save_block_path = os.path.join(SAVE_DIR, block)
     os.makedirs(save_block_path, exist_ok=True)
 
     gif_files = sorted([f for f in os.listdir(block_path) if f.endswith(".gif")])
