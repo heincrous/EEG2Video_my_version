@@ -212,20 +212,20 @@ eeg_tensor = torch.tensor(eeg, dtype=torch.float32).unsqueeze(0).to(device)  # [
 # Run Seq2Seq → predicted latents
 # -------------------------
 
-# Start with 1 padding + 4 empty slots = 5 frames
-init_latents = torch.zeros((1, 5, 4, 36, 64), device=device)
+# Init with 1 BOS + 5 empty slots = 6 steps
+init_latents = torch.zeros((1, 6, 4, 36, 64), device=device)
 
 with torch.no_grad():
     _, pred_latents = seq2seq(eeg_tensor, init_latents)
 
-# Drop the first dummy frame
-pred_latents = pred_latents[:, 1:, :, :, :]  # keep only 4 decoded frames
+# Drop the first dummy BOS frame
+pred_latents = pred_latents[:, 1:, :, :, :]  # keep 5 frames
 pred_latents = pred_latents.to(torch.float16)
 
-# Rearrange to [B, C, F, H, W] for diffusion
+# Rearrange to [B, C, F, H, W]
 pred_latents = rearrange(pred_latents, "b f c h w -> b c f h w")
 
-# Enforce exactly 4 frames
+# Trim/pad to exactly 4 for the diffusion UNet
 if pred_latents.shape[2] > 4:
     pred_latents = pred_latents[:, :, :4, :, :]
 elif pred_latents.shape[2] < 4:
