@@ -170,13 +170,12 @@ for block in sorted(os.listdir(BLIP_CAP_DIR)):
     test_block_dir = os.path.join(TEST_VIDEO_DIR, block)
     if not os.path.exists(blip_block_dir) or not os.path.exists(test_block_dir):
         continue
-    # Only include BLIP txt files that match a test latent
     test_clips = [f.replace(".npy",".txt") for f in os.listdir(test_block_dir) if f.endswith(".npy")]
     for txt_file in sorted(os.listdir(blip_block_dir)):
         if txt_file in test_clips:
             test_captions.append((block, txt_file, os.path.join(blip_block_dir, txt_file)))
     if test_captions:
-        break  # only first matching caption
+        break
 
 print(f"Testing 1 caption with video_length={VIDEO_LENGTH}")
 
@@ -186,10 +185,16 @@ with open(txt_path, "r") as f:
     prompt_text = f.read().strip()
 
 for i, (eeg, vid) in enumerate(test_loader):
-    eeg = eeg.to(device)
+    eeg = eeg.to(device)   # shape: [B, channels, time] or [B, 62, 200]
     vid = vid.to(device)
 
-    # Generate Seq2Seq latent
+    # ---------------- Process EEG for Semantic Predictor ----------------
+    # Average over temporal dimension to match training (310 features)
+    eeg_processed = eeg.mean(dim=2)  # [B, 62] if original [B, 62, 200]
+    eeg_processed = eeg_processed.reshape(eeg_processed.shape[0], 310)  # ensure 310 features
+    # Note: if your EEG preprocessing already outputs 310 DE features per clip, skip averaging
+
+    # ---------------- Generate Seq2Seq latent ----------------
     b, f, c, h, w = vid.shape
     padded = torch.zeros((b, 1, c, h, w), device=device)
     full_vid = torch.cat((padded, vid), dim=1)
@@ -197,12 +202,12 @@ for i, (eeg, vid) in enumerate(test_loader):
         _, seq2seq_latent = seq2seq_model(eeg, full_vid)
     seq2seq_latent = seq2seq_latent[:, :-1, :]
 
-    # Generate semantic embedding
+    # ---------------- Generate semantic embedding ----------------
     with torch.no_grad():
-        semantic_embed = semantic_model(eeg)  # [B, 77*768]
-        semantic_embed = semantic_embed.view(eeg.shape[0], 77, 768)  # reshape to [B, 77, 768]
+        semantic_embed = semantic_model(eeg_processed)  # [B, 77*768]
+        semantic_embed = semantic_embed.view(eeg_processed.shape[0], 77, 768)  # [B, 77, 768]
 
-    # Diffusion inference (DANA) — no added noise
+    # ---------------- Diffusion inference (DANA) ----------------
     with torch.no_grad():
         video_out = pipe(
             prompt_embeddings=semantic_embed,
@@ -214,7 +219,7 @@ for i, (eeg, vid) in enumerate(test_loader):
             guidance_scale=12.5
         ).videos
 
-    # Save GIF with original test caption naming
+    # ---------------- Save GIF ----------------
     save_name = f"{block}_{txt_file.replace('.txt','.gif')}"
     save_path = os.path.join(SAVE_DIR, save_name)
     save_videos_grid(video_out, save_path)
@@ -222,4 +227,5 @@ for i, (eeg, vid) in enumerate(test_loader):
 
     if i == 2:  # limit for quick test
         break
+
 
