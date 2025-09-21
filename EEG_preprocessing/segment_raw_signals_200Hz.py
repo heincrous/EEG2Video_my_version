@@ -90,7 +90,7 @@ for subname in sub_list:
         now_data = npydata[block_id]
         l = 0
         block_data = np.empty((0, 5, 62, 2*fre))
-        for class_id in tqdm(range(40), desc=f" Class {class_id+1}/40"):
+        for class_id in tqdm(range(40), desc="Classes"):
             l += (3 * fre)
             class_data = np.empty((0, 62, 2*fre))
             for i in range(5):
