@@ -95,32 +95,20 @@ from training.my_autoregressive_transformer import EEGVideoDataset
 from training.train_semantic_predictor import SemanticPredictor
 from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 from core_files.unet import UNet3DConditionModel
+import shutil
 
 # ---------------- Paths ----------------
 BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/test"
 DE_TEST_DIR = os.path.join(BASE, "EEG_features/DE_1per2s")
 TEST_VIDEO_DIR = os.path.join(BASE, "Video_latents")
-PROCESSED_GIF_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/Video_Gif/Block1"  # ground-truth folder
+PROCESSED_GIF_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/Video_Gif/Block1"
 SAVE_DIR = "/content/drive/MyDrive/EEG2Video_inference"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-# ---------------- Load dataset ----------------
-test_ds = EEGVideoDataset(DE_TEST_DIR, TEST_VIDEO_DIR)
-test_loader = DataLoader(test_ds, batch_size=1, shuffle=True)
-
+VIDEO_LENGTH = 6
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ---------------- Load models ----------------
-seq2seq_model = UNet3DConditionModel.from_pretrained_2d("/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output/unet").to(device)
-semantic_model = SemanticPredictor(input_dim=310).to(device)
-semantic_model.load_state_dict(torch.load("/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor.pt")["state_dict"])
-semantic_model.eval()
-pipe = TuneAVideoPipeline.from_pretrained("/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output", unet=seq2seq_model)
-pipe.to(device)
-pipe.enable_vae_slicing()
-pipe.enable_attention_slicing()
-
-# ---------------- Helper to save GIF ----------------
+# ---------------- GIF saving ----------------
 def save_gif(frames, path, fps=4):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if isinstance(frames, torch.Tensor):
@@ -132,44 +120,69 @@ def save_gif(frames, path, fps=4):
         gif_frames.append((f*255).astype(np.uint8))
     imageio.mimsave(path, gif_frames, fps=fps)
 
-# ---------------- Run for one clip ----------------
-eeg_raw, vid = next(iter(test_loader))
-eeg_seq = eeg_raw.to(device)
-eeg_flat = eeg_raw[:,0,:,:5].reshape(eeg_raw.shape[0], -1).to(device)
+# ---------------- Load dataset ----------------
+test_ds = EEGVideoDataset(DE_TEST_DIR, TEST_VIDEO_DIR)
+test_loader = DataLoader(test_ds, batch_size=1, shuffle=True)  # random order
 
-# --- Trained GIF ---
-with torch.no_grad():
-    semantic_embed = semantic_model(eeg_flat).view(eeg_flat.shape[0],77,768)
-    b,f,c,h,w = vid.shape
-    padded = torch.zeros((b,1,c,h,w), device=device)
-    full_vid = torch.cat((padded, vid.to(device)), dim=1)
-    _, seq2seq_latent = seq2seq_model(eeg_seq, full_vid)
-    seq2seq_latent = seq2seq_latent[:, :-1, :]
-    trained_gif = pipe(prompt_embeddings=semantic_embed, latents=seq2seq_latent.unsqueeze(2),
-                       video_length=6, height=288, width=512,
-                       num_inference_steps=50, guidance_scale=12.5).videos
+# ---------------- Load models ----------------
+seq2seq_model = UNet3DConditionModel.from_pretrained_2d("/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output/unet").to(device)
+semantic_model = SemanticPredictor(input_dim=310).to(device)
+semantic_model.load_state_dict(torch.load("/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor.pt")["state_dict"])
+semantic_model.eval()
 
-save_gif(trained_gif, os.path.join(SAVE_DIR, "trained.gif"))
+pipe = TuneAVideoPipeline.from_pretrained("/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output", unet=seq2seq_model)
+pipe.to(device)
+pipe.enable_vae_slicing()
+pipe.enable_attention_slicing()
 
-# --- Random GIF ---
-random_latent = torch.randn_like(seq2seq_latent).unsqueeze(2)
-random_embed = torch.randn_like(semantic_embed)
-with torch.no_grad():
-    random_gif = pipe(prompt_embeddings=random_embed, latents=random_latent,
-                      video_length=6, height=288, width=512,
-                      num_inference_steps=50, guidance_scale=12.5).videos
-save_gif(random_gif, os.path.join(SAVE_DIR, "random.gif"))
+# ---------------- Run inference ----------------
+for i, (eeg_raw, vid) in enumerate(tqdm(test_loader, desc="Running EEG2Video inference")):
+    eeg_seq = eeg_raw.to(device)  # [B=1, segments=7, channels=62, timepoints=200]
+    eeg_flat = eeg_raw[:,0,:,:5].reshape(eeg_raw.shape[0], -1).to(device)  # [B=1, 310]
+    vid = vid.to(device)  # [B=1, 6, 4, 36, 64]
 
-# --- Ground-truth GIF ---
-# Find the matching GIF file in the processed folder
-clip_name = os.path.basename(TEST_VIDEO_DIR)  # adjust to match your naming convention
-gt_gif_files = [f for f in os.listdir(PROCESSED_GIF_DIR) if clip_name in f]
-if gt_gif_files:
-    gt_gif_path = os.path.join(PROCESSED_GIF_DIR, gt_gif_files[0])
-    save_path = os.path.join(SAVE_DIR, "ground_truth.gif")
-    # Copy the existing GIF directly
-    import shutil
-    shutil.copy(gt_gif_path, save_path)
-    print(f"Saved ground-truth GIF: {save_path}")
-else:
-    print("Ground-truth GIF not found!")
+    # --- Trained GIF ---
+    with torch.no_grad():
+        semantic_embed = semantic_model(eeg_flat).view(eeg_flat.shape[0],77,768)
+        b,f,c,h,w = vid.shape
+        padded = torch.zeros((b,1,c,h,w), device=device)
+        full_vid = torch.cat((padded, vid), dim=1)
+        _, seq2seq_latent = seq2seq_model(eeg_seq, full_vid)
+        seq2seq_latent = seq2seq_latent[:, :-1, :]
+        trained_gif = pipe(
+            prompt_embeddings=semantic_embed,
+            latents=seq2seq_latent.unsqueeze(2),
+            video_length=VIDEO_LENGTH,
+            height=288,
+            width=512,
+            num_inference_steps=50,
+            guidance_scale=12.5
+        ).videos
+    save_gif(trained_gif, os.path.join(SAVE_DIR, f"clip{i+1}_trained.gif"))
+
+    # --- Random GIF ---
+    random_latent = torch.randn_like(seq2seq_latent).unsqueeze(2)
+    random_embed = torch.randn_like(semantic_embed)
+    with torch.no_grad():
+        random_gif = pipe(
+            prompt_embeddings=random_embed,
+            latents=random_latent,
+            video_length=VIDEO_LENGTH,
+            height=288,
+            width=512,
+            num_inference_steps=50,
+            guidance_scale=12.5
+        ).videos
+    save_gif(random_gif, os.path.join(SAVE_DIR, f"clip{i+1}_random.gif"))
+
+    # --- Ground-truth GIF ---
+    clip_name = os.path.basename(TEST_VIDEO_DIR)  # adjust if necessary
+    gt_gif_files = [f for f in os.listdir(PROCESSED_GIF_DIR) if f.startswith(f"class") and f.endswith(".gif")]
+    if gt_gif_files:
+        gt_gif_path = os.path.join(PROCESSED_GIF_DIR, gt_gif_files[i % len(gt_gif_files)])
+        shutil.copy(gt_gif_path, os.path.join(SAVE_DIR, f"clip{i+1}_ground_truth.gif"))
+
+    if i >= 9:  # remove this to run all 40 clips
+        break
+
+print("Inference complete: random, trained, and ground-truth GIFs saved for selected clips.")
