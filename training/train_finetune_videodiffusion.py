@@ -541,7 +541,8 @@ for epoch in tqdm(range(1, NUM_EPOCHS+1)):
             timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device=latents.device).long()
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-            encoder_hidden_states = text_encoder(batch["prompt_ids"].squeeze(0).to(weight_dtype))[0]
+            # ----------------------- Encode prompts (keep Long type)
+            encoder_hidden_states = text_encoder(batch["prompt_ids"].squeeze(0).long().to(accelerator.device))[0]
             B, seq_len, hidden_dim = encoder_hidden_states.shape
             F_frames = latents.shape[2]
             encoder_hidden_states = einops.repeat(encoder_hidden_states, 'b n c -> b f n c', f=F_frames)
@@ -562,7 +563,7 @@ for epoch in tqdm(range(1, NUM_EPOCHS+1)):
     # ----------------------- Inline validation / save GIFs
     if accelerator.is_main_process:
         for i, prompt_path in enumerate(train_dataset.blip_paths):
-            prompt = torch.from_numpy(np.load(prompt_path)).to(weight_dtype)
+            prompt = torch.from_numpy(np.load(prompt_path)).long().to(accelerator.device)
             sample = validation_pipeline(prompt, generator=None, latents=None).videos
             save_videos_grid(sample, f"{OUTPUT_DIR}/samples/sample-{epoch}/{i}.gif")
 
