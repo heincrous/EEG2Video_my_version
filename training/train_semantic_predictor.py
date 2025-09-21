@@ -159,7 +159,7 @@ from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
 # -----------------------
-# Model (authors’ semantic predictor, DE -> text embeddings)
+# Model (authors’ MLP: DE -> BLIP embeddings)
 # -----------------------
 class CLIP(nn.Module):
     def __init__(self, input_dim=310):
@@ -180,13 +180,13 @@ class CLIP(nn.Module):
         return self.mlp(eeg)
 
 # -----------------------
-# Dataset (DE features + BLIP embeddings)
+# Dataset (per-clip DE features + BLIP embeddings)
 # -----------------------
 class EEGTextDataset(Dataset):
     def __init__(self, de_root, text_root):
         self.samples = []
 
-        # walk subject → block → clips
+        # collect (DE_file, BLIP_file) pairs
         for subj in os.listdir(de_root):
             subj_path = os.path.join(de_root, subj)
             if not os.path.isdir(subj_path):
@@ -205,12 +205,11 @@ class EEGTextDataset(Dataset):
         if len(self.samples) == 0:
             raise RuntimeError("No DE–BLIP pairs found. Check directory structure.")
 
-        # fit StandardScaler across all DE features
+        # fit StandardScaler across all clips
         all_eeg = []
         for eeg_file, _ in self.samples:
-            eeg = np.load(eeg_file)  # (310,) or (T,310)
-            if eeg.ndim == 2:        # collapse time if present
-                eeg = eeg.mean(axis=0)
+            eeg = np.load(eeg_file)        # (62,5)
+            eeg = eeg.reshape(-1)          # flatten to (310,)
             all_eeg.append(eeg)
         all_eeg = np.stack(all_eeg, axis=0)  # (N,310)
         self.scaler = StandardScaler().fit(all_eeg)
@@ -220,21 +219,15 @@ class EEGTextDataset(Dataset):
 
     def __getitem__(self, idx):
         eeg_file, txt_file = self.samples[idx]
-        eeg = np.load(eeg_file)
-        if eeg.ndim == 2:
-            # case (T, 62*5)
-            if eeg.shape[1] == 62*5:
-                eeg = eeg.mean(axis=0)          # (310,)
-            else:
-                raise ValueError(f"Unexpected DE shape {eeg.shape} in {eeg_file}")
-        elif eeg.ndim == 3:
-            # case (T, 62, 5)
-            T, C, F = eeg.shape
-            eeg = eeg.reshape(T, C*F).mean(axis=0)  # (310,)
-        elif eeg.ndim == 1 and eeg.shape[0] == 310:
-            pass  # already flattened
-        else:
-            raise ValueError(f"Unhandled DE shape {eeg.shape} in {eeg_file}")
+
+        eeg = np.load(eeg_file).reshape(-1)   # (310,)
+        eeg = self.scaler.transform([eeg])[0]
+
+        text = np.load(txt_file).reshape(-1)  # (77*768,)
+
+        eeg = torch.tensor(eeg, dtype=torch.float32)
+        text = torch.tensor(text, dtype=torch.float32)
+        return eeg, text
 
 # -----------------------
 # Training loop
