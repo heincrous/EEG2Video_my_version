@@ -6,7 +6,12 @@ from glob import glob
 
 # CONFIG
 BASE_DIR = "/content/drive/MyDrive/EEG2Video_data/processed"
-MODALITIES = ["EEG_segments", "Video_latents", "BLIP_embeddings"]
+MODALITIES = [
+    "EEG_segments",
+    "Video_latents",
+    "BLIP_embeddings",
+    "EEG_features/DE_1per2s"
+]
 SAVE_DIR = os.path.join(BASE_DIR, "Split_4train1test")
 SEED = 42
 random.seed(SEED)
@@ -18,8 +23,6 @@ for split in ["train", "test"]:
 
 # --- Step 1: build mapping of (Block, class) -> list of clip IDs ---
 clips_by_class = {}
-
-# always scan video latents (shared across subjects) to build the class/clip keys
 video_files = glob(os.path.join(BASE_DIR, "Video_latents", "Block*/*.npy"))
 for f in video_files:
     rel = os.path.relpath(f, os.path.join(BASE_DIR, "Video_latents"))
@@ -32,7 +35,7 @@ for f in video_files:
 # --- Step 2: split 4/1 per class ---
 train_set, test_set = [], []
 for key, clips in clips_by_class.items():
-    clips = sorted(clips)  # clip01 … clip05
+    clips = sorted(clips)  # ensure order
     if len(clips) != 5:
         print(f"Warning: {key} has {len(clips)} clips (expected 5)")
     random.shuffle(clips)
@@ -47,11 +50,15 @@ def copy_clip_files(clip_id, split):
     for modality in MODALITIES:
         modality_dir = os.path.join(BASE_DIR, modality)
 
-        if modality == "EEG_segments":
-            # EEG has subject folders
-            eeg_subjects = sorted(os.listdir(modality_dir))
-            for subj in eeg_subjects:
-                src = os.path.join(modality_dir, subj, block, base + ".npy")
+        if modality.endswith("EEG_segments") or modality.endswith("EEG_features/DE_1per2s"):
+            # subject → block → file structure
+            if not os.path.isdir(modality_dir):
+                continue
+            for subj in os.listdir(modality_dir):
+                subj_path = os.path.join(modality_dir, subj, block)
+                if not os.path.isdir(subj_path):
+                    continue
+                src = os.path.join(subj_path, base + ".npy")
                 if os.path.exists(src):
                     dest_dir = os.path.join(SAVE_DIR, split, modality, subj, block)
                     os.makedirs(dest_dir, exist_ok=True)
