@@ -97,9 +97,8 @@ from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 from core_files.unet import UNet3DConditionModel
 from training.my_autoregressive_transformer import myTransformer
 
-# ----------------------- Paths -----------------------
+# ----------------------- Base paths -----------------------
 TEST_BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/test"
-PROCESSED_GIF_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/Video_Gif"
 SAVE_DIR = "/content/drive/MyDrive/EEG2Video_inference"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
@@ -109,26 +108,18 @@ DIFFUSION_UNET_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_dif
 VIDEO_LENGTH = 6
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ----------------------- Pick a random test clip -----------------------
-all_blocks = [b for b in os.listdir(TEST_BASE) if os.path.isdir(os.path.join(TEST_BASE, b))]
-random_block = random.choice(all_blocks)
-block_path = os.path.join(TEST_BASE, random_block)
+# ----------------------- Randomly select test clip -----------------------
+subdirs = [d for d in os.listdir(os.path.join(TEST_BASE, "EEG_features/DE_1per2s")) if os.path.isdir(os.path.join(TEST_BASE, "EEG_features/DE_1per2s", d))]
+random_subj = random.choice(subdirs)
+block_dir = os.path.join(TEST_BASE, "EEG_features/DE_1per2s", random_subj)
+blocks = [b for b in os.listdir(block_dir) if os.path.isdir(os.path.join(block_dir, b))]
+random_block = random.choice(blocks)
+class_dir = os.path.join(block_dir, random_block)
+classes = [c for c in os.listdir(class_dir) if c.endswith(".npy")]
+TEST_EEG_PATH = os.path.join(class_dir, random.choice(classes))
 
-all_classes = [c for c in os.listdir(block_path) if os.path.isdir(os.path.join(block_path, c))]
-random_class = random.choice(all_classes)
-class_path = os.path.join(block_path, random_class)
-
-# Pick first available .npy files inside the class folder
-eeg_files = [f for f in os.listdir(os.path.join(class_path, "EEG_segments")) if f.endswith(".npy")]
-video_files = [f for f in os.listdir(os.path.join(class_path, "Video_latents")) if f.endswith(".npy")]
-latents_files = [f for f in os.listdir(os.path.join(class_path, "latents_add_noise")) if f.endswith(".pt")]
-
-TEST_EEG_PATH = os.path.join(class_path, "EEG_segments", random.choice(eeg_files))
-LATENTS_NOISE_PATH = os.path.join(class_path, "latents_add_noise", random.choice(latents_files))
-
-print(f"Selected random clip: Block={random_block}, Class={random_class}")
+print(f"Selected random clip: Block={random_block}, Class={os.path.basename(TEST_EEG_PATH)}")
 print(f"EEG path: {TEST_EEG_PATH}")
-print(f"Latents path: {LATENTS_NOISE_PATH}")
 
 # ----------------------- GIF saving -----------------------
 def save_gif(frames, path, fps=5):
@@ -161,17 +152,13 @@ pipe.enable_attention_slicing()
 eeg_raw = torch.from_numpy(np.load(TEST_EEG_PATH)).unsqueeze(0).to(device)
 negative_eeg = eeg_raw.mean(dim=0, keepdim=True)
 
-# ----------------------- Load latents (DANA) -----------------------
-latents_add_noise = torch.load(LATENTS_NOISE_PATH).half()
-latents_add_noise = rearrange(latents_add_noise, 'a b c d e -> a c b d e').to(device)
-
 # ----------------------- Trained GIF -----------------------
 with torch.no_grad():
     trained_video = pipe(
         model=seq2seq_model,
         eeg=eeg_raw,
         negative_eeg=negative_eeg,
-        latents=latents_add_noise,
+        latents=None,  # generate from noise
         video_length=VIDEO_LENGTH,
         height=288,
         width=512,
@@ -181,13 +168,12 @@ with torch.no_grad():
 save_gif(trained_video, os.path.join(SAVE_DIR, "clip_trained.gif"))
 
 # ----------------------- Random GIF -----------------------
-random_latents = torch.randn_like(latents_add_noise)
 with torch.no_grad():
     random_video = pipe(
         model=seq2seq_model,
         eeg=eeg_raw,
         negative_eeg=negative_eeg,
-        latents=random_latents,
+        latents=None,  # generate from noise
         video_length=VIDEO_LENGTH,
         height=288,
         width=512,
@@ -197,6 +183,7 @@ with torch.no_grad():
 save_gif(random_video, os.path.join(SAVE_DIR, "clip_random.gif"))
 
 # ----------------------- Ground-truth GIF -----------------------
+PROCESSED_GIF_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/Video_Gif/Block1"
 gt_gif_files = [f for f in os.listdir(PROCESSED_GIF_DIR) if f.endswith(".gif")]
 if gt_gif_files:
     shutil.copy(os.path.join(PROCESSED_GIF_DIR, random.choice(gt_gif_files)),
