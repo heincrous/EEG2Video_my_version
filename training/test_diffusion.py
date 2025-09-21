@@ -18,7 +18,7 @@ OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_o
 BLIP_CAP_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_captions"
 SAVE_DIR = "/content/drive/MyDrive/EEG2Video_inference"
 os.makedirs(SAVE_DIR, exist_ok=True)
-VIDEO_LENGTH = 6  # frames
+VIDEO_LENGTH = 4  # reduce frames to save memory
 
 # ---------------- INLINE GIF SAVING ----------------
 def save_videos_grid(videos, path):
@@ -47,17 +47,22 @@ def save_videos_grid(videos, path):
             frames.append(frame)
         imageio.mimsave(path, frames, fps=5)
 
+# ---------------- CLEAR CUDA ----------------
+torch.cuda.empty_cache()
+torch.cuda.ipc_collect()
+
 # ---------------- LOAD UNET ----------------
 unet_path = os.path.join(OUTPUT_DIR, "unet")
-unet = UNet3DConditionModel.from_pretrained_2d(unet_path).to("cuda")  # float32
+unet = UNet3DConditionModel.from_pretrained_2d(unet_path).to("cuda")
 
 # ---------------- LOAD PIPELINE ----------------
 pipeline = TuneAVideoPipeline.from_pretrained(
     OUTPUT_DIR,
     unet=unet
 ).to("cuda")
+
 pipeline.enable_vae_slicing()
-# Do NOT call .half() anywhere
+pipeline.enable_attention_slicing()  # critical for memory reduction
 
 # ---------------- COLLECT TEST CAPTIONS ----------------
 test_blocks = sorted(os.listdir(BLIP_CAP_DIR))
@@ -74,7 +79,7 @@ for block in test_blocks:
 
 # ---------------- ONLY TAKE FIRST 3 CAPTIONS ----------------
 test_captions = test_captions[:3]
-print(f"Testing {len(test_captions)} captions")
+print(f"Testing {len(test_captions)} captions with video_length={VIDEO_LENGTH}")
 
 # ---------------- RUN INFERENCE ----------------
 for block, txt_file, txt_path in tqdm(test_captions, desc="Generating GIFs"):
@@ -90,7 +95,7 @@ for block, txt_file, txt_path in tqdm(test_captions, desc="Generating GIFs"):
         ).videos
 
         if isinstance(sample, torch.Tensor):
-            sample = sample.float()  # ensure float32 for imageio
+            sample = sample.float()  # for imageio
 
     save_name = f"{block}_{txt_file.replace('.txt','.gif')}"
     save_path = os.path.join(SAVE_DIR, save_name)
