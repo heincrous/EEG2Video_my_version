@@ -93,7 +93,7 @@ from torch.utils.data import DataLoader
 from torchvision.io import write_video
 import imageio
 
-from my_autoregressive_transformer import myTransformer, EEGVideoDataset  # import your classes
+from training.my_autoregressive_transformer import myTransformer, EEGVideoDataset  # import your classes
 
 # -----------------------
 # Config
