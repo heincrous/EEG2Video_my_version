@@ -450,7 +450,7 @@ class LatentDataset(Dataset):
         return len(self.latent_paths)
 
     def __getitem__(self, idx):
-        latent = torch.from_numpy(np.load(self.latent_paths[idx]))  # (frames, 4, 36, 64)
+        latent = torch.from_numpy(np.load(self.latent_paths[idx]))  # [frames,4,H,W]
         if self.max_frames is not None:
             latent = latent[:self.max_frames, :, :, :]
         prompt_id = torch.from_numpy(np.load(self.blip_paths[idx]))
@@ -530,17 +530,18 @@ for epoch in tqdm(range(1, NUM_EPOCHS+1)):
     unet.train()
     for step, batch in enumerate(train_dataloader):
         with accelerator.accumulate(unet):
-            pixel_values = batch["pixel_values"].to(weight_dtype)  # shape: [frames,4,36,64]
-            # Add batch dimension if missing
+            pixel_values = batch["pixel_values"].to(weight_dtype)  # [frames,4,H,W]
             if pixel_values.ndim == 4:
-                pixel_values = pixel_values.unsqueeze(0)  # [1, frames, 4, 36, 64]
-            latents = pixel_values  # already 5D: [B, F, C, H, W]
+                pixel_values = pixel_values.unsqueeze(0)  # [1,frames,4,H,W]
+
+            # Rearrange to [B, C, F, H, W] for UNet
+            latents = pixel_values.permute(0,2,1,3,4)  # [B,4,F,H,W]
 
             noise = torch.randn_like(latents)
             timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device=latents.device).long()
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-            encoder_hidden_states = batch["prompt_ids"].unsqueeze(0).to(weight_dtype)  # [1, prompt_len]
+            encoder_hidden_states = batch["prompt_ids"].unsqueeze(0).to(weight_dtype)
             target = noise if noise_scheduler.prediction_type=="epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
 
             model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
