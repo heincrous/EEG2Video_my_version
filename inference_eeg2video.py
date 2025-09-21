@@ -211,16 +211,20 @@ eeg_tensor = torch.tensor(eeg, dtype=torch.float16).unsqueeze(0).to(device)  # [
 # -------------------------
 # Run Seq2Seq → predicted latents
 # -------------------------
+# EEG tensor must be float32 for Seq2Seq
+eeg_tensor = torch.tensor(eeg, dtype=torch.float32).unsqueeze(0).to(device)
 
-# Init with 1 BOS + 5 empty slots = 6 steps
-init_latents = torch.zeros((1, 6, 4, 36, 64), device=device)
+# Init with 1 BOS + 5 empty slots = 6 steps, also float32 for Seq2Seq
+init_latents = torch.zeros((1, 6, 4, 36, 64), device=device, dtype=torch.float32)
 
 with torch.no_grad():
     _, pred_latents = seq2seq(eeg_tensor, init_latents)
 
 # Drop the first dummy BOS frame
-pred_latents = pred_latents[:, 1:, :, :, :]  # keep 5 frames
-pred_latents = pred_latents.to(torch.float32)
+pred_latents = pred_latents[:, 1:, :, :, :]
+
+# Convert to float16 for diffusion
+pred_latents = pred_latents.to(torch.float16)
 
 # Rearrange to [B, C, F, H, W]
 pred_latents = rearrange(pred_latents, "b f c h w -> b c f h w")
