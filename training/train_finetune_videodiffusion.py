@@ -439,7 +439,7 @@ def save_videos_grid(videos, path):
         imageio.mimsave(path, frames, fps=5)
 
 class LatentDataset(Dataset):
-    def __init__(self, latent_paths, blip_paths, max_frames=None, max_clips=2):
+    def __init__(self, latent_paths, blip_paths, max_frames=None, max_clips=1):
         self.latent_paths = latent_paths[:max_clips]
         self.blip_paths = blip_paths[:max_clips]
         self.max_frames = max_frames
@@ -475,8 +475,8 @@ LEARNING_RATE = 3e-5
 GRAD_ACCUM_STEPS = 1
 MIXED_PRECISION = "fp16"
 SEED = 42
-MAX_FRAMES = 8
-NUM_EPOCHS = 1  # dry-run
+MAX_FRAMES = 2   # reduced for dry-run
+NUM_EPOCHS = 1
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -493,21 +493,22 @@ unet = UNet3DConditionModel.from_pretrained_2d(PRETRAINED_MODEL_PATH, subfolder=
 vae.requires_grad_(False)
 text_encoder.requires_grad_(False)
 unet.requires_grad_(False)
+# unet.enable_gradient_checkpointing()  # disabled for dry-run
 for name, module in unet.named_modules():
     if name.endswith(("attn1.to_q","attn2.to_q","attn_temp")):
         for p in module.parameters():
             p.requires_grad = True
-unet.enable_gradient_checkpointing()
+
 optimizer = torch.optim.AdamW(unet.parameters(), lr=LEARNING_RATE)
 
-train_dataset = LatentDataset(VIDEO_LATENT_PATH, BLIP_PATH, max_frames=MAX_FRAMES, max_clips=2)
+train_dataset = LatentDataset(VIDEO_LATENT_PATH, BLIP_PATH, max_frames=MAX_FRAMES, max_clips=1)
 train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True)
 
 validation_pipeline = TuneAVideoPipeline(
-    vae=vae,
-    text_encoder=text_encoder,
+    vae=vae.to("cpu"),
+    text_encoder=text_encoder.to("cpu"),
     tokenizer=tokenizer,
-    unet=unet,
+    unet=unet.to("cpu"),
     scheduler=DDIMScheduler.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="scheduler")
 )
 validation_pipeline.enable_vae_slicing()
@@ -552,7 +553,7 @@ try:
                 prompt,
                 video_length=MAX_FRAMES,
                 latents=None,
-                generator=torch.Generator(device=latents.device)
+                generator=None
             ).videos
             save_videos_grid(sample, f"{OUTPUT_DIR}/samples/sample-{epoch}_dryrun.gif")
 
