@@ -186,7 +186,7 @@ class EEGTextDataset(Dataset):
     def __init__(self, de_root, text_root):
         self.samples = []
 
-        # walk subject → block → clips for DE features
+        # walk subject → block → clips
         for subj in os.listdir(de_root):
             subj_path = os.path.join(de_root, subj)
             if not os.path.isdir(subj_path):
@@ -208,9 +208,11 @@ class EEGTextDataset(Dataset):
         # fit StandardScaler across all DE features
         all_eeg = []
         for eeg_file, _ in self.samples:
-            eeg = np.load(eeg_file)   # shape (310,)
+            eeg = np.load(eeg_file)  # (310,) or (T,310)
+            if eeg.ndim == 2:        # collapse time if present
+                eeg = eeg.mean(axis=0)
             all_eeg.append(eeg)
-        all_eeg = np.stack(all_eeg, axis=0)
+        all_eeg = np.stack(all_eeg, axis=0)  # (N,310)
         self.scaler = StandardScaler().fit(all_eeg)
 
     def __len__(self):
@@ -218,7 +220,9 @@ class EEGTextDataset(Dataset):
 
     def __getitem__(self, idx):
         eeg_file, txt_file = self.samples[idx]
-        eeg = np.load(eeg_file)            # (310,)
+        eeg = np.load(eeg_file)
+        if eeg.ndim == 2:  # average across time to match authors
+            eeg = eeg.mean(axis=0)
         eeg = self.scaler.transform([eeg])[0]
         text = np.load(txt_file).reshape(-1)  # (77*768,)
         eeg = torch.tensor(eeg, dtype=torch.float32)
@@ -247,7 +251,6 @@ if __name__ == "__main__":
         optimizer, T_max=200 * len(dataloader)
     )
 
-    # ask user for epochs
     epochs = int(input("Enter number of epochs: "))
 
     for epoch in range(epochs):
