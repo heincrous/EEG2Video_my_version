@@ -2,8 +2,8 @@ import os
 import re
 import torch
 import numpy as np
-import clip
-from gt_label import GT_LABEL   # <-- import the ground-truth order
+from transformers import BlipProcessor, BlipForConditionalGeneration
+from gt_label import GT_LABEL
 
 # CONFIG
 RAW_BLIP_DIR = "/content/drive/MyDrive/EEG2Video_data/raw/BLIP-caption/"
@@ -11,7 +11,10 @@ EMB_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/"
 CAP_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_captions/"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-model, preprocess = clip.load("ViT-B/32", device=device)
+
+# Load BLIP text encoder
+processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base").to(device)
 model.eval()
 
 os.makedirs(EMB_DIR, exist_ok=True)
@@ -31,9 +34,6 @@ BLOCK_MAP = {
     "7th_10min": "Block7",
 }
 
-# -----------------------------
-# Ask user which BLIP caption files to process
-# -----------------------------
 all_blip_files = get_blip_files(RAW_BLIP_DIR)
 print("Available BLIP caption files:", all_blip_files)
 
@@ -45,9 +45,6 @@ if not blip_list:
 
 processed_count = 0
 
-# -----------------------------
-# Process selected caption files
-# -----------------------------
 for blip_file in blip_list:
     block_key = os.path.splitext(blip_file)[0]
     block_name = BLOCK_MAP.get(block_key, block_key)
@@ -75,19 +72,15 @@ for blip_file in blip_list:
             caption = lines[idx]
 
             with torch.no_grad():
-                tokens = clip.tokenize([caption]).to(device)  # (1,77)
-                # Get token-level features (77,768), no pooling
-                x = model.token_embedding(tokens).type(model.dtype)
-                x = x + model.positional_embedding.type(model.dtype)
-                x = model.transformer(x.permute(1, 0, 2))  # (77,1,768)
-                embedding = x.permute(1, 0, 2).squeeze(0).cpu().numpy()  # (77,768)
+                inputs = processor(text=[caption], return_tensors="pt", padding="max_length", max_length=77, truncation=True).to(device)
+                # Hidden states from the text encoder, shape (1,77,768)
+                text_outputs = model.text_encoder(**inputs, output_hidden_states=True)
+                embedding = text_outputs.last_hidden_state.squeeze(0).cpu().numpy()  # (77,768)
 
             base_name = f"class{true_class:02d}_clip{clip_id+1:02d}"
 
-            # save embedding (77,768) for training
             np.save(os.path.join(block_emb_dir, base_name + ".npy"), embedding)
 
-            # save caption text for inspection
             with open(os.path.join(block_cap_dir, base_name + ".txt"), "w") as ftxt:
                 ftxt.write(caption)
 
