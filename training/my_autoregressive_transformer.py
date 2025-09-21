@@ -491,45 +491,31 @@ def loss(true, pred): return nn.MSELoss()(true, pred)
 # -----------------------------
 # Data loading utility
 # -----------------------------
-def load_all_data(eeg_dir, latent_dir, window_size=100, stride=50):
-    # ---- EEG ----
+def load_all_data(eeg_dir, latent_dir):
+    # Load EEG (first subject for now)
     eeg_files = sorted([f for f in os.listdir(eeg_dir) if f.endswith(".npy")])
-    print("Found EEG files:", eeg_files)
-    # For now: only use first subject
-    eeg_raw = np.load(os.path.join(eeg_dir, eeg_files[0]))  # shape (7,40,5,62,400)
+    eeg_raw = np.load(os.path.join(eeg_dir, eeg_files[0]))  # (7,40,5,62,400)
     print("Raw EEG shape:", eeg_raw.shape)
 
-    # Segment each (62,400) into overlapping windows (100, stride 50)
-    all_windows = []
-    for block in range(eeg_raw.shape[0]):       # 7 blocks
-        for cls in range(eeg_raw.shape[1]):     # 40 classes
-            for clip in range(eeg_raw.shape[2]):# 5 clips
-                signal = eeg_raw[block, cls, clip]  # (62,400)
-                clip_windows = []
-                for start in range(0, signal.shape[-1]-window_size+1, stride):
-                    window = signal[:, start:start+window_size]  # (62,100)
-                    clip_windows.append(window)
-                clip_windows = np.stack(clip_windows, axis=0)  # (7,62,100)
-                all_windows.append(clip_windows)
-    eeg_proc = np.stack(all_windows, axis=0)  # (num_samples, 7, 62, 100)
-    print("Processed EEG shape:", eeg_proc.shape)
+    # Flatten to clips
+    eeg_clips = eeg_raw.reshape(-1, 62, 400)  # (1400,62,400)
 
-    # ---- Video latents ----
-    latent_files = []
-    for root, _, files in os.walk(latent_dir):
-        for f in files:
-            if f.endswith(".npy"):
-                latent_files.append(os.path.join(root, f))
-    latent_files = sorted(latent_files)
+    # Load latents
+    latent_files = sorted(
+        os.path.join(root, f)
+        for root, _, files in os.walk(latent_dir)
+        for f in files if f.endswith(".npy")
+    )
     print("Found latent files:", len(latent_files))
     latents = [np.load(f) for f in latent_files]
-    latent_data = np.stack(latents, axis=0)  # (num_samples, frames, 4, 36, 64)
-    print("Latents shape:", latent_data.shape)
+    latent_data = np.stack(latents, axis=0)  # (N, frames, 4,36,64)
 
-    # ---- Convert to torch ----
-    eeg_tensor = torch.from_numpy(eeg_proc).float()
-    latent_tensor = torch.from_numpy(latent_data).float()
-    return eeg_tensor, latent_tensor
+    # Match lengths
+    num_latents = latent_data.shape[0]
+    eeg_clips = eeg_clips[:num_latents]
+    print(f"Using {num_latents} clip pairs")
+
+    return torch.from_numpy(eeg_clips).float(), torch.from_numpy(latent_data).float()
 
 # -----------------------------
 # Main training
