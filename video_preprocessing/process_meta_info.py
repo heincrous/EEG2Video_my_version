@@ -12,8 +12,8 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 
 META_FILES = [
     "All_video_color.npy",
-    "All_video_face_appearance.npy",
-    "All_video_human_appearance.npy",
+    "All_video_face_apperance.npy",
+    "All_video_human_apperance.npy",
     "All_video_label.npy",
     "All_video_obj_number.npy",
     "All_video_optical_flow_score.npy"
