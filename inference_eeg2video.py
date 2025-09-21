@@ -216,7 +216,7 @@ pred_latents = pred_latents.to(torch.float16)
 # -------------------------
 # Run Semantic predictor → embeddings
 # -------------------------
-# Path to DE features for this clip (310-dim)
+# Path to DE features for this clip (310-dim expected after flattening)
 de_dir = os.path.join(BASE, "EEG_features", "DE_1per2s", subj, block)
 de_file = os.path.join(de_dir, clip_file)  # must exist in DE_1per2s
 
@@ -239,9 +239,6 @@ eeg_de = torch.tensor(de_features, dtype=torch.float32).unsqueeze(0).to(device)
 # 3. Run semantic predictor → [1,59136]
 with torch.no_grad():
     eeg_embeds = semantic_model(eeg_de)
-
-# 4. Reshape into BLIP-style embeddings [1,77,768]
-eeg_embeds = eeg_embeds.view(1, 77, 768)
 
 # -------------------------
 # Run diffusion pipeline
