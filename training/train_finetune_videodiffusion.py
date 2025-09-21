@@ -442,9 +442,11 @@ def save_videos_grid(videos, path):
 
 # ----------------------- Dataset
 class LatentDataset(Dataset):
-    def __init__(self, latent_paths, blip_paths, max_frames=None):
+    def __init__(self, latent_paths, text_paths, tokenizer, max_length=77, max_frames=None):
         self.latent_paths = latent_paths
-        self.blip_paths = blip_paths
+        self.text_paths = text_paths
+        self.tokenizer = tokenizer
+        self.max_length = max_length
         self.max_frames = max_frames
 
     def __len__(self):
@@ -454,24 +456,35 @@ class LatentDataset(Dataset):
         latent = torch.from_numpy(np.load(self.latent_paths[idx]))
         if self.max_frames is not None:
             latent = latent[:self.max_frames, :, :, :]
-        prompt_id = torch.from_numpy(np.load(self.blip_paths[idx]))
-        return {"pixel_values": latent, "prompt_ids": prompt_id}
+        # Load text from .txt
+        with open(self.text_paths[idx], 'r') as f:
+            text = f.read().strip()
+        prompt_ids = self.tokenizer(
+            text,
+            max_length=self.max_length,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt"
+        ).input_ids.squeeze(0)  # [seq_len]
+        return {"pixel_values": latent, "prompt_ids": prompt_ids}
 
 # ----------------------- Paths & hyperparameters
 PRETRAINED_MODEL_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 TRAIN_BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/train"
+BLIP_TEXT_BASE = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_captions"
+
 OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
 
-VIDEO_LATENT_PATH, BLIP_PATH = [], []
+VIDEO_LATENT_PATH, TEXT_PATHS = [], []
 video_base = os.path.join(TRAIN_BASE, "Video_latents")
-blip_base = os.path.join(TRAIN_BASE, "BLIP_embeddings")
 for block in sorted(os.listdir(video_base)):
     block_path = os.path.join(video_base, block)
-    blip_block_path = os.path.join(blip_base, block)
+    blip_block_path = os.path.join(BLIP_TEXT_BASE, block)
     for npy_file in sorted(os.listdir(block_path)):
         if npy_file.endswith(".npy"):
             VIDEO_LATENT_PATH.append(os.path.join(block_path, npy_file))
-            BLIP_PATH.append(os.path.join(blip_block_path, npy_file))
+            txt_file = npy_file.replace(".npy", ".txt")
+            TEXT_PATHS.append(os.path.join(blip_block_path, txt_file))
 
 TRAIN_BATCH_SIZE = 1
 LEARNING_RATE = 3e-5
@@ -505,7 +518,7 @@ for name, module in unet.named_modules():
 optimizer = torch.optim.AdamW(unet.parameters(), lr=LEARNING_RATE)
 
 # ----------------------- Prepare dataset
-train_dataset = LatentDataset(VIDEO_LATENT_PATH, BLIP_PATH, max_frames=MAX_FRAMES)
+train_dataset = LatentDataset(VIDEO_LATENT_PATH, TEXT_PATHS, tokenizer, max_frames=MAX_FRAMES)
 train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True)
 train_dataloader = accelerator.prepare(train_dataloader)
 
@@ -541,8 +554,8 @@ for epoch in tqdm(range(1, NUM_EPOCHS+1)):
             timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device=latents.device).long()
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-            # ----------------------- Encode prompts (keep Long type)
-            encoder_hidden_states = text_encoder(batch["prompt_ids"].squeeze(0).long().to(accelerator.device))[0]
+            # ----------------------- Encode prompts (from BLIP .txt)
+            encoder_hidden_states = text_encoder(batch["prompt_ids"].to(accelerator.device))[0]
             B, seq_len, hidden_dim = encoder_hidden_states.shape
             F_frames = latents.shape[2]
             encoder_hidden_states = einops.repeat(encoder_hidden_states, 'b n c -> b f n c', f=F_frames)
@@ -560,11 +573,12 @@ for epoch in tqdm(range(1, NUM_EPOCHS+1)):
             optimizer.zero_grad()
         global_step += 1
 
-    # ----------------------- Inline validation / save GIFs
+    # ----------------------- Validation / save GIFs
     if accelerator.is_main_process:
-        for i, prompt_path in enumerate(train_dataset.blip_paths):
-            prompt = torch.from_numpy(np.load(prompt_path)).long().to(accelerator.device)
-            sample = validation_pipeline(prompt, generator=None, latents=None).videos
+        for i, text_path in enumerate(TEXT_PATHS):
+            with open(text_path, 'r') as f:
+                prompt_text = f.read().strip()
+            sample = validation_pipeline(prompt_text, generator=None, latents=None).videos
             save_videos_grid(sample, f"{OUTPUT_DIR}/samples/sample-{epoch}/{i}.gif")
 
 # ----------------------- Save final pipeline
