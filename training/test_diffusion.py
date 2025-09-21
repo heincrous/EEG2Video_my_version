@@ -12,8 +12,6 @@ sys.path.append(repo_root)
 # ---------------- Imports ----------------
 from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
 from core_files.unet import UNet3DConditionModel
-from diffusers import AutoencoderKL, DDIMScheduler
-from transformers import CLIPTextModel
 
 # ---------------- CONFIG ----------------
 OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
@@ -51,7 +49,7 @@ def save_videos_grid(videos, path):
 
 # ---------------- LOAD UNET ----------------
 unet_path = os.path.join(OUTPUT_DIR, "unet")
-unet = UNet3DConditionModel.from_pretrained_2d(unet_path).to("cuda").half()
+unet = UNet3DConditionModel.from_pretrained_2d(unet_path).to("cuda")  # float32
 
 # ---------------- LOAD PIPELINE ----------------
 pipeline = TuneAVideoPipeline.from_pretrained(
@@ -59,7 +57,7 @@ pipeline = TuneAVideoPipeline.from_pretrained(
     unet=unet
 ).to("cuda")
 pipeline.enable_vae_slicing()
-pipeline.vae.half()
+# Do NOT call .half() anywhere
 
 # ---------------- COLLECT TEST CAPTIONS ----------------
 test_blocks = sorted(os.listdir(BLIP_CAP_DIR))
@@ -74,9 +72,8 @@ for block in test_blocks:
         txt_path = os.path.join(block_dir, txt_file)
         test_captions.append((block, txt_file, txt_path))
 
-# Only take the first 3 captions for testing
+# ---------------- ONLY TAKE FIRST 3 CAPTIONS ----------------
 test_captions = test_captions[:3]
-
 print(f"Testing {len(test_captions)} captions")
 
 # ---------------- RUN INFERENCE ----------------
@@ -85,9 +82,15 @@ for block, txt_file, txt_path in tqdm(test_captions, desc="Generating GIFs"):
         prompt_text = f.read().strip()
 
     with torch.no_grad():
-        sample = pipeline(prompt_text, generator=None, latents=None, video_length=VIDEO_LENGTH).videos
+        sample = pipeline(
+            prompt_text,
+            generator=None,
+            latents=None,
+            video_length=VIDEO_LENGTH
+        ).videos
+
         if isinstance(sample, torch.Tensor):
-            sample = sample.float()  # for imageio
+            sample = sample.float()  # ensure float32 for imageio
 
     save_name = f"{block}_{txt_file.replace('.txt','.gif')}"
     save_path = os.path.join(SAVE_DIR, save_name)
