@@ -90,7 +90,7 @@ import torch
 import numpy as np
 from torch.utils.data import DataLoader
 import imageio
-from IPython.display import Image, display
+from IPython.display import display, HTML
 
 from training.my_autoregressive_transformer import myTransformer, EEGVideoDataset  # import your classes
 
@@ -125,6 +125,26 @@ random_model = myTransformer().to(device)
 random_model.eval()
 
 # -----------------------
+# Helper: save + show gifs
+# -----------------------
+def save_gif(array, path):
+    array = array.squeeze()
+    if array.ndim == 4:
+        frames = [array[t, 0, :, :] for t in range(array.shape[0])]
+    else:
+        frames = [array[t] for t in range(array.shape[0])]
+    frames = [((f - f.min()) / (f.max() - f.min() + 1e-8) * 255).astype(np.uint8) for f in frames]
+    imageio.mimsave(path, frames, fps=4)
+
+def show_gif_inline(path, title=""):
+    display(HTML(f"""
+    <div>
+      <p><b>{title}</b></p>
+      <img src="{path}" alt="{title}" style="max-height:240px;">
+    </div>
+    """))
+
+# -----------------------
 # Inference loop
 # -----------------------
 for i, (eeg, vid) in enumerate(test_loader):
@@ -143,15 +163,6 @@ for i, (eeg, vid) in enumerate(test_loader):
 
     gt = vid.cpu().numpy()
 
-    def save_gif(array, path):
-        array = array.squeeze()
-        if array.ndim == 4:
-            frames = [array[t, 0, :, :] for t in range(array.shape[0])]
-        else:
-            frames = [array[t] for t in range(array.shape[0])]
-        frames = [((f - f.min()) / (f.max() - f.min() + 1e-8) * 255).astype(np.uint8) for f in frames]
-        imageio.mimsave(path, frames, fps=4)
-
     gt_path = os.path.join(SAVE_DIR, f"sample{i}_groundtruth.gif")
     trained_path = os.path.join(SAVE_DIR, f"sample{i}_trained.gif")
     random_path = os.path.join(SAVE_DIR, f"sample{i}_random.gif")
@@ -162,10 +173,10 @@ for i, (eeg, vid) in enumerate(test_loader):
 
     print(f"Saved gifs for sample {i}")
 
-    # DISPLAY inline
-    display(Image(filename=gt_path))
-    display(Image(filename=trained_path))
-    display(Image(filename=random_path))
+    # SHOW inline in Colab
+    show_gif_inline(gt_path, "Ground Truth")
+    show_gif_inline(trained_path, "Trained Seq2Seq")
+    show_gif_inline(random_path, "Random Seq2Seq")
 
-    if i == 2:
+    if i == 2:  # just a few samples
         break
