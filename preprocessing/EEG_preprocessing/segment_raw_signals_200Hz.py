@@ -45,7 +45,7 @@ import numpy as np
 import os
 import re
 from tqdm import tqdm
-from core_files.gt_label import GT_LABEL   # <-- import the ground truth order
+from gt_label import GT_LABEL   # <-- import the ground truth order
 
 fre = 200  # sampling frequency
 

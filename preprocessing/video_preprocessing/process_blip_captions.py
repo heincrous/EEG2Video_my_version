@@ -3,7 +3,7 @@ import re
 import torch
 import numpy as np
 import clip
-from core_files.gt_label import GT_LABEL   # <-- import the ground-truth order
+from gt_label import GT_LABEL   # <-- import the ground-truth order
 
 # CONFIG
 RAW_BLIP_DIR = "/content/drive/MyDrive/EEG2Video_data/raw/BLIP-caption/"

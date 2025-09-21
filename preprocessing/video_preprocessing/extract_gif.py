@@ -63,7 +63,7 @@ import imageio
 import numpy as np
 import os
 import re
-from core_files.gt_label import GT_LABEL   # <-- import the true class order
+from gt_label import GT_LABEL   # <-- import the true class order
 
 # CONFIG
 RAW_VIDEO_DIR = "/content/drive/MyDrive/EEG2Video_data/raw/Video/"
