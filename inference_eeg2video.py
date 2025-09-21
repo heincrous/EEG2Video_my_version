@@ -123,13 +123,13 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 VIDEO_LENGTH = 6
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ---------------- Inline GIF saving function ----------------
+# ---------------- GIF saving function ----------------
 def save_videos_grid(videos, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if isinstance(videos, torch.Tensor):
         videos = videos.cpu().numpy()
-    if videos.ndim == 5:  # [B,F,C,H,W]
-        videos = videos[0]  # only first video
+    if videos.ndim == 5:
+        videos = videos[0]
     frames = []
     for frame in videos:
         if frame.shape[0] == 1:
@@ -166,7 +166,7 @@ pipe.to(device)
 pipe.enable_vae_slicing()
 pipe.enable_attention_slicing()
 
-# ---------------- Collect BLIP captions ----------------
+# ---------------- Collect test BLIP captions ----------------
 test_captions = []
 for block in sorted(os.listdir(BLIP_CAP_DIR)):
     blip_block_dir = os.path.join(BLIP_CAP_DIR, block)
@@ -188,12 +188,16 @@ with open(txt_path, "r") as f:
     prompt_text = f.read().strip()
 
 for i, (eeg_raw, vid) in enumerate(tqdm(test_loader, desc="Running EEG2Video inference")):
-    # ---------------- Prepare inputs ----------------
-    eeg_seq = eeg_raw.to(device)                   # [B, 7, 62, 200] for Seq2Seq
-    eeg_flat = eeg_raw.reshape(eeg_raw.shape[0], -1).to(device)  # [B, 310] for semantic predictor
+    # ---------------- Seq2Seq input ----------------
+    eeg_seq = eeg_raw.to(device)  # raw EEG [B, 7, 62, 200]
+
+    # ---------------- Semantic predictor input ----------------
+    # Flatten first segment (or average across segments if needed)
+    eeg_flat = eeg_raw[:, 0, :, :].reshape(eeg_raw.shape[0], -1).to(device)  # [B, 310]
+
     vid = vid.to(device)
 
-    # ---------------- Generate Seq2Seq latent ----------------
+    # ---------------- Seq2Seq latent ----------------
     b, f, c, h, w = vid.shape
     padded = torch.zeros((b, 1, c, h, w), device=device)
     full_vid = torch.cat((padded, vid), dim=1)
@@ -201,7 +205,7 @@ for i, (eeg_raw, vid) in enumerate(tqdm(test_loader, desc="Running EEG2Video inf
         _, seq2seq_latent = seq2seq_model(eeg_seq, full_vid)
     seq2seq_latent = seq2seq_latent[:, :-1, :]
 
-    # ---------------- Generate semantic embedding ----------------
+    # ---------------- Semantic embedding ----------------
     with torch.no_grad():
         semantic_embed = semantic_model(eeg_flat)  # [B, 77*768]
         semantic_embed = semantic_embed.view(eeg_flat.shape[0], 77, 768)  # reshape for DANA
