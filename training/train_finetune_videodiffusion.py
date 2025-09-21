@@ -454,16 +454,19 @@ def save_videos_grid(videos, path):
 # Dataset for .npy latents and BLIP embeddings
 # -----------------------
 class LatentDataset(Dataset):
-    def __init__(self, latent_paths, blip_paths):
+    def __init__(self, latent_paths, blip_paths, max_frames=None):
         self.latent_paths = latent_paths
         self.blip_paths = blip_paths
+        self.max_frames = max_frames  # optional slicing to reduce memory
 
     def __len__(self):
         return len(self.latent_paths)
 
     def __getitem__(self, idx):
         latent = torch.from_numpy(np.load(self.latent_paths[idx]))
-        prompt_id = torch.from_numpy(np.load(self.blip_paths[idx]))  # load .npy embeddings
+        if self.max_frames is not None:
+            latent = latent[:, :self.max_frames, :, :, :]  # slice frames
+        prompt_id = torch.from_numpy(np.load(self.blip_paths[idx]))
         return {"pixel_values": latent, "prompt_ids": prompt_id}
 
 # -----------------------
@@ -473,7 +476,6 @@ PRETRAINED_MODEL_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-dif
 TRAIN_BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/train"
 OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
 
-# Collect all latent and BLIP files in sorted order
 VIDEO_LATENT_PATH = []
 BLIP_PATH = []
 
@@ -486,18 +488,19 @@ for block in sorted(os.listdir(video_base)):
     for npy_file in sorted(os.listdir(block_path)):
         if npy_file.endswith(".npy"):
             VIDEO_LATENT_PATH.append(os.path.join(block_path, npy_file))
-            BLIP_PATH.append(os.path.join(blip_block_path, npy_file))  # .npy embedding
+            BLIP_PATH.append(os.path.join(blip_block_path, npy_file))
 
-TRAIN_BATCH_SIZE = 2
+TRAIN_BATCH_SIZE = 1
 LEARNING_RATE = 3e-5
 GRAD_ACCUM_STEPS = 1
 MIXED_PRECISION = "fp16"
 SEED = 42
+MAX_FRAMES = 8  # optional frame slicing to reduce memory
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # -----------------------
-# User input
+# User input: number of epochs
 # -----------------------
 num_epochs = int(input("Enter number of epochs: "))
 
@@ -535,7 +538,7 @@ optimizer = torch.optim.AdamW(unet.parameters(), lr=LEARNING_RATE)
 # -----------------------
 # Dataset
 # -----------------------
-train_dataset = LatentDataset(VIDEO_LATENT_PATH, BLIP_PATH)
+train_dataset = LatentDataset(VIDEO_LATENT_PATH, BLIP_PATH, max_frames=MAX_FRAMES)
 train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True)
 
 # -----------------------
