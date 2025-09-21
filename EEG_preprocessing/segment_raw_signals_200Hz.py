@@ -41,6 +41,7 @@
 # NEW VERSION
 import numpy as np
 import os
+import re
 from tqdm import tqdm
 
 fre = 200
@@ -55,29 +56,39 @@ CUTOFF_INDEX = 3            # only process files up to this index
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 def get_files_names_in_directory(directory):
-    return sorted([f for f in os.listdir(directory) if f.endswith(".npy")])
+    files = [f for f in os.listdir(directory) if f.endswith(".npy")]
+    # numeric sort: sub1.npy, sub2.npy, ..., sub10.npy
+    return sorted(files, key=lambda x: int(re.findall(r'\d+', x)[0]))
 
 def load_processed_log():
     if not os.path.exists(LOG_FILE):
         return set()
     with open(LOG_FILE, "r") as f:
         lines = [line.strip() for line in f.readlines()]
-    return set(line for line in lines if line.startswith(PROCESS_TAG))
+    return set(lines)
 
 def update_processed_log(filename):
-    with open(LOG_FILE, "a") as f:
-        f.write(f"{PROCESS_TAG} {filename}\n")
+    entry = f"{PROCESS_TAG} {filename}"
+    # append only if not already present
+    if entry not in load_processed_log():
+        with open(LOG_FILE, "a") as f:
+            f.write(entry + "\n")
 
-# Load all subject files
+# Load subject files in numeric order
 sub_list = get_files_names_in_directory(RAW_DIR)
 sub_list = sub_list[:CUTOFF_INDEX]
 
-# Load already processed list for this PROCESS_TAG
+# Load already processed entries
 processed = load_processed_log()
 
+processed_count = 0
+skipped_count = 0
+
 for subname in sub_list:
-    if f"{PROCESS_TAG} {subname}" in processed:
+    entry = f"{PROCESS_TAG} {subname}"
+    if entry in processed:
         print(f"Skipping {subname} (already processed for {PROCESS_TAG})")
+        skipped_count += 1
         continue
 
     print(f"Processing {subname}")
@@ -103,4 +114,7 @@ for subname in sub_list:
 
     np.save(os.path.join(SAVE_DIR, subname), save_data)
     update_processed_log(subname)
+    processed_count += 1
     print(f"Finished {subname}, saved and logged under {PROCESS_TAG}")
+
+print(f"\nSummary: {processed_count} processed, {skipped_count} skipped, cutoff = {CUTOFF_INDEX}")
