@@ -2,7 +2,6 @@ import os
 import re
 import torch
 import numpy as np
-from tqdm import tqdm
 import clip
 
 # CONFIG
@@ -12,10 +11,9 @@ LOG_FILE = "/content/drive/MyDrive/EEG2Video_data/processed/processed_log.txt"
 PROCESS_TAG = "[BLIP]"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-# Load CLIP model (authors typically used ViT-B/32)
+# Load CLIP model (ViT-B/32)
 model, preprocess = clip.load("ViT-B/32", device=device)
 model.eval()
 
@@ -61,18 +59,16 @@ for block_idx, blip_file in enumerate(blip_files, start=1):
                 skipped_count += 1
                 continue
 
-            # Encode caption
             with torch.no_grad():
                 text = clip.tokenize([caption]).to(device)
                 embedding = model.encode_text(text)
                 embedding = embedding / embedding.norm(dim=-1, keepdim=True)
             embedding = embedding.cpu().numpy()
 
-            # Save
             save_path = os.path.join(block_save_dir, f"class{class_id+1:02d}_clip{clip_id+1:02d}.npy")
             np.save(save_path, embedding)
 
-            update_processed_log(f"{block_name}/class{class_id+1:02d}_clip{clip_id+1:02d}")
+            update_processed_log(entry)
             processed_count += 1
 
 print(f"\nSummary: {processed_count} captions embedded, {skipped_count} skipped")
