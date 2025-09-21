@@ -451,19 +451,19 @@ def save_videos_grid(videos, path):
         imageio.mimsave(path, frames, fps=5)
 
 # -----------------------
-# Dataset for .npy latents
+# Dataset for .npy latents and BLIP embeddings
 # -----------------------
 class LatentDataset(Dataset):
-    def __init__(self, latent_paths, prompt_paths):
+    def __init__(self, latent_paths, blip_paths):
         self.latent_paths = latent_paths
-        self.prompt_paths = prompt_paths
+        self.blip_paths = blip_paths
 
     def __len__(self):
         return len(self.latent_paths)
 
     def __getitem__(self, idx):
         latent = torch.from_numpy(np.load(self.latent_paths[idx]))
-        prompt_id = torch.load(self.prompt_paths[idx])  # assume pre-tokenized BLIP embedding
+        prompt_id = torch.from_numpy(np.load(self.blip_paths[idx]))  # load .npy embeddings
         return {"pixel_values": latent, "prompt_ids": prompt_id}
 
 # -----------------------
@@ -473,17 +473,20 @@ PRETRAINED_MODEL_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-dif
 TRAIN_BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/train"
 OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
 
+# Collect all latent and BLIP files in sorted order
 VIDEO_LATENT_PATH = []
 BLIP_PATH = []
+
 video_base = os.path.join(TRAIN_BASE, "Video_latents")
 blip_base = os.path.join(TRAIN_BASE, "BLIP_embeddings")
 
 for block in sorted(os.listdir(video_base)):
     block_path = os.path.join(video_base, block)
+    blip_block_path = os.path.join(blip_base, block)
     for npy_file in sorted(os.listdir(block_path)):
         if npy_file.endswith(".npy"):
             VIDEO_LATENT_PATH.append(os.path.join(block_path, npy_file))
-            BLIP_PATH.append(os.path.join(blip_base, block, npy_file.replace(".npy", ".pt")))
+            BLIP_PATH.append(os.path.join(blip_block_path, npy_file))  # .npy embedding
 
 TRAIN_BATCH_SIZE = 2
 LEARNING_RATE = 3e-5
@@ -567,7 +570,7 @@ for epoch in tqdm(range(1, num_epochs+1)):
             pixel_values = batch["pixel_values"].to(weight_dtype)
             video_length = pixel_values.shape[1]
             pixel_values = rearrange(pixel_values, "b f c h w -> (b f) c h w")
-            latents = pixel_values  # already precomputed
+            latents = pixel_values
             latents = rearrange(latents, "(b f) c h w -> b c f h w", f=video_length)
 
             noise = torch.randn_like(latents)
@@ -591,7 +594,7 @@ for epoch in tqdm(range(1, num_epochs+1)):
     # Validation & sample saving every epoch
     # -----------------------
     if accelerator.is_main_process:
-        for i, prompt in enumerate(train_dataset.prompt_paths):
+        for i, prompt in enumerate(train_dataset.blip_paths):
             sample = validation_pipeline(prompt, generator=torch.Generator(device=latents.device), latents=None).videos
             save_videos_grid(sample, f"{OUTPUT_DIR}/samples/sample-{epoch}/{i}.gif")
 
