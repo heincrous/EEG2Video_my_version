@@ -412,9 +412,10 @@ import logging
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 import imageio
+from einops import rearrange
 
 from accelerate import Accelerator
 from accelerate.logging import get_logger
@@ -422,7 +423,6 @@ from accelerate.utils import set_seed
 
 from diffusers import AutoencoderKL, DDPMScheduler, DDIMScheduler
 from diffusers.optimization import get_scheduler
-
 from transformers import CLIPTextModel, CLIPTokenizer
 
 # -----------------------
@@ -431,9 +431,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core_files.unet import UNet3DConditionModel
-from core_files.dataset import TuneMultiVideoDataset
 from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
-from einops import rearrange
 
 # -----------------------
 # Minimal save_videos_grid implementation
@@ -445,14 +443,28 @@ def save_videos_grid(videos, path):
         videos = videos.cpu().numpy()
     
     if videos.ndim == 5:
-        # batch of videos
         for i, video in enumerate(videos):
             frames = [(frame.transpose(1,2,0)*255).astype('uint8') for frame in video]
             imageio.mimsave(f"{path}_{i}.gif", frames, fps=5)
     elif videos.ndim == 4:
-        # single video
         frames = [(frame.transpose(1,2,0)*255).astype('uint8') for frame in videos]
         imageio.mimsave(path, frames, fps=5)
+
+# -----------------------
+# Dataset for .npy latents
+# -----------------------
+class LatentDataset(Dataset):
+    def __init__(self, latent_paths, prompt_paths):
+        self.latent_paths = latent_paths
+        self.prompt_paths = prompt_paths
+
+    def __len__(self):
+        return len(self.latent_paths)
+
+    def __getitem__(self, idx):
+        latent = torch.from_numpy(np.load(self.latent_paths[idx]))
+        prompt_id = torch.load(self.prompt_paths[idx])  # assume pre-tokenized BLIP embedding
+        return {"pixel_values": latent, "prompt_ids": prompt_id}
 
 # -----------------------
 # Hardcoded paths & hyperparameters
@@ -460,10 +472,20 @@ def save_videos_grid(videos, path):
 PRETRAINED_MODEL_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 TRAIN_BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/train"
 OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
-VIDEO_LATENT_PATH = [os.path.join(TRAIN_BASE, "Video_latents", f) for f in sorted(os.listdir(os.path.join(TRAIN_BASE, "Video_latents")))]
-BLIP_PATH = [os.path.join(TRAIN_BASE, "BLIP_embeddings", f) for f in sorted(os.listdir(os.path.join(TRAIN_BASE, "BLIP_embeddings")))]
 
-TRAIN_BATCH_SIZE = 10
+VIDEO_LATENT_PATH = []
+BLIP_PATH = []
+video_base = os.path.join(TRAIN_BASE, "Video_latents")
+blip_base = os.path.join(TRAIN_BASE, "BLIP_embeddings")
+
+for block in sorted(os.listdir(video_base)):
+    block_path = os.path.join(video_base, block)
+    for npy_file in sorted(os.listdir(block_path)):
+        if npy_file.endswith(".npy"):
+            VIDEO_LATENT_PATH.append(os.path.join(block_path, npy_file))
+            BLIP_PATH.append(os.path.join(blip_base, block, npy_file.replace(".npy", ".pt")))
+
+TRAIN_BATCH_SIZE = 2
 LEARNING_RATE = 3e-5
 GRAD_ACCUM_STEPS = 1
 MIXED_PRECISION = "fp16"
@@ -472,7 +494,7 @@ SEED = 42
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # -----------------------
-# Only user input
+# User input
 # -----------------------
 num_epochs = int(input("Enter number of epochs: "))
 
@@ -510,10 +532,7 @@ optimizer = torch.optim.AdamW(unet.parameters(), lr=LEARNING_RATE)
 # -----------------------
 # Dataset
 # -----------------------
-train_dataset = TuneMultiVideoDataset(
-    video_path=VIDEO_LATENT_PATH,
-    prompt=BLIP_PATH
-)
+train_dataset = LatentDataset(VIDEO_LATENT_PATH, BLIP_PATH)
 train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True)
 
 # -----------------------
@@ -527,8 +546,6 @@ validation_pipeline = TuneAVideoPipeline(
     scheduler=DDIMScheduler.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="scheduler")
 )
 validation_pipeline.enable_vae_slicing()
-ddim_inv_scheduler = DDIMScheduler.from_pretrained(PRETRAINED_MODEL_PATH, subfolder='scheduler')
-ddim_inv_scheduler.set_timesteps(50)
 
 # -----------------------
 # Prepare for distributed training
@@ -550,15 +567,14 @@ for epoch in tqdm(range(1, num_epochs+1)):
             pixel_values = batch["pixel_values"].to(weight_dtype)
             video_length = pixel_values.shape[1]
             pixel_values = rearrange(pixel_values, "b f c h w -> (b f) c h w")
-            latents = vae.encode(pixel_values).latent_dist.sample()
+            latents = pixel_values  # already precomputed
             latents = rearrange(latents, "(b f) c h w -> b c f h w", f=video_length)
-            latents = latents * 0.18215
 
             noise = torch.randn_like(latents)
             timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device=latents.device).long()
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-            encoder_hidden_states = text_encoder(batch["prompt_ids"])[0]
+            encoder_hidden_states = batch["prompt_ids"]
             target = noise if noise_scheduler.prediction_type=="epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
 
             model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
@@ -575,12 +591,9 @@ for epoch in tqdm(range(1, num_epochs+1)):
     # Validation & sample saving every epoch
     # -----------------------
     if accelerator.is_main_process:
-        samples = []
-        generator = torch.Generator(device=latents.device).manual_seed(SEED)
-        for prompt in train_dataset.prompt:
-            sample = validation_pipeline(prompt, generator=generator, latents=None).videos
-            save_videos_grid(sample, f"{OUTPUT_DIR}/samples/sample-{epoch}/{os.path.basename(prompt)}.gif")
-            samples.append(sample)
+        for i, prompt in enumerate(train_dataset.prompt_paths):
+            sample = validation_pipeline(prompt, generator=torch.Generator(device=latents.device), latents=None).videos
+            save_videos_grid(sample, f"{OUTPUT_DIR}/samples/sample-{epoch}/{i}.gif")
 
 # -----------------------
 # Save final pipeline
