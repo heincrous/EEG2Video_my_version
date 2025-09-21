@@ -183,18 +183,30 @@ class CLIP(nn.Module):
 # Dataset
 # -----------------------
 class EEGTextDataset(Dataset):
-    def __init__(self, eeg_dir, text_dir):
+    def __init__(self, eeg_root, text_root):
         self.samples = []
-        for block in os.listdir(eeg_dir):
-            eeg_block = os.path.join(eeg_dir, block)
-            txt_block = os.path.join(text_dir, block)
-            if not os.path.isdir(eeg_block):
+
+        # loop through subjects
+        for subj in os.listdir(eeg_root):
+            subj_path = os.path.join(eeg_root, subj)
+            if not os.path.isdir(subj_path):
                 continue
-            for f in os.listdir(eeg_block):
-                eeg_file = os.path.join(eeg_block, f)
-                txt_file = os.path.join(txt_block, f)
-                if os.path.exists(eeg_file) and os.path.exists(txt_file):
-                    self.samples.append((eeg_file, txt_file))
+
+            # loop through blocks
+            for block in os.listdir(subj_path):
+                eeg_block = os.path.join(subj_path, block)
+                txt_block = os.path.join(text_root, block)
+                if not os.path.isdir(eeg_block) or not os.path.isdir(txt_block):
+                    continue
+
+                for f in os.listdir(eeg_block):
+                    eeg_file = os.path.join(eeg_block, f)
+                    txt_file = os.path.join(txt_block, f)
+                    if os.path.exists(txt_file):
+                        self.samples.append((eeg_file, txt_file))
+
+        if len(self.samples) == 0:
+            raise RuntimeError("No EEG–BLIP pairs found. Check directory structure and filenames.")
 
         # fit StandardScaler across all EEG samples
         all_eeg = []
@@ -210,11 +222,9 @@ class EEGTextDataset(Dataset):
 
     def __getitem__(self, idx):
         eeg_file, txt_file = self.samples[idx]
-        eeg = np.load(eeg_file).reshape(-1)   # -> (310,)
+        eeg = np.load(eeg_file).reshape(-1)   # (310,)
         eeg = self.scaler.transform([eeg])[0]
-
-        text = np.load(txt_file).reshape(-1)  # -> (77*768,)
-
+        text = np.load(txt_file).reshape(-1)  # (77*768,)
         eeg = torch.tensor(eeg, dtype=torch.float32)
         text = torch.tensor(text, dtype=torch.float32)
         return eeg, text
