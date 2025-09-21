@@ -143,9 +143,9 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 # Load models
 # -------------------------
 # Diffusion pipeline
-unet = UNet3DConditionModel.from_pretrained(DIFFUSION_CKPT, subfolder="unet").to(device, dtype=torch.float16)
-vae = AutoencoderKL.from_pretrained(SD_BASE, subfolder="vae").to(device, dtype=torch.float16)
-text_encoder = CLIPTextModel.from_pretrained(SD_BASE, subfolder="text_encoder").to(device, dtype=torch.float16)
+unet = UNet3DConditionModel.from_pretrained(DIFFUSION_CKPT, subfolder="unet").to(device, dtype=torch.float32)
+vae = AutoencoderKL.from_pretrained(SD_BASE, subfolder="vae").to(device, dtype=torch.float32)
+text_encoder = CLIPTextModel.from_pretrained(SD_BASE, subfolder="text_encoder").to(device, dtype=torch.float32)
 tokenizer = CLIPTokenizer.from_pretrained(SD_BASE, subfolder="tokenizer")
 scheduler = DDIMScheduler.from_pretrained(SD_BASE, subfolder="scheduler")
 
@@ -206,7 +206,7 @@ while len(segments) < 7:
     segments.append(np.zeros((62, 200)))
 eeg = np.stack(segments[:7], axis=0)  # shape (7, 62, 200)
 
-eeg_tensor = torch.tensor(eeg, dtype=torch.float16).unsqueeze(0).to(device)  # [1, 7, 62, 200]
+eeg_tensor = torch.tensor(eeg, dtype=torch.float32).unsqueeze(0).to(device)  # [1, 7, 62, 200]
 
 # -------------------------
 # Run Seq2Seq → predicted latents
@@ -223,8 +223,7 @@ with torch.no_grad():
 # Drop the first dummy BOS frame
 pred_latents = pred_latents[:, 1:, :, :, :]
 
-# Convert to float16 for diffusion
-pred_latents = pred_latents.to(torch.float16)
+pred_latents = pred_latents.to(torch.float32)
 
 # Rearrange to [B, C, F, H, W]
 pred_latents = rearrange(pred_latents, "b f c h w -> b c f h w")
@@ -269,15 +268,14 @@ with torch.no_grad():
 # Run diffusion pipeline
 # -------------------------
 with torch.no_grad():
-    eeg_embeds_fp16 = eeg_embeds.to(torch.float16)
-    neg_eeg_fp16 = eeg_tensor.mean(dim=1, keepdim=True).to(torch.float16)
-    pred_latents_fp16 = pred_latents.to(torch.float16)
+    # LATER ATTEMPT TO EDIT THIS BY CASTING EVERYTHING TO FP16 OR FP32
+    neg_eeg_fp32 = eeg_tensor.mean(dim=1, keepdim=True).to(torch.float32)
 
     video = pipe(
-        None,                           # model
-        eeg_embeds_fp16,                     # eeg
-        negative_eeg=neg_eeg_fp16,           # negative eeg
-        latents=pred_latents_fp16,           # seq2seq-predicted latents
+        None,
+        eeg_embeds,
+        negative_eeg=neg_eeg_fp32,
+        latents=pred_latents,
         video_length=pred_latents.shape[2],
         height=288,
         width=512,
