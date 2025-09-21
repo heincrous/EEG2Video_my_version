@@ -1,15 +1,43 @@
 import torch
 import os
+import numpy as np
+import imageio
 from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
-from save_videos_grid import save_videos_grid  # use your inline function or import
 
 # ---------------- CONFIG ----------------
-OUTPUT_DIR = "./EEG2Video_checkpoints/EEG2Video_diffusion_output"  # trained pipeline
-BLIP_CAP_DIR = "./EEG2Video_data/processed/BLIP_captions"         # captions
-TEST_SPLIT_DIR = "./EEG2Video_data/processed/Split_4train1test/test/Video_latents"  # test latents
-SAVE_DIR = "./EEG2Video_inference"  # local repo folder for GIFs
-
+OUTPUT_DIR = "./EEG2Video_checkpoints/EEG2Video_diffusion_output"
+BLIP_CAP_DIR = "./EEG2Video_data/processed/BLIP_captions"
+TEST_SPLIT_DIR = "./EEG2Video_data/processed/Split_4train1test/test/Video_latents"
+SAVE_DIR = "./EEG2Video_inference"  # save to repo
 os.makedirs(SAVE_DIR, exist_ok=True)
+
+# ---------------- INLINE GIF SAVING FUNCTION ----------------
+def save_videos_grid(videos, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if isinstance(videos, torch.Tensor):
+        videos = videos.cpu().numpy()
+
+    if videos.ndim == 5:  # [B, F, C, H, W]
+        for i, video in enumerate(videos):
+            frames = []
+            for frame in video:  # [C, H, W]
+                if frame.shape[0] == 1:
+                    frame = frame.squeeze(0)  # [H, W]
+                else:
+                    frame = frame.transpose(1, 2, 0)  # [H, W, C]
+                frame = np.clip(frame * 255, 0, 255).astype(np.uint8)
+                frames.append(frame)
+            imageio.mimsave(f"{path}_{i}.gif", frames, fps=5)
+    elif videos.ndim == 4:  # [F, C, H, W]
+        frames = []
+        for frame in videos:
+            if frame.shape[0] == 1:
+                frame = frame.squeeze(0)
+            else:
+                frame = frame.transpose(1, 2, 0)
+            frame = np.clip(frame * 255, 0, 255).astype(np.uint8)
+            frames.append(frame)
+        imageio.mimsave(path, frames, fps=5)
 
 # ---------------- LOAD PIPELINE ----------------
 pipeline = TuneAVideoPipeline.from_pretrained(OUTPUT_DIR)
