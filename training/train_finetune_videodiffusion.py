@@ -434,7 +434,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core_files.unet import UNet3DConditionModel
 from core_files.dataset import TuneMultiVideoDataset
 from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
-from core_files.add_noise import ddim_inversion  # only import needed function
+# from core_files.add_noise import ddim_inversion
 from einops import rearrange
 
 # -----------------------
