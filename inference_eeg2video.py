@@ -259,7 +259,7 @@ if de_features.shape[0] != 310:
     raise ValueError(f"Expected 310 features, got {de_features.shape}")
 
 # 2. Convert to tensor [1,310]
-eeg_de = torch.tensor(de_features, dtype=torch.float16).unsqueeze(0).to(device)
+eeg_de = torch.tensor(de_features, dtype=torch.float32).unsqueeze(0).to(device)
 
 # 3. Run semantic predictor → [1,59136]
 with torch.no_grad():
