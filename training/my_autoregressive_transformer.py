@@ -398,7 +398,6 @@ import torch.nn as nn
 from einops import rearrange
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
-from sklearn.preprocessing import StandardScaler
 
 # -----------------------
 # EEGNet embedding
@@ -451,11 +450,11 @@ class PositionalEncoding(nn.Module):
         div_term = torch.exp(torch.arange(0, d_model, 2) * -(math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)
+        pe = pe.unsqueeze(1)  # (max_len, 1, d_model)
         self.register_buffer("pe", pe)
 
     def forward(self, x):
-        x = x + self.pe[:, : x.size(1)].requires_grad_(False)
+        x = x + self.pe[: x.size(0)]
         return self.dropout(x)
 
 # -----------------------
@@ -467,11 +466,11 @@ class myTransformer(nn.Module):
         self.img_embedding = nn.Linear(4 * 36 * 64, d_model)
         self.eeg_embedding = MyEEGNet_embedding(d_model=d_model, C=62, T=100)
         self.transformer_encoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model=d_model, nhead=4, batch_first=True),
+            nn.TransformerEncoderLayer(d_model=d_model, nhead=4),
             num_layers=2
         )
         self.transformer_decoder = nn.TransformerDecoder(
-            nn.TransformerDecoderLayer(d_model=d_model, nhead=4, batch_first=True),
+            nn.TransformerDecoderLayer(d_model=d_model, nhead=4),
             num_layers=4
         )
         self.positional_encoding = PositionalEncoding(d_model, dropout=0)
@@ -479,24 +478,32 @@ class myTransformer(nn.Module):
         self.predictor = nn.Linear(d_model, 4 * 36 * 64)
 
     def forward(self, src, tgt):
-        src = self.eeg_embedding(src.reshape(src.shape[0] * src.shape[1], 1, 62, 100))
-        src = src.reshape(-1, src.shape[-1]).unsqueeze(1)  # (batch, seq, d_model)
-        tgt = tgt.reshape(tgt.shape[0], tgt.shape[1], -1)
+        # src: (B, 7, 62, 100)
+        B = src.shape[0]
+        src = self.eeg_embedding(src.reshape(B * 7, 1, 62, 100)).reshape(B, 7, -1)
+        src = src.transpose(0, 1)  # (seq_len=7, batch, d_model)
+
+        tgt = tgt.reshape(tgt.shape[0], tgt.shape[1], -1)  # (B, seq, flat)
         tgt = self.img_embedding(tgt)
+        tgt = tgt.transpose(0, 1)  # (seq_len, batch, d_model)
+
         src = self.positional_encoding(src)
         tgt = self.positional_encoding(tgt)
-        tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt.size(1)).to(tgt.device)
 
-        encoder_output = self.transformer_encoder(src)
-        new_tgt = torch.zeros((tgt.shape[0], 1, tgt.shape[2])).to(tgt.device)
+        tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt.size(0)).to(tgt.device)
+
+        encoder_output = self.transformer_encoder(src)  # (seq_len, batch, d_model)
+
+        new_tgt = torch.zeros((1, tgt.shape[1], tgt.shape[2]), device=tgt.device)
         for i in range(6):
             decoder_output = self.transformer_decoder(new_tgt, encoder_output, tgt_mask=tgt_mask[:i+1, :i+1])
-            new_tgt = torch.cat((new_tgt, decoder_output[:, -1:, :]), dim=1)
-        encoder_output = torch.mean(encoder_output, dim=1)
-        return self.txtpredictor(encoder_output), self.predictor(new_tgt).reshape(new_tgt.shape[0], new_tgt.shape[1], 4, 36, 64)
+            new_tgt = torch.cat((new_tgt, decoder_output[-1:, :, :]), dim=0)
+
+        encoder_output = torch.mean(encoder_output, dim=0)  # (batch, d_model)
+        return self.txtpredictor(encoder_output), self.predictor(new_tgt.transpose(0, 1)).reshape(new_tgt.shape[1], new_tgt.shape[0], 4, 36, 64)
 
 # -----------------------
-# Dataset with sliding windows
+# Dataset with exactly 7 windows
 # -----------------------
 class EEGVideoDataset(Dataset):
     def __init__(self, eeg_dir, video_dir, window_size=100, overlap=50):
@@ -516,8 +523,8 @@ class EEGVideoDataset(Dataset):
 
     def __getitem__(self, idx):
         eeg_file, vid_file = self.samples[idx]
-        eeg = np.load(eeg_file)   # shape (62, T)
-        vid = np.load(vid_file)   # shape (F, 4, 36, 64)
+        eeg = np.load(eeg_file)   # (62, T)
+        vid = np.load(vid_file)   # (F, 4, 36, 64)
 
         # sliding windows
         segments = []
@@ -525,11 +532,10 @@ class EEGVideoDataset(Dataset):
         for start in range(0, eeg.shape[1] - self.window_size + 1, step):
             segments.append(eeg[:, start:start+self.window_size])
 
-        # enforce exactly 7 windows like authors
+        # enforce exactly 7
         if len(segments) >= 7:
-            segments = segments[:7]   # take first 7
+            segments = segments[:7]
         else:
-            # pad with zeros if less than 7
             while len(segments) < 7:
                 segments.append(np.zeros((62, self.window_size)))
 
@@ -553,7 +559,6 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = myTransformer().to(device)
     opt = torch.optim.Adam(model.parameters(), lr=5e-4)
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs * len(train_loader))
     criterion = nn.MSELoss()
 
     for epoch in range(epochs):
@@ -563,13 +568,12 @@ if __name__ == "__main__":
             eeg, vid = eeg.to(device), vid.to(device)
             b, f, c, h, w = vid.shape
             padded = torch.zeros((b, 1, c, h, w)).to(device)
-            full_vid = torch.cat((padded, vid), dim=1)
+            full_vid = torch.cat((padded, vid), dim=1)  # (B, F+1, C, H, W)
             opt.zero_grad()
             _, out = model(eeg, full_vid)
-            loss = criterion(out[:, :-1, :], vid)
+            loss = criterion(out[:, :-1, :], vid)  # align with authors
             loss.backward()
             opt.step()
-            sched.step()
             epoch_loss += loss.item()
         print(f"Epoch {epoch+1}/{epochs} - Loss: {epoch_loss:.4f}")
 
