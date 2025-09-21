@@ -88,10 +88,9 @@
 import os
 import torch
 import numpy as np
-from einops import rearrange
 from torch.utils.data import DataLoader
-from torchvision.io import write_video
 import imageio
+from IPython.display import Image, display
 
 from training.my_autoregressive_transformer import myTransformer, EEGVideoDataset  # import your classes
 
@@ -128,42 +127,45 @@ random_model.eval()
 # -----------------------
 # Inference loop
 # -----------------------
-criterion = torch.nn.MSELoss()
-
 for i, (eeg, vid) in enumerate(test_loader):
-    eeg, vid = eeg.to(device), vid.to(device)  # vid shape: (F, 4, 36, 64) or (1,F,4,36,64)
+    eeg, vid = eeg.to(device), vid.to(device)
     b, f, c, h, w = vid.shape
     padded = torch.zeros((b, 1, c, h, w)).to(device)
-    full_vid = torch.cat((padded, vid), dim=1)  # (B, F+1, C, H, W)
+    full_vid = torch.cat((padded, vid), dim=1)
 
-    # Run trained
     with torch.no_grad():
         _, out_trained = trained_model(eeg, full_vid)
     trained_latents = out_trained[:, :-1, :].cpu().numpy()
 
-    # Run random
     with torch.no_grad():
         _, out_random = random_model(eeg, full_vid)
     random_latents = out_random[:, :-1, :].cpu().numpy()
 
-    # Ground truth
     gt = vid.cpu().numpy()
 
-    # Convert to gifs (using imageio)
     def save_gif(array, path):
-        # array shape (frames, 4, 36, 64)
         array = array.squeeze()
         if array.ndim == 4:
-            frames = [array[t,0,:,:] for t in range(array.shape[0])]  # take channel 0
+            frames = [array[t, 0, :, :] for t in range(array.shape[0])]
         else:
             frames = [array[t] for t in range(array.shape[0])]
         frames = [((f - f.min()) / (f.max() - f.min() + 1e-8) * 255).astype(np.uint8) for f in frames]
         imageio.mimsave(path, frames, fps=4)
 
-    save_gif(gt, os.path.join(SAVE_DIR, f"sample{i}_groundtruth.gif"))
-    save_gif(trained_latents, os.path.join(SAVE_DIR, f"sample{i}_trained.gif"))
-    save_gif(random_latents, os.path.join(SAVE_DIR, f"sample{i}_random.gif"))
+    gt_path = os.path.join(SAVE_DIR, f"sample{i}_groundtruth.gif")
+    trained_path = os.path.join(SAVE_DIR, f"sample{i}_trained.gif")
+    random_path = os.path.join(SAVE_DIR, f"sample{i}_random.gif")
+
+    save_gif(gt, gt_path)
+    save_gif(trained_latents, trained_path)
+    save_gif(random_latents, random_path)
 
     print(f"Saved gifs for sample {i}")
-    if i == 2:  # just a few samples
+
+    # DISPLAY inline
+    display(Image(filename=gt_path))
+    display(Image(filename=trained_path))
+    display(Image(filename=random_path))
+
+    if i == 2:
         break
