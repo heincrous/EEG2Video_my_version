@@ -408,7 +408,6 @@
 import sys
 import os
 import math
-import logging
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -422,7 +421,6 @@ from accelerate.logging import get_logger
 from accelerate.utils import set_seed
 
 from diffusers import AutoencoderKL, DDPMScheduler, DDIMScheduler
-from diffusers.optimization import get_scheduler
 from transformers import CLIPTextModel, CLIPTokenizer
 
 # -----------------------
@@ -438,10 +436,8 @@ from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
 # -----------------------
 def save_videos_grid(videos, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    
     if isinstance(videos, torch.Tensor):
         videos = videos.cpu().numpy()
-    
     if videos.ndim == 5:
         for i, video in enumerate(videos):
             frames = [(frame.transpose(1,2,0)*255).astype('uint8') for frame in video]
@@ -451,21 +447,21 @@ def save_videos_grid(videos, path):
         imageio.mimsave(path, frames, fps=5)
 
 # -----------------------
-# Dataset for .npy latents and BLIP embeddings
+# Dataset for 4D latents and BLIP embeddings
 # -----------------------
 class LatentDataset(Dataset):
     def __init__(self, latent_paths, blip_paths, max_frames=None):
         self.latent_paths = latent_paths
         self.blip_paths = blip_paths
-        self.max_frames = max_frames  # optional slicing to reduce memory
+        self.max_frames = max_frames
 
     def __len__(self):
         return len(self.latent_paths)
 
     def __getitem__(self, idx):
-        latent = torch.from_numpy(np.load(self.latent_paths[idx]))
+        latent = torch.from_numpy(np.load(self.latent_paths[idx]))  # 4D: frames, 4, 36, 64
         if self.max_frames is not None:
-            latent = latent[:, :self.max_frames, :, :, :]  # slice frames
+            latent = latent[:self.max_frames, :, :, :]  # slice frames
         prompt_id = torch.from_numpy(np.load(self.blip_paths[idx]))
         return {"pixel_values": latent, "prompt_ids": prompt_id}
 
@@ -570,17 +566,15 @@ for epoch in tqdm(range(1, num_epochs+1)):
     unet.train()
     for step, batch in enumerate(train_dataloader):
         with accelerator.accumulate(unet):
-            pixel_values = batch["pixel_values"].to(weight_dtype)
+            pixel_values = batch["pixel_values"].unsqueeze(0).to(weight_dtype)  # add batch dim
             video_length = pixel_values.shape[1]
-            pixel_values = rearrange(pixel_values, "b f c h w -> (b f) c h w")
-            latents = pixel_values
-            latents = rearrange(latents, "(b f) c h w -> b c f h w", f=video_length)
+            latents = rearrange(pixel_values, "(b f) c h w -> b c f h w", f=video_length)
 
             noise = torch.randn_like(latents)
             timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device=latents.device).long()
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-            encoder_hidden_states = batch["prompt_ids"]
+            encoder_hidden_states = batch["prompt_ids"].unsqueeze(0).to(weight_dtype)  # add batch dim
             target = noise if noise_scheduler.prediction_type=="epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
 
             model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
