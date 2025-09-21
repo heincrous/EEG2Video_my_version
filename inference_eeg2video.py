@@ -82,3 +82,88 @@ for i in range(len(eeg)):
         os.makedirs(savename, exist_ok=True)
     save_videos_grid(video, f"./{savename}/{i}.gif")
  
+# ---------------------------------------------------------------------------------------------------------------
+# NEW VERSION
+# ---------------------------------------------------------------------------------------------------------------
+import os
+import torch
+import numpy as np
+from einops import rearrange
+from torch.utils.data import DataLoader
+from torchvision.io import write_video
+import imageio
+
+from my_autoregressive_transformer import myTransformer, EEGVideoDataset  # import your classes
+
+# -----------------------
+# Config
+# -----------------------
+BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test"
+CKPT_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoint.pt"
+SAVE_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_inference"
+os.makedirs(SAVE_DIR, exist_ok=True)
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# -----------------------
+# Load test data
+# -----------------------
+test_ds = EEGVideoDataset(
+    os.path.join(BASE, "test/EEG_segments"),
+    os.path.join(BASE, "test/Video_latents")
+)
+test_loader = DataLoader(test_ds, batch_size=1, shuffle=False)
+
+# -----------------------
+# Load models
+# -----------------------
+trained_model = myTransformer().to(device)
+state = torch.load(CKPT_PATH, map_location=device)
+trained_model.load_state_dict(state["state_dict"])
+trained_model.eval()
+
+random_model = myTransformer().to(device)
+random_model.eval()
+
+# -----------------------
+# Inference loop
+# -----------------------
+criterion = torch.nn.MSELoss()
+
+for i, (eeg, vid) in enumerate(test_loader):
+    eeg, vid = eeg.to(device), vid.to(device)  # vid shape: (F, 4, 36, 64) or (1,F,4,36,64)
+    b, f, c, h, w = vid.shape
+    padded = torch.zeros((b, 1, c, h, w)).to(device)
+    full_vid = torch.cat((padded, vid), dim=1)  # (B, F+1, C, H, W)
+
+    # Run trained
+    with torch.no_grad():
+        _, out_trained = trained_model(eeg, full_vid)
+    trained_latents = out_trained[:, :-1, :].cpu().numpy()
+
+    # Run random
+    with torch.no_grad():
+        _, out_random = random_model(eeg, full_vid)
+    random_latents = out_random[:, :-1, :].cpu().numpy()
+
+    # Ground truth
+    gt = vid.cpu().numpy()
+
+    # Convert to gifs (using imageio)
+    def save_gif(array, path):
+        # array shape (frames, 4, 36, 64)
+        array = array.squeeze()
+        if array.ndim == 4:
+            frames = [array[t,0,:,:] for t in range(array.shape[0])]  # take channel 0
+        else:
+            frames = [array[t] for t in range(array.shape[0])]
+        frames = [((f - f.min()) / (f.max() - f.min() + 1e-8) * 255).astype(np.uint8) for f in frames]
+        imageio.mimsave(path, frames, fps=4)
+
+    save_gif(gt, os.path.join(SAVE_DIR, f"sample{i}_groundtruth.gif"))
+    save_gif(trained_latents, os.path.join(SAVE_DIR, f"sample{i}_trained.gif"))
+    save_gif(random_latents, os.path.join(SAVE_DIR, f"sample{i}_random.gif"))
+
+    print(f"Saved gifs for sample {i}")
+    if i == 2:  # just a few samples
+        break
