@@ -248,7 +248,7 @@ if __name__ == "__main__":
     print("EEG shape:", eeg.shape)   # torch.Size([310])
     print("Text shape:", text.shape) # torch.Size([59136])
 
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=8, shuffle=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = SemanticPredictor(input_dim=310).to(device)
