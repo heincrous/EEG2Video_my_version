@@ -247,7 +247,7 @@ with torch.no_grad():
 # -------------------------
 with torch.no_grad():
     video = pipe(
-        seq2seq,                 # model
+        None,                 # model
         eeg_embeds,                     # eeg
         negative_eeg=eeg_tensor.mean(dim=1, keepdim=True),  # baseline
         latents=pred_latents,           # seq2seq-predicted latents
