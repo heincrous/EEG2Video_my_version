@@ -216,10 +216,17 @@ pred_latents = pred_latents.to(torch.float16)
 # -------------------------
 # Run Semantic predictor → embeddings
 # -------------------------
-eeg_de = eeg.reshape(-1)[:310]  # flatten DE features (dummy: first 310 vals)
-eeg_de = torch.tensor(eeg_de, dtype=torch.float32).unsqueeze(0).to(device)
+# 1. Load DE features instead of hacking raw EEG
+de_dir = os.path.join(BASE, "EEG_features", "DE_1per2s", subj, block)
+de_file = os.path.join(de_dir, clip_file)  # same naming as EEG/Video_latents
+de_features = np.load(de_file)             # should be (310,)
+
+# 2. Convert to tensor
+eeg_de = torch.tensor(de_features, dtype=torch.float32).unsqueeze(0).to(device)
+
+# 3. Run semantic predictor → embeddings (1, 59136)
 with torch.no_grad():
-    text_embeds = semantic_model(eeg_de).reshape(1, 77, 768)
+    eeg_embeds = semantic_model(eeg_de)    # [1, 59136]
 
 # -------------------------
 # Run diffusion pipeline
