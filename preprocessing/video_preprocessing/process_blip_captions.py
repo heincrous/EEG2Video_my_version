@@ -11,18 +11,16 @@ EMB_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/"
 CAP_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_captions/"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-os.makedirs(EMB_DIR, exist_ok=True)
-os.makedirs(CAP_DIR, exist_ok=True)
-
-# Load CLIP model (ViT-B/32)
 model, preprocess = clip.load("ViT-B/32", device=device)
 model.eval()
+
+os.makedirs(EMB_DIR, exist_ok=True)
+os.makedirs(CAP_DIR, exist_ok=True)
 
 def get_blip_files(directory):
     files = [f for f in os.listdir(directory) if f.endswith(".txt")]
     return sorted(files, key=lambda x: int(re.findall(r'\d+', x)[0]))
 
-# Map raw video filenames to Block names
 BLOCK_MAP = {
     "1st_10min": "Block1",
     "2nd_10min": "Block2",
@@ -51,7 +49,7 @@ processed_count = 0
 # Process selected caption files
 # -----------------------------
 for blip_file in blip_list:
-    block_key = os.path.splitext(blip_file)[0]  # e.g. "1st_10min"
+    block_key = os.path.splitext(blip_file)[0]
     block_name = BLOCK_MAP.get(block_key, block_key)
     block_idx = int(block_name.replace("Block", "")) - 1
 
@@ -77,17 +75,19 @@ for blip_file in blip_list:
             caption = lines[idx]
 
             with torch.no_grad():
-                text = clip.tokenize([caption]).to(device)
-                embedding = model.encode_text(text)
-                embedding = embedding / embedding.norm(dim=-1, keepdim=True)
-            embedding = embedding.cpu().numpy()
+                tokens = clip.tokenize([caption]).to(device)  # (1,77)
+                # Get token-level features (77,768), no pooling
+                x = model.token_embedding(tokens).type(model.dtype)
+                x = x + model.positional_embedding.type(model.dtype)
+                x = model.transformer(x.permute(1, 0, 2))  # (77,1,768)
+                embedding = x.permute(1, 0, 2).squeeze(0).cpu().numpy()  # (77,768)
 
             base_name = f"class{true_class:02d}_clip{clip_id+1:02d}"
 
-            # save embedding as .npy (for training)
+            # save embedding (77,768) for training
             np.save(os.path.join(block_emb_dir, base_name + ".npy"), embedding)
 
-            # save caption as .txt (for inspection/debugging)
+            # save caption text for inspection
             with open(os.path.join(block_cap_dir, base_name + ".txt"), "w") as ftxt:
                 ftxt.write(caption)
 
