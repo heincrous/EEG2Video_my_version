@@ -161,9 +161,9 @@ from tqdm import tqdm
 # -----------------------
 # Model (authors’ MLP: DE -> BLIP embeddings)
 # -----------------------
-class CLIP(nn.Module):
+class SemanticPredictor(nn.Module):
     def __init__(self, input_dim=310):
-        super(CLIP, self).__init__()
+        super(SemanticPredictor, self).__init__()
         self.mlp = nn.Sequential(
             nn.Linear(input_dim, 10000),
             nn.ReLU(),
@@ -173,7 +173,7 @@ class CLIP(nn.Module):
             nn.ReLU(),
             nn.Linear(10000, 10000),
             nn.ReLU(),
-            nn.Linear(10000, 77 * 768)
+            nn.Linear(10000, 77 * 768)   # output matches BLIP embeddings
         )
 
     def forward(self, eeg):
@@ -205,11 +205,11 @@ class EEGTextDataset(Dataset):
         if len(self.samples) == 0:
             raise RuntimeError("No DE–BLIP pairs found. Check directory structure.")
 
-        # fit StandardScaler across all clips
+        # Fit StandardScaler across all EEG clips
         all_eeg = []
         for eeg_file, _ in self.samples:
             eeg = np.load(eeg_file)        # (62,5)
-            eeg = eeg.reshape(-1)          # flatten to (310,)
+            eeg = eeg.reshape(-1)          # (310,)
             all_eeg.append(eeg)
         all_eeg = np.stack(all_eeg, axis=0)  # (N,310)
         self.scaler = StandardScaler().fit(all_eeg)
@@ -241,10 +241,17 @@ if __name__ == "__main__":
     text_dir = os.path.join(BASE, "BLIP_embeddings")
 
     dataset = EEGTextDataset(de_dir, text_dir)
+
+    # Sanity check: confirm shapes
+    eeg, text = dataset[0]
+    print("Sanity check:")
+    print("EEG shape:", eeg.shape)   # torch.Size([310])
+    print("Text shape:", text.shape) # torch.Size([59136])
+
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = CLIP(input_dim=310).to(device)
+    model = SemanticPredictor(input_dim=310).to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
