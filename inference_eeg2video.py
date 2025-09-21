@@ -226,9 +226,10 @@ with torch.no_grad():
 # -------------------------
 with torch.no_grad():
     video = pipe(
-        prompt_embeds=text_embeds,
-        negative_prompt=None,
-        latents=pred_latents,
+        semantic_model,                 # model
+        eeg_tensor,                     # eeg
+        negative_eeg=eeg_tensor.mean(dim=1, keepdim=True),  # baseline
+        latents=pred_latents,           # seq2seq-predicted latents
         video_length=pred_latents.shape[1],
         height=288,
         width=512,
