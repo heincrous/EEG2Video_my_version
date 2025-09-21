@@ -395,7 +395,6 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
-from einops import rearrange
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
@@ -478,12 +477,11 @@ class myTransformer(nn.Module):
         self.predictor = nn.Linear(d_model, 4 * 36 * 64)
 
     def forward(self, src, tgt):
-        # src: (B, 7, 62, 100)
         B = src.shape[0]
         src = self.eeg_embedding(src.reshape(B * 7, 1, 62, 100)).reshape(B, 7, -1)
         src = src.transpose(0, 1)  # (seq_len=7, batch, d_model)
 
-        tgt = tgt.reshape(tgt.shape[0], tgt.shape[1], -1)  # (B, seq, flat)
+        tgt = tgt.reshape(tgt.shape[0], tgt.shape[1], -1)
         tgt = self.img_embedding(tgt)
         tgt = tgt.transpose(0, 1)  # (seq_len, batch, d_model)
 
@@ -492,14 +490,14 @@ class myTransformer(nn.Module):
 
         tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt.size(0)).to(tgt.device)
 
-        encoder_output = self.transformer_encoder(src)  # (seq_len, batch, d_model)
+        encoder_output = self.transformer_encoder(src)
 
         new_tgt = torch.zeros((1, tgt.shape[1], tgt.shape[2]), device=tgt.device)
         for i in range(6):
             decoder_output = self.transformer_decoder(new_tgt, encoder_output, tgt_mask=tgt_mask[:i+1, :i+1])
             new_tgt = torch.cat((new_tgt, decoder_output[-1:, :, :]), dim=0)
 
-        encoder_output = torch.mean(encoder_output, dim=0)  # (batch, d_model)
+        encoder_output = torch.mean(encoder_output, dim=0)
         return self.txtpredictor(encoder_output), self.predictor(new_tgt.transpose(0, 1)).reshape(new_tgt.shape[1], new_tgt.shape[0], 4, 36, 64)
 
 # -----------------------
@@ -532,7 +530,6 @@ class EEGVideoDataset(Dataset):
         for start in range(0, eeg.shape[1] - self.window_size + 1, step):
             segments.append(eeg[:, start:start+self.window_size])
 
-        # enforce exactly 7
         if len(segments) >= 7:
             segments = segments[:7]
         else:
@@ -549,6 +546,9 @@ class EEGVideoDataset(Dataset):
 # -----------------------
 if __name__ == "__main__":
     BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test"
+    CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints"
+    os.makedirs(CKPT_DIR, exist_ok=True)
+
     train_ds = EEGVideoDataset(
         os.path.join(BASE, "train/EEG_segments"),
         os.path.join(BASE, "train/Video_latents")
@@ -568,14 +568,15 @@ if __name__ == "__main__":
             eeg, vid = eeg.to(device), vid.to(device)
             b, f, c, h, w = vid.shape
             padded = torch.zeros((b, 1, c, h, w)).to(device)
-            full_vid = torch.cat((padded, vid), dim=1)  # (B, F+1, C, H, W)
+            full_vid = torch.cat((padded, vid), dim=1)
             opt.zero_grad()
             _, out = model(eeg, full_vid)
-            loss = criterion(out[:, :-1, :], vid)  # align with authors
+            loss = criterion(out[:, :-1, :], vid)
             loss.backward()
             opt.step()
             epoch_loss += loss.item()
         print(f"Epoch {epoch+1}/{epochs} - Loss: {epoch_loss:.4f}")
 
-    torch.save({'state_dict': model.state_dict()}, os.path.join(BASE, "seq2seq_checkpoint.pt"))
-    print("Training complete. Checkpoint saved.")
+    ckpt_path = os.path.join(CKPT_DIR, "seq2seq_checkpoint.pt")
+    torch.save({'state_dict': model.state_dict()}, ckpt_path)
+    print(f"Training complete. Checkpoint saved to {ckpt_path}")
