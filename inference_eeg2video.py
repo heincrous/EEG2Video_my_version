@@ -151,11 +151,10 @@ scheduler = DDIMScheduler.from_pretrained(SD_BASE, subfolder="scheduler")
 
 pipe = TuneAVideoPipeline(
     vae=vae,
-    text_encoder=text_encoder,
     tokenizer=tokenizer,
     unet=unet,
-    scheduler=scheduler,
-).to(device)
+    scheduler=scheduler
+).to("cuda")
 pipe.enable_vae_slicing()
 
 # Seq2Seq model
