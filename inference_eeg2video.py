@@ -156,6 +156,7 @@ pipe = TuneAVideoPipeline(
     scheduler=scheduler
 ).to("cuda")
 pipe.enable_vae_slicing()
+pipe.enable_attention_slicing()
 
 # Seq2Seq model
 from training.my_autoregressive_transformer import myTransformer
@@ -279,8 +280,8 @@ with torch.no_grad():
         video_length=pred_latents.shape[2],
         height=288,
         width=512,
-        num_inference_steps=50,
-        guidance_scale=12.5
+        num_inference_steps=100,
+        guidance_scale=7.5
     ).videos
 
 # -------------------------
