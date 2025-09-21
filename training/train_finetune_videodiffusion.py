@@ -407,9 +407,9 @@
 # ---------------------------------------------------------------------------------------------------------------
 import sys
 import os
+import numpy as np
 import torch
 import torch.nn.functional as F
-import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 import imageio
@@ -419,7 +419,7 @@ from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed
 
-from diffusers import AutoencoderKL, DDPMScheduler, DDIMScheduler
+from diffusers import AutoencoderKL, DDIMScheduler, DDPMScheduler
 from transformers import CLIPTextModel, CLIPTokenizer
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -449,9 +449,8 @@ class LazyLatentDataset(Dataset):
         return len(self.latent_paths)
 
     def __getitem__(self, idx):
-        # Lazy load per sample
         latent = torch.from_numpy(np.load(self.latent_paths[idx]))
-        if self.max_frames:
+        if self.max_frames is not None:
             latent = latent[:self.max_frames]
         prompt_id = torch.from_numpy(np.load(self.blip_paths[idx]))
         return {"pixel_values": latent, "prompt_ids": prompt_id}
@@ -466,15 +465,15 @@ LEARNING_RATE = 3e-5
 GRAD_ACCUM_STEPS = 1
 MIXED_PRECISION = "fp16"
 SEED = 42
-MAX_FRAMES = 2  # conservative memory usage
-NUM_EPOCHS = 2
+MAX_FRAMES = 2  # safe memory usage
+NUM_EPOCHS = 10
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 accelerator = Accelerator(gradient_accumulation_steps=GRAD_ACCUM_STEPS, mixed_precision=MIXED_PRECISION)
 logger = get_logger(__name__, log_level="INFO")
 set_seed(SEED)
 
-# ----------------------- Load model components
+# ----------------------- Load models
 noise_scheduler = DDPMScheduler.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="scheduler")
 tokenizer = CLIPTokenizer.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="tokenizer")
 text_encoder = CLIPTextModel.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="text_encoder")
@@ -492,7 +491,7 @@ for name, module in unet.named_modules():
 
 optimizer = torch.optim.AdamW(unet.parameters(), lr=LEARNING_RATE)
 
-# ----------------------- Gather all latent & BLIP paths per block
+# ----------------------- Gather block paths
 blocks = sorted(os.listdir(os.path.join(TRAIN_BASE, "Video_latents")))
 block_paths = []
 for block in blocks:
@@ -518,7 +517,7 @@ text_encoder.to(accelerator.device, dtype=weight_dtype)
 vae.to(accelerator.device, dtype=weight_dtype)
 unet, optimizer = accelerator.prepare(unet, optimizer)
 
-# ----------------------- Training Loop
+# ----------------------- Block-wise Training
 global_step = 0
 try:
     for block_idx, (VIDEO_LATENT_PATH, BLIP_PATH) in enumerate(block_paths):
