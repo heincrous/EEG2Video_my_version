@@ -519,6 +519,13 @@ train_dataset = LatentDataset(VIDEO_LATENT_PATH, TEXT_PATHS, tokenizer, max_fram
 train_dataloader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True)
 train_dataloader = accelerator.prepare(train_dataloader)
 
+# ----------------------- Automatically infer video_length from first latent
+video_length = None
+if len(train_dataset) > 0:
+    first_latent = train_dataset[0]["pixel_values"]
+    video_length = first_latent.shape[0]  # number of frames
+    print(f"Inferred video_length: {video_length}")
+
 # ----------------------- Validation pipeline
 validation_pipeline = TuneAVideoPipeline(
     vae=vae.to("cpu"),
@@ -535,28 +542,27 @@ text_encoder.to(accelerator.device, dtype=weight_dtype)
 vae.to(accelerator.device, dtype=weight_dtype)
 unet, optimizer = accelerator.prepare(unet, optimizer)
 
-# ----------------------- Training loop
+# ----------------------- Training loop with logs
 global_step = 0
-for epoch in tqdm(range(1, NUM_EPOCHS+1)):
+for epoch in range(1, NUM_EPOCHS+1):
+    print(f"Starting epoch {epoch}/{NUM_EPOCHS}")
     unet.train()
     for step, batch in enumerate(train_dataloader):
+        if step % 1 == 0:
+            print(f"  Epoch {epoch} - Processing batch {step+1}/{len(train_dataloader)}")
         with accelerator.accumulate(unet):
-            # ----------------------- Prepare latents [B, C, F, H, W]
-            pixel_values = batch["pixel_values"].to(weight_dtype)  # [B?, F, C, H, W]
+            pixel_values = batch["pixel_values"].to(weight_dtype)
             if pixel_values.ndim == 4:
-                pixel_values = pixel_values.unsqueeze(0)  # [1, F, C, H, W]
+                pixel_values = pixel_values.unsqueeze(0)
             B, F_frames, C, H, W = pixel_values.shape
             latents = pixel_values.permute(0,2,1,3,4).contiguous()  # [B, C, F, H, W]
 
-            # ----------------------- Add noise
             noise = torch.randn_like(latents)
             timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (B,), device=latents.device).long()
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-            # ----------------------- Encode text
             encoder_hidden_states = text_encoder(batch["prompt_ids"].to(accelerator.device))[0]  # [B, seq_len, hidden_dim]
 
-            # ----------------------- UNet forward
             model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
             target = noise if noise_scheduler.prediction_type=="epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
             loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
@@ -566,14 +572,24 @@ for epoch in tqdm(range(1, NUM_EPOCHS+1)):
             optimizer.step()
             optimizer.zero_grad()
         global_step += 1
+        if step % 5 == 0:
+            print(f"    Batch {step+1} - Loss: {loss.item():.6f} - Global step: {global_step}")
+
+    print(f"Finished epoch {epoch}/{NUM_EPOCHS}")
 
     # ----------------------- Validation / save GIFs
     if accelerator.is_main_process:
         for i, text_path in enumerate(TEXT_PATHS):
             with open(text_path, 'r') as f:
                 prompt_text = f.read().strip()
-            sample = validation_pipeline(prompt_text, generator=None, latents=None).videos
+            sample = validation_pipeline(
+                prompt_text,
+                generator=None,
+                latents=None,
+                video_length=video_length
+            ).videos
             save_videos_grid(sample, f"{OUTPUT_DIR}/samples/sample-{epoch}/{i}.gif")
+            print(f"      Saved GIF for clip {i}")
 
 # ----------------------- Save final pipeline
 accelerator.wait_for_everyone()
