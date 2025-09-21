@@ -4,8 +4,8 @@ import torch
 import numpy as np
 import imageio
 
-# ---------------- Add repo root to path ----------------
-repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# ---------------- Add repo root to Python path ----------------
+repo_root = "/content/EEG2Video_my_version"  # your repo root
 sys.path.append(repo_root)
 
 # ---------------- Imports ----------------
@@ -15,12 +15,12 @@ from diffusers import AutoencoderKL, DDIMScheduler
 from transformers import CLIPTextModel
 
 # ---------------- CONFIG ----------------
-CHECKPOINT_DIR = "./EEG2Video_checkpoints/EEG2Video_diffusion_output"
-BLIP_CAP_DIR = "./EEG2Video_data/processed/BLIP_captions"
-TEST_SPLIT_DIR = "./EEG2Video_data/processed/Split_4train1test/test/Video_latents"
-SAVE_DIR = "./EEG2Video_inference"
+CHECKPOINT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
+BLIP_CAP_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_captions"
+TEST_SPLIT_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/test/Video_latents"
+SAVE_DIR = "/content/drive/MyDrive/EEG2Video_inference"
 os.makedirs(SAVE_DIR, exist_ok=True)
-VIDEO_LENGTH = 6  # must match training
+VIDEO_LENGTH = 6
 
 # ---------------- INLINE GIF SAVING ----------------
 def save_videos_grid(videos, path):
@@ -35,8 +35,8 @@ def save_videos_grid(videos, path):
                 if frame.shape[0] == 1:
                     frame = frame.squeeze(0)
                 else:
-                    frame = frame.transpose(1, 2, 0)
-                frame = np.clip(frame * 255, 0, 255).astype(np.uint8)
+                    frame = frame.transpose(1,2,0)
+                frame = np.clip(frame*255,0,255).astype(np.uint8)
                 frames.append(frame)
             imageio.mimsave(f"{path}_{i}.gif", frames, fps=5)
     elif videos.ndim == 4:  # [F, C, H, W]
@@ -45,15 +45,32 @@ def save_videos_grid(videos, path):
             if frame.shape[0] == 1:
                 frame = frame.squeeze(0)
             else:
-                frame = frame.transpose(1, 2, 0)
-            frame = np.clip(frame * 255, 0, 255).astype(np.uint8)
+                frame = frame.transpose(1,2,0)
+            frame = np.clip(frame*255,0,255).astype(np.uint8)
             frames.append(frame)
         imageio.mimsave(path, frames, fps=5)
 
-# ---------------- LOAD LOCAL MODELS ----------------
-unet = UNet3DConditionModel.from_pretrained_2d(os.path.join(CHECKPOINT_DIR, "unet"))
-vae = AutoencoderKL.from_pretrained(os.path.join(CHECKPOINT_DIR, "vae"))
-text_encoder = CLIPTextModel.from_pretrained(os.path.join(CHECKPOINT_DIR, "text_encoder"))
+# ---------------- LOAD MODELS MANUALLY ----------------
+unet = UNet3DConditionModel(
+    in_channels=4,
+    out_channels=4,
+    layers_per_block=2,
+    block_out_channels=(320, 640, 1280),
+    downsample_padding=1,
+    attention_resolutions=(2,1),
+    use_checkpoint=True
+)
+unet_weights = torch.load(os.path.join(CHECKPOINT_DIR, "unet/pytorch_model.bin"), map_location="cuda")
+unet.load_state_dict(unet_weights)
+unet.to("cuda")
+unet.eval()
+
+vae = AutoencoderKL.from_pretrained(os.path.join(CHECKPOINT_DIR, "vae")).to("cuda")
+vae.eval()
+
+text_encoder = CLIPTextModel.from_pretrained(os.path.join(CHECKPOINT_DIR, "text_encoder")).to("cuda")
+text_encoder.eval()
+
 scheduler = DDIMScheduler.from_pretrained(os.path.join(CHECKPOINT_DIR, "scheduler"))
 
 pipeline = TuneAVideoPipeline(
@@ -61,12 +78,12 @@ pipeline = TuneAVideoPipeline(
     vae=vae,
     text_encoder=text_encoder,
     scheduler=scheduler,
-    tokenizer=None  # set if needed
+    tokenizer=None
 )
 pipeline.enable_vae_slicing()
 pipeline.to("cuda")
 
-# ---------------- CROSS-CHECK TEST CAPTIONS ----------------
+# ---------------- FIND TEST CAPTIONS ----------------
 test_blocks = sorted(os.listdir(TEST_SPLIT_DIR))
 test_captions = []
 
@@ -77,16 +94,16 @@ for block in test_blocks:
         continue
     video_files = sorted([f for f in os.listdir(block_video_dir) if f.endswith(".npy")])
     for vf in video_files:
-        txt_file = vf.replace(".npy", ".txt")
+        txt_file = vf.replace(".npy",".txt")
         txt_path = os.path.join(block_cap_dir, txt_file)
         if os.path.exists(txt_path):
             test_captions.append((block, vf, txt_path))
 
-print(f"Found {len(test_captions)} test captions matching video latents")
+print(f"Found {len(test_captions)} test captions matching test video latents")
 
-# ---------------- INFERENCE ----------------
+# ---------------- RUN INFERENCE ----------------
 for block, vf, txt_path in test_captions:
-    with open(txt_path, "r") as f:
+    with open(txt_path,"r") as f:
         prompt_text = f.read().strip()
 
     with torch.no_grad():
