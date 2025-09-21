@@ -206,7 +206,7 @@ while len(segments) < 7:
     segments.append(np.zeros((62, 200)))
 eeg = np.stack(segments[:7], axis=0)  # shape (7, 62, 200)
 
-eeg_tensor = torch.tensor(eeg, dtype=torch.float32).unsqueeze(0).to(device)  # [1, 7, 62, 200]
+eeg_tensor = torch.tensor(eeg, dtype=torch.float16).unsqueeze(0).to(device)  # [1, 7, 62, 200]
 
 # -------------------------
 # Run Seq2Seq → predicted latents
@@ -255,7 +255,7 @@ if de_features.shape[0] != 310:
     raise ValueError(f"Expected 310 features, got {de_features.shape}")
 
 # 2. Convert to tensor [1,310]
-eeg_de = torch.tensor(de_features, dtype=torch.float32).unsqueeze(0).to(device)
+eeg_de = torch.tensor(de_features, dtype=torch.float16).unsqueeze(0).to(device)
 
 # 3. Run semantic predictor → [1,59136]
 with torch.no_grad():
@@ -265,10 +265,13 @@ with torch.no_grad():
 # Run diffusion pipeline
 # -------------------------
 with torch.no_grad():
+    eeg_embeds = eeg_embeds.to(torch.float16)
+    neg_eeg = eeg_tensor.mean(dim=1, keepdim=True).to(torch.float16)
+
     video = pipe(
-        None,                 # model
+        None,                           # model
         eeg_embeds,                     # eeg
-        negative_eeg=eeg_tensor.mean(dim=1, keepdim=True),  # baseline
+        negative_eeg=neg_eeg,           # negative eeg
         latents=pred_latents,           # seq2seq-predicted latents
         video_length=pred_latents.shape[1],
         height=288,
