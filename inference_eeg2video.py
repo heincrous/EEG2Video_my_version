@@ -191,6 +191,13 @@ print(f"Chosen test sample: subj={subj}, block={block}, clip={clip_file}")
 eeg = np.load(eeg_file)  # (62, 400)
 vid_latent = np.load(vid_file)  # (F, 4, 36, 64)
 
+# Trim or pad video latents to 4 frames
+if vid_latent.shape[0] > 4:
+    vid_latent = vid_latent[:4, :, :, :]
+elif vid_latent.shape[0] < 4:
+    pad = np.zeros((4 - vid_latent.shape[0], 4, 36, 64), dtype=vid_latent.dtype)
+    vid_latent = np.concatenate([vid_latent, pad], axis=0)
+
 # Segment EEG into 7 windows of 200
 segments = []
 for start in range(0, eeg.shape[1] - 200 + 1, 100):
@@ -212,8 +219,16 @@ with torch.no_grad():
     _, pred_latents = seq2seq(eeg_tensor, full_vid)
 pred_latents = pred_latents[:, :-1, :, :, :]  # remove padding
 pred_latents = pred_latents.to(torch.float16)
-# Fix shape for diffusion pipeline
+
+# Fix shape for diffusion pipeline and enforce 4 frames
 pred_latents = rearrange(pred_latents, "b f c h w -> b c f h w")
+if pred_latents.shape[2] > 4:
+    pred_latents = pred_latents[:, :, :4, :, :]
+elif pred_latents.shape[2] < 4:
+    pad = torch.zeros((pred_latents.shape[0], pred_latents.shape[1], 4 - pred_latents.shape[2],
+                       pred_latents.shape[3], pred_latents.shape[4]),
+                      device=pred_latents.device, dtype=pred_latents.dtype)
+    pred_latents = torch.cat((pred_latents, pad), dim=2)
 
 # -------------------------
 # Run Semantic predictor → embeddings
