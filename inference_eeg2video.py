@@ -191,37 +191,39 @@ print(f"Chosen test sample: subj={subj}, block={block}, clip={clip_file}")
 eeg = np.load(eeg_file)  # (62, 400)
 vid_latent = np.load(vid_file)  # (F, 4, 36, 64)
 
-# Trim or pad video latents to 4 frames
+# Trim or pad video latents to exactly 4 frames
 if vid_latent.shape[0] > 4:
     vid_latent = vid_latent[:4, :, :, :]
 elif vid_latent.shape[0] < 4:
     pad = np.zeros((4 - vid_latent.shape[0], 4, 36, 64), dtype=vid_latent.dtype)
     vid_latent = np.concatenate([vid_latent, pad], axis=0)
 
-# Segment EEG into 7 windows of 200
+# Segment EEG into 7 overlapping windows of 200 samples
 segments = []
 for start in range(0, eeg.shape[1] - 200 + 1, 100):
     segments.append(eeg[:, start:start+200])
 while len(segments) < 7:
     segments.append(np.zeros((62, 200)))
-eeg = np.stack(segments[:7], axis=0)
+eeg = np.stack(segments[:7], axis=0)  # shape (7, 62, 200)
 
 eeg_tensor = torch.tensor(eeg, dtype=torch.float32).unsqueeze(0).to(device)  # [1, 7, 62, 200]
 
 # -------------------------
 # Run Seq2Seq → predicted latents
 # -------------------------
-vid_tensor = torch.tensor(vid_latent, dtype=torch.float32).unsqueeze(0).to(device)  # [1, F, 4, 36, 64]
-padded = torch.zeros((1, 1, 4, 36, 64), device=device)
-full_vid = torch.cat((padded, vid_tensor), dim=1)
+
+# Start decoding from zero latents [B, F, C, H, W], with F=4
+init_latents = torch.zeros((1, 4, 4, 36, 64), device=device)
 
 with torch.no_grad():
-    _, pred_latents = seq2seq(eeg_tensor, full_vid)
-pred_latents = pred_latents[:, :-1, :, :, :]  # remove padding
+    _, pred_latents = seq2seq(eeg_tensor, init_latents)
+
 pred_latents = pred_latents.to(torch.float16)
 
-# Fix shape for diffusion pipeline and enforce 4 frames
+# Rearrange to [B, C, F, H, W] for diffusion
 pred_latents = rearrange(pred_latents, "b f c h w -> b c f h w")
+
+# Enforce exactly 4 frames
 if pred_latents.shape[2] > 4:
     pred_latents = pred_latents[:, :, :4, :, :]
 elif pred_latents.shape[2] < 4:
