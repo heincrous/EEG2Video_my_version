@@ -91,11 +91,12 @@ import numpy as np
 import imageio
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import shutil
+
 from training.my_autoregressive_transformer import myTransformer, EEGVideoDataset
 from training.train_semantic_predictor import SemanticPredictor
 from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 from core_files.unet import UNet3DConditionModel
-import shutil
 
 # ---------------- Paths ----------------
 BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/test"
@@ -151,30 +152,23 @@ pipe.enable_attention_slicing()
 
 # ---------------- Run inference ----------------
 for i, (eeg_raw, vid) in enumerate(tqdm(test_loader, desc="Running EEG2Video inference")):
-    # ---------------- Seq2Seq input ----------------
+    # Seq2Seq input
     eeg_seq = eeg_raw.to(device)  # [B=1, segments=7, channels=62, timepoints=200]
 
-    # ---------------- Semantic predictor input ----------------
+    # Semantic predictor input
     eeg_flat = eeg_raw[:,0,:,:5].reshape(eeg_raw.shape[0], -1).to(device)  # [B=1, 310]
-    vid = vid.to(device)  # [B=1, frames=6, channels=4, H=36, W=64]
+    vid = vid.to(device)
 
-    # ---------------- Generate Seq2Seq latent ----------------
-    b,f,c,h,w = vid.shape
-    padded = torch.zeros((b,1,c,h,w), device=device)
-    full_vid = torch.cat((padded, vid), dim=1)
+    # Generate semantic embedding
     with torch.no_grad():
-        _, seq2seq_latent = seq2seq_model(eeg_seq, full_vid)
-        seq2seq_latent = seq2seq_latent[:, :-1, :]
-
-    # ---------------- Generate semantic embedding ----------------
-    with torch.no_grad():
-        semantic_embed = semantic_model(eeg_flat).view(eeg_flat.shape[0],77,768)
+        semantic_embed = semantic_model(eeg_flat).view(eeg_flat.shape[0], 77, 768)
 
     # ---------------- Trained GIF ----------------
     with torch.no_grad():
         trained_gif = pipe(
+            model=seq2seq_model,
+            eeg=eeg_seq,
             prompt_embeddings=semantic_embed,
-            latents=seq2seq_latent.unsqueeze(2),
             video_length=VIDEO_LENGTH,
             height=288,
             width=512,
@@ -184,12 +178,12 @@ for i, (eeg_raw, vid) in enumerate(tqdm(test_loader, desc="Running EEG2Video inf
     save_gif(trained_gif, os.path.join(SAVE_DIR, f"clip{i+1}_trained.gif"))
 
     # ---------------- Random GIF ----------------
-    random_latent = torch.randn_like(seq2seq_latent).unsqueeze(2)
     random_embed = torch.randn_like(semantic_embed)
     with torch.no_grad():
         random_gif = pipe(
+            model=seq2seq_model,
+            eeg=eeg_seq,
             prompt_embeddings=random_embed,
-            latents=random_latent,
             video_length=VIDEO_LENGTH,
             height=288,
             width=512,
@@ -204,7 +198,7 @@ for i, (eeg_raw, vid) in enumerate(tqdm(test_loader, desc="Running EEG2Video inf
         gt_gif_path = os.path.join(PROCESSED_GIF_DIR, gt_gif_files[i % len(gt_gif_files)])
         shutil.copy(gt_gif_path, os.path.join(SAVE_DIR, f"clip{i+1}_ground_truth.gif"))
 
-    if i >= 9:  # remove this to process all 40 clips
+    if i >= 9:  # remove this to process all 40 test clips
         break
 
 print("Inference complete: random, trained, and ground-truth GIFs saved.")
