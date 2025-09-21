@@ -230,7 +230,7 @@ class TuneAVideoPipeline(DiffusionPipeline):
             print("uncond type:", uncond_embeddings.type())
             print("uncond shape:", uncond_embeddings.shape)
             uncond_numpy = uncond_embeddings.detach().cpu().numpy()
-            np.save('negative.npy', uncond_numpy)
+            np.save('EEG2Video/core_files/negative.npy', uncond_numpy)
 
 
             # For classifier free guidance, we need to do two forward passes.

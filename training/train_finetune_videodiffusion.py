@@ -414,6 +414,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import imageio
 
 from accelerate import Accelerator
 from accelerate.logging import get_logger
@@ -433,8 +434,27 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core_files.unet import UNet3DConditionModel
 from core_files.dataset import TuneMultiVideoDataset
 from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
-from core_files.add_noise import save_videos_grid, ddim_inversion
+from core_files.add_noise import ddim_inversion  # only import needed function
 from einops import rearrange
+
+# -----------------------
+# Minimal save_videos_grid implementation
+# -----------------------
+def save_videos_grid(videos, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    
+    if isinstance(videos, torch.Tensor):
+        videos = videos.cpu().numpy()
+    
+    if videos.ndim == 5:
+        # batch of videos
+        for i, video in enumerate(videos):
+            frames = [(frame.transpose(1,2,0)*255).astype('uint8') for frame in video]
+            imageio.mimsave(f"{path}_{i}.gif", frames, fps=5)
+    elif videos.ndim == 4:
+        # single video
+        frames = [(frame.transpose(1,2,0)*255).astype('uint8') for frame in videos]
+        imageio.mimsave(path, frames, fps=5)
 
 # -----------------------
 # Hardcoded paths & hyperparameters
@@ -444,7 +464,7 @@ TRAIN_BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/
 OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
 VIDEO_LATENT_PATH = os.path.join(TRAIN_BASE, "Video_latents")
 EEG_PATH = os.path.join(TRAIN_BASE, "EEG_segments")
-BLIP_PATH = os.path.join(TRAIN_BASE, "BLIP_embeddings")  # pre-tokenized embeddings if available
+BLIP_PATH = os.path.join(TRAIN_BASE, "BLIP_embeddings")
 
 TRAIN_BATCH_SIZE = 10
 LEARNING_RATE = 3e-5
@@ -516,7 +536,7 @@ validation_pipeline = TuneAVideoPipeline(
 )
 validation_pipeline.enable_vae_slicing()
 ddim_inv_scheduler = DDIMScheduler.from_pretrained(PRETRAINED_MODEL_PATH, subfolder='scheduler')
-ddim_inv_scheduler.set_timesteps(50)  # example
+ddim_inv_scheduler.set_timesteps(50)
 
 # -----------------------
 # Prepare for distributed training
