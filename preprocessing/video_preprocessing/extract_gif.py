@@ -99,7 +99,20 @@ processed_count = 0
 
 for video_file in video_list:
     video_path = os.path.join(RAW_VIDEO_DIR, video_file)
-    block_name = os.path.splitext(video_file)[0]  # e.g. "1st_10min"
+    
+    # map raw video filenames to Block names
+    BLOCK_MAP = {
+        "1st_10min": "Block1",
+        "2nd_10min": "Block2",
+        "3rd_10min": "Block3",
+        "4th_10min": "Block4",
+        "5th_10min": "Block5",
+        "6th_10min": "Block6",
+        "7th_10min": "Block7",
+    }
+
+    block_key = os.path.splitext(video_file)[0]  # e.g. "1st_10min"
+    block_name = BLOCK_MAP.get(block_key, block_key)
     block_save_dir = os.path.join(SAVE_DIR, block_name)
     os.makedirs(block_save_dir, exist_ok=True)
 

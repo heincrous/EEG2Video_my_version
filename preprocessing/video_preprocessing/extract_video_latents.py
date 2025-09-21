@@ -45,6 +45,19 @@ def encode_gif_to_latent(gif_path):
     return latents.cpu().numpy()
 
 # -----------------------------
+# Block name mapping
+# -----------------------------
+BLOCK_MAP = {
+    "1st_10min": "Block1",
+    "2nd_10min": "Block2",
+    "3rd_10min": "Block3",
+    "4th_10min": "Block4",
+    "5th_10min": "Block5",
+    "6th_10min": "Block6",
+    "7th_10min": "Block7",
+}
+
+# -----------------------------
 # Ask user which blocks to process
 # -----------------------------
 all_blocks = get_block_folders(GIF_DIR)
@@ -61,7 +74,9 @@ first_shape_printed = False
 
 for block in block_list:
     block_path = os.path.join(GIF_DIR, block)
-    save_block_path = os.path.join(SAVE_DIR, block)
+    # remap to BlockX
+    block_name = BLOCK_MAP.get(block, block)
+    save_block_path = os.path.join(SAVE_DIR, block_name)
     os.makedirs(save_block_path, exist_ok=True)
 
     gif_files = sorted([f for f in os.listdir(block_path) if f.endswith(".gif")])
@@ -78,6 +93,6 @@ for block in block_list:
         np.save(save_path, latents)
         processed_count += 1
 
-    print(f"Finished block {block}, saved into {save_block_path}")
+    print(f"Finished block {block} → saved into {save_block_path}")
 
 print(f"\nSummary: {processed_count} GIF clips processed into latents")

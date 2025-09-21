@@ -19,13 +19,24 @@ def get_blip_files(directory):
     files = [f for f in os.listdir(directory) if f.endswith(".txt")]
     return sorted(files, key=lambda x: int(re.findall(r'\d+', x)[0]))
 
+# Map raw video filenames to Block names
+BLOCK_MAP = {
+    "1st_10min": "Block1",
+    "2nd_10min": "Block2",
+    "3rd_10min": "Block3",
+    "4th_10min": "Block4",
+    "5th_10min": "Block5",
+    "6th_10min": "Block6",
+    "7th_10min": "Block7",
+}
+
 # -----------------------------
 # Ask user which BLIP caption files to process
 # -----------------------------
 all_blip_files = get_blip_files(RAW_BLIP_DIR)
 print("Available BLIP caption files:", all_blip_files)
 
-user_input = input("Enter BLIP caption files to process (comma separated, e.g. block1.txt,block2.txt): ")
+user_input = input("Enter BLIP caption files to process (comma separated, e.g. 1st_10min.txt,2nd_10min.txt): ")
 blip_list = [f.strip() for f in user_input.split(",") if f.strip() in all_blip_files]
 
 if not blip_list:
@@ -36,8 +47,9 @@ processed_count = 0
 # -----------------------------
 # Process selected caption files
 # -----------------------------
-for block_idx, blip_file in enumerate(blip_list, start=1):
-    block_name = f"Block{all_blip_files.index(blip_file) + 1}"
+for blip_file in blip_list:
+    block_key = os.path.splitext(blip_file)[0]  # e.g. "1st_10min"
+    block_name = BLOCK_MAP.get(block_key, block_key)
     block_save_dir = os.path.join(SAVE_DIR, block_name)
     os.makedirs(block_save_dir, exist_ok=True)
 
@@ -62,8 +74,14 @@ for block_idx, blip_file in enumerate(blip_list, start=1):
                 embedding = embedding / embedding.norm(dim=-1, keepdim=True)
             embedding = embedding.cpu().numpy()
 
-            save_path = os.path.join(block_save_dir, f"class{class_id+1:02d}_clip{clip_id+1:02d}.npy")
-            np.save(save_path, embedding)
+            base_name = f"class{class_id+1:02d}_clip{clip_id+1:02d}"
+
+            # save embedding as .npy (for training)
+            np.save(os.path.join(block_save_dir, base_name + ".npy"), embedding)
+
+            # save caption as .txt (for inspection/debugging)
+            with open(os.path.join(block_save_dir, base_name + ".txt"), "w") as ftxt:
+                ftxt.write(caption)
 
             processed_count += 1
 
