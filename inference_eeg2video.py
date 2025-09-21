@@ -143,7 +143,7 @@ def save_videos_grid(videos, path):
 if not os.path.exists(DE_TEST_DIR):
     raise RuntimeError(f"DE test folder does not exist: {DE_TEST_DIR}")
 
-# ---------------- Load test dataset ----------------
+# ---------------- Load test dataset using DE features ----------------
 test_ds = EEGVideoDataset(DE_TEST_DIR, TEST_VIDEO_DIR)
 
 if len(test_ds) == 0:
@@ -192,7 +192,7 @@ with open(txt_path, "r") as f:
     prompt_text = f.read().strip()
 
 for i, (eeg, vid) in enumerate(tqdm(test_loader, desc="Running EEG2Video inference")):
-    eeg = eeg.to(device)   # already [B, 310] DE features
+    eeg = eeg.to(device)   # [B, 310] DE features, already correct shape
     vid = vid.to(device)
 
     # ---------------- Generate Seq2Seq latent ----------------
