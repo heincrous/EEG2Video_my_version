@@ -216,24 +216,31 @@ pred_latents = pred_latents.to(torch.float16)
 # -------------------------
 # Run Semantic predictor → embeddings
 # -------------------------
-# Path to DE features for this clip
+# Path to DE features for this clip (310-dim)
 de_dir = os.path.join(BASE, "EEG_features", "DE_1per2s", subj, block)
-de_file = os.path.join(de_dir, clip_file)  # matches clip naming
+de_file = os.path.join(de_dir, clip_file)  # must exist in DE_1per2s
 
 if not os.path.exists(de_file):
     raise FileNotFoundError(f"DE feature file not found: {de_file}")
 
-# 1. Load DE features (should be shape (310,))
+# 1. Load DE features (could be (62,5) or (310,))
 de_features = np.load(de_file)
 
-# 2. Convert to tensor
-eeg_de = torch.tensor(de_features, dtype=torch.float32).unsqueeze(0).to(device)  # [1, 310]
+# Flatten if needed
+if de_features.ndim > 1:
+    de_features = de_features.reshape(-1)
 
-# 3. Run semantic predictor → embeddings (flattened [1, 59136])
+if de_features.shape[0] != 310:
+    raise ValueError(f"Expected 310 features, got {de_features.shape}")
+
+# 2. Convert to tensor [1,310]
+eeg_de = torch.tensor(de_features, dtype=torch.float32).unsqueeze(0).to(device)
+
+# 3. Run semantic predictor → [1,59136]
 with torch.no_grad():
-    eeg_embeds = semantic_model(eeg_de)  # [1, 59136]
+    eeg_embeds = semantic_model(eeg_de)
 
-# 4. Reshape into BLIP-style embeddings [1, 77, 768]
+# 4. Reshape into BLIP-style embeddings [1,77,768]
 eeg_embeds = eeg_embeds.view(1, 77, 768)
 
 # -------------------------
