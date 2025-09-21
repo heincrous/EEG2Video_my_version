@@ -269,15 +269,16 @@ with torch.no_grad():
 # Run diffusion pipeline
 # -------------------------
 with torch.no_grad():
-    eeg_embeds = eeg_embeds.to(torch.float16)
-    neg_eeg = eeg_tensor.mean(dim=1, keepdim=True).to(torch.float16)
+    eeg_embeds_fp16 = eeg_embeds.to(torch.float16)
+    neg_eeg_fp16 = eeg_tensor.mean(dim=1, keepdim=True).to(torch.float16)
+    pred_latents_fp16 = pred_latents.to(torch.float16)
 
     video = pipe(
         None,                           # model
-        eeg_embeds,                     # eeg
-        negative_eeg=neg_eeg,           # negative eeg
-        latents=pred_latents,           # seq2seq-predicted latents
-        video_length=pred_latents.shape[1],
+        eeg_embeds_fp16,                     # eeg
+        negative_eeg=neg_eeg_fp16,           # negative eeg
+        latents=pred_latents_fp16,           # seq2seq-predicted latents
+        video_length=pred_latents.shape[2],
         height=288,
         width=512,
         num_inference_steps=50,
