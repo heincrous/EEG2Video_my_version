@@ -395,18 +395,18 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
-from einops import rearrange
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from sklearn.preprocessing import StandardScaler
 
 # -----------------------
-# EEGNet embedding (authors’)
+# EEGNet embedding (authors’ design + dynamic flatten fix)
 # -----------------------
 class MyEEGNet_embedding(nn.Module):
     def __init__(self, d_model=128, C=62, T=200, F1=16, D=4, F2=16, cross_subject=False):
         super(MyEEGNet_embedding, self).__init__()
         self.drop_out = 0.25 if cross_subject else 0.5
+
         self.block_1 = nn.Sequential(
             nn.ZeroPad2d((31, 32, 0, 0)),
             nn.Conv2d(1, F1, kernel_size=(1, 64), bias=False),
@@ -428,7 +428,16 @@ class MyEEGNet_embedding(nn.Module):
             nn.AvgPool2d((1, 8)),
             nn.Dropout(self.drop_out)
         )
-        self.embedding = nn.Linear(48, d_model)
+
+        # determine flattened dimension automatically
+        with torch.no_grad():
+            dummy = torch.zeros(1, 1, C, T)
+            out = self.block_1(dummy)
+            out = self.block_2(out)
+            out = self.block_3(out)
+            flat_dim = out.view(1, -1).shape[1]
+
+        self.embedding = nn.Linear(flat_dim, d_model)
 
     def forward(self, x):
         x = self.block_1(x)
@@ -458,7 +467,7 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 # -----------------------
-# Transformer (authors’)
+# Transformer model (authors’)
 # -----------------------
 class myTransformer(nn.Module):
     def __init__(self, d_model=512):
@@ -481,20 +490,25 @@ class myTransformer(nn.Module):
         B = src.shape[0]
         src = self.eeg_embedding(src.reshape(B * src.shape[1], 1, 62, 200)).reshape(B, 7, -1)
         src = self.positional_encoding(src)
+
         tgt = tgt.reshape(B, tgt.shape[1], -1)
         tgt = self.img_embedding(tgt)
         tgt = self.positional_encoding(tgt)
+
         tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt.size(1)).to(tgt.device)
+
         enc_out = self.transformer_encoder(src)
+
         new_tgt = torch.zeros((B, 1, tgt.shape[2]), device=tgt.device)
         for i in range(6):
             dec_out = self.transformer_decoder(new_tgt, enc_out, tgt_mask=tgt_mask[:i+1, :i+1])
             new_tgt = torch.cat((new_tgt, dec_out[:, -1:, :]), dim=1)
+
         enc_out = torch.mean(enc_out, dim=1)
         return self.txtpredictor(enc_out), self.predictor(new_tgt).reshape(B, new_tgt.shape[1], 4, 36, 64)
 
 # -----------------------
-# Dataset (adapted, but same normalization as authors)
+# Dataset loader (with StandardScaler like authors)
 # -----------------------
 class EEGVideoDataset(Dataset):
     def __init__(self, eeg_dir, video_dir):
@@ -507,19 +521,17 @@ class EEGVideoDataset(Dataset):
                 if os.path.exists(eeg_file) and os.path.exists(vid_file):
                     self.samples.append((eeg_file, vid_file))
 
-        # fit StandardScaler on all EEGs
+        # fit StandardScaler across all EEG samples
         all_eeg = []
         for eeg_file, _ in self.samples:
-            eeg = np.load(eeg_file)  # (62, T)
-            windows = []
+            eeg = np.load(eeg_file)
+            segments = []
             for start in range(0, eeg.shape[1] - 200 + 1, 100):
-                windows.append(eeg[:, start:start+200])
-            if len(windows) >= 7:
-                windows = windows[:7]
-            while len(windows) < 7:
-                windows.append(np.zeros((62, 200)))
-            all_eeg.append(np.stack(windows, axis=0))
-        all_eeg = np.stack(all_eeg, axis=0)  # (N, 7, 62, 200)
+                segments.append(eeg[:, start:start+200])
+            while len(segments) < 7:
+                segments.append(np.zeros((62, 200)))
+            all_eeg.append(np.stack(segments[:7], axis=0))
+        all_eeg = np.stack(all_eeg, axis=0)
         b, s, c, t = all_eeg.shape
         flat = all_eeg.reshape(b, -1)
         self.scaler = StandardScaler().fit(flat)
@@ -529,21 +541,17 @@ class EEGVideoDataset(Dataset):
 
     def __getitem__(self, idx):
         eeg_file, vid_file = self.samples[idx]
-        eeg = np.load(eeg_file)  # (62, T)
-        vid = np.load(vid_file)  # (F, 4, 36, 64)
+        eeg = np.load(eeg_file)
+        vid = np.load(vid_file)
 
-        # segment EEG into 7 windows of 200
         segments = []
         for start in range(0, eeg.shape[1] - 200 + 1, 100):
             segments.append(eeg[:, start:start+200])
-        if len(segments) >= 7:
-            segments = segments[:7]
-        else:
-            while len(segments) < 7:
-                segments.append(np.zeros((62, 200)))
-        eeg = np.stack(segments, axis=0)  # (7, 62, 200)
+        while len(segments) < 7:
+            segments.append(np.zeros((62, 200)))
+        eeg = np.stack(segments[:7], axis=0)
 
-        # apply StandardScaler like authors
+        # apply StandardScaler
         eeg = eeg.reshape(1, -1)
         eeg = self.scaler.transform(eeg).reshape(7, 62, 200)
 
@@ -552,7 +560,7 @@ class EEGVideoDataset(Dataset):
         return eeg, vid
 
 # -----------------------
-# Training
+# Training loop
 # -----------------------
 if __name__ == "__main__":
     BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test"
