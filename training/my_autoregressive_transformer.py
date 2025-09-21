@@ -398,20 +398,18 @@ import torch.nn as nn
 from einops import rearrange
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from sklearn.preprocessing import StandardScaler
 
 # -----------------------------
 # User parameters
 # -----------------------------
-NUM_EPOCHS = 5  # <--- set number of epochs here
-
-LOG_FILE = "/content/drive/MyDrive/EEG2Video_data/processed/processed_log.txt"
+NUM_EPOCHS = 5  # <--- set epochs here
+EEG_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments/"
+LATENT_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/Video_latents/"
 CHECKPOINT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/"
-EEG_PATH = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments/sub1.npy"
-LATENT_PATH = "/content/drive/MyDrive/EEG2Video_data/processed/Video_latents/latents_sub1.npy"
+os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 # -----------------------------
-# Model definitions (unchanged)
+# Model definitions (same as before)
 # -----------------------------
 class MyEEGNet_embedding(nn.Module):
     def __init__(self, d_model=128, C=62, T=200, F1=16, D=4, F2=16, cross_subject=False):
@@ -491,29 +489,34 @@ class Dataset(torch.utils.data.Dataset):
 def loss(true, pred): return nn.MSELoss()(true, pred)
 
 # -----------------------------
-# Main
+# Data loading utility
 # -----------------------------
-if __name__ == "__main__":
-    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+def load_all_data(eeg_dir, latent_dir):
+    eeg_files = sorted([f for f in os.listdir(eeg_dir) if f.endswith(".npy")])
+    latent_files = []
+    for root, _, files in os.walk(latent_dir):
+        for f in files:
+            if f.endswith(".npy"):
+                latent_files.append(os.path.join(root, f))
+    latent_files = sorted(latent_files)
 
-    # Check processed log
-    required_tags = ["[SEGMENT]", "[VIDEO_LATENT]", "[BLIP]", "[META]"]
-    if not os.path.exists(LOG_FILE):
-        raise RuntimeError("processed_log.txt not found, cannot start training.")
-    with open(LOG_FILE, "r") as f:
-        log_content = f.read()
-    missing = [tag for tag in required_tags if tag not in log_content]
-    if missing:
-        raise RuntimeError(f"Missing processed steps in log: {missing}")
-    print("Processed log confirms:", required_tags)
-    print("Training will use EEG segments and video latents listed in Processed/.")
+    print("Found EEG files:", eeg_files)
+    print("Found latent files:", len(latent_files))
 
-    # Load processed data
-    eegdata = np.load(EEG_PATH)
-    latent_data = np.load(LATENT_PATH)
+    # Example: only using first subject EEG with all latent clips
+    eegdata = np.load(os.path.join(eeg_dir, eeg_files[0]))
+    latents = [np.load(f) for f in latent_files]
+    latent_data = np.stack(latents, axis=0)
+
     eegdata = torch.from_numpy(eegdata)
     latent_data = torch.from_numpy(latent_data)
+    return eegdata, latent_data
 
+# -----------------------------
+# Main training
+# -----------------------------
+if __name__ == "__main__":
+    eegdata, latent_data = load_all_data(EEG_DIR, LATENT_DIR)
     print("EEG shape:", eegdata.shape, "Latents shape:", latent_data.shape)
 
     dataset = Dataset(eegdata, latent_data)
