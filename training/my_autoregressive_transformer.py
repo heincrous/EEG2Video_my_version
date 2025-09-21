@@ -395,7 +395,6 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
-from einops import rearrange
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -409,7 +408,7 @@ CHECKPOINT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/"
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 # -----------------------------
-# Model definitions (same as before)
+# Model definitions
 # -----------------------------
 class MyEEGNet_embedding(nn.Module):
     def __init__(self, d_model=128, C=62, T=200, F1=16, D=4, F2=16, cross_subject=False):
@@ -491,16 +490,17 @@ def loss(true, pred): return nn.MSELoss()(true, pred)
 # -----------------------------
 # Data loading utility
 # -----------------------------
-def load_all_data(eeg_dir, latent_dir):
-    # Load EEG (first subject for now)
+def load_all_data(eeg_dir, latent_dir, window_size=100, stride=50):
+    # ---- EEG ----
     eeg_files = sorted([f for f in os.listdir(eeg_dir) if f.endswith(".npy")])
+    print("Found EEG files:", eeg_files)
     eeg_raw = np.load(os.path.join(eeg_dir, eeg_files[0]))  # (7,40,5,62,400)
     print("Raw EEG shape:", eeg_raw.shape)
 
-    # Flatten to clips
-    eeg_clips = eeg_raw.reshape(-1, 62, 400)  # (1400,62,400)
+    # Flatten to clips: (7*40*5, 62, 400) = (1400, 62, 400)
+    eeg_clips = eeg_raw.reshape(-1, 62, 400)
 
-    # Load latents
+    # ---- Video latents ----
     latent_files = sorted(
         os.path.join(root, f)
         for root, _, files in os.walk(latent_dir)
@@ -508,14 +508,37 @@ def load_all_data(eeg_dir, latent_dir):
     )
     print("Found latent files:", len(latent_files))
     latents = [np.load(f) for f in latent_files]
-    latent_data = np.stack(latents, axis=0)  # (N, frames, 4,36,64)
+    latent_data = np.stack(latents, axis=0)  # (N, frames, 4, 36, 64)
 
-    # Match lengths
+    # ---- Restrict EEG to number of latents ----
     num_latents = latent_data.shape[0]
-    eeg_clips = eeg_clips[:num_latents]
-    print(f"Using {num_latents} clip pairs")
+    eeg_clips = eeg_clips[:num_latents]  # (N, 62, 400)
 
-    return torch.from_numpy(eeg_clips).float(), torch.from_numpy(latent_data).float()
+    # ---- Segment each clip into windows (62,400 -> 7x(62,100)) ----
+    eeg_windowed = []
+    for clip in eeg_clips:
+        clip_windows = []
+        for start in range(0, clip.shape[-1] - window_size + 1, stride):
+            window = clip[:, start:start+window_size]  # (62,100)
+            clip_windows.append(window)
+        clip_windows = np.stack(clip_windows, axis=0)  # (7,62,100)
+        eeg_windowed.append(clip_windows)
+    eeg_proc = np.stack(eeg_windowed, axis=0)  # (N,7,62,100)
+
+    # ---- Sanity checks ----
+    print("Processed EEG shape:", eeg_proc.shape)
+    print("Latents shape:", latent_data.shape)
+    assert latent_data.ndim == 5, f"Latents should be 5D (N,frames,4,36,64), got {latent_data.shape}"
+    assert eeg_proc.ndim == 4, f"EEG should be 4D (N,7,62,100), got {eeg_proc.shape}"
+    assert eeg_proc.shape[0] == latent_data.shape[0], (
+        f"EEG/Latent count mismatch: {eeg_proc.shape[0]} vs {latent_data.shape[0]}"
+    )
+    print(f"Verified alignment: {eeg_proc.shape[0]} samples, EEG {eeg_proc.shape[1:]} ↔ Latent {latent_data.shape[1:]}")
+
+    # ---- Convert to torch ----
+    eeg_tensor = torch.from_numpy(eeg_proc).float()
+    latent_tensor = torch.from_numpy(latent_data).float()
+    return eeg_tensor, latent_tensor
 
 # -----------------------------
 # Main training
