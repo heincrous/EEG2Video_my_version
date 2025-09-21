@@ -159,21 +159,21 @@ from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
 # -----------------------
-# Model (authors’ MLP: DE -> BLIP embeddings)
+# Model (lighter MLP: DE -> BLIP embeddings)
 # -----------------------
 class SemanticPredictor(nn.Module):
-    def __init__(self, input_dim=310):
+    def __init__(self, input_dim=310, hidden_dim=4096):
         super(SemanticPredictor, self).__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(input_dim, 10000),
+            nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(10000, 10000),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(10000, 10000),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(10000, 10000),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(10000, 77 * 768)   # output matches BLIP embeddings
+            nn.Linear(hidden_dim, 77 * 768)   # output matches BLIP embeddings
         )
 
     def forward(self, eeg):
@@ -185,8 +185,6 @@ class SemanticPredictor(nn.Module):
 class EEGTextDataset(Dataset):
     def __init__(self, de_root, text_root):
         self.samples = []
-
-        # collect (DE_file, BLIP_file) pairs
         for subj in os.listdir(de_root):
             subj_path = os.path.join(de_root, subj)
             if not os.path.isdir(subj_path):
@@ -208,10 +206,9 @@ class EEGTextDataset(Dataset):
         # Fit StandardScaler across all EEG clips
         all_eeg = []
         for eeg_file, _ in self.samples:
-            eeg = np.load(eeg_file)        # (62,5)
-            eeg = eeg.reshape(-1)          # (310,)
+            eeg = np.load(eeg_file).reshape(-1)   # (310,)
             all_eeg.append(eeg)
-        all_eeg = np.stack(all_eeg, axis=0)  # (N,310)
+        all_eeg = np.stack(all_eeg, axis=0)       # (N,310)
         self.scaler = StandardScaler().fit(all_eeg)
 
     def __len__(self):
@@ -219,18 +216,15 @@ class EEGTextDataset(Dataset):
 
     def __getitem__(self, idx):
         eeg_file, txt_file = self.samples[idx]
-
-        eeg = np.load(eeg_file).reshape(-1)   # (310,)
+        eeg = np.load(eeg_file).reshape(-1)       # (310,)
         eeg = self.scaler.transform([eeg])[0]
-
-        text = np.load(txt_file).reshape(-1)  # (77*768,)
-
+        text = np.load(txt_file).reshape(-1)      # (77*768,)
         eeg = torch.tensor(eeg, dtype=torch.float32)
         text = torch.tensor(text, dtype=torch.float32)
         return eeg, text
 
 # -----------------------
-# Training loop
+# Training loop (with AMP)
 # -----------------------
 if __name__ == "__main__":
     BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/train"
@@ -242,7 +236,7 @@ if __name__ == "__main__":
 
     dataset = EEGTextDataset(de_dir, text_dir)
 
-    # Sanity check: confirm shapes
+    # Sanity check
     eeg, text = dataset[0]
     print("Sanity check:")
     print("EEG shape:", eeg.shape)   # torch.Size([310])
@@ -258,6 +252,8 @@ if __name__ == "__main__":
         optimizer, T_max=200 * len(dataloader)
     )
 
+    scaler = torch.cuda.amp.GradScaler()
+
     epochs = int(input("Enter number of epochs: "))
 
     for epoch in range(epochs):
@@ -266,10 +262,12 @@ if __name__ == "__main__":
         for eeg, text in dataloader:
             eeg, text = eeg.to(device), text.to(device)
             optimizer.zero_grad()
-            preds = model(eeg)
-            loss = F.mse_loss(preds, text)
-            loss.backward()
-            optimizer.step()
+            with torch.cuda.amp.autocast():
+                preds = model(eeg)
+                loss = F.mse_loss(preds, text)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             scheduler.step()
             epoch_loss += loss.item()
         print(f"Epoch {epoch+1}/{epochs} - Loss: {epoch_loss:.4f}")
