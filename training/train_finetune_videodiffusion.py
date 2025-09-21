@@ -421,7 +421,7 @@ from accelerate.utils import set_seed
 
 from diffusers import AutoencoderKL, DDPMScheduler, DDIMScheduler
 from diffusers.optimization import get_scheduler
-from diffusers.utils import is_xformers_available
+# from diffusers.utils import is_xformers_available  # Removed
 
 from transformers import CLIPTextModel, CLIPTokenizer
 
@@ -487,8 +487,9 @@ for name, module in unet.named_modules():
         for p in module.parameters():
             p.requires_grad = True
 
-if is_xformers_available():
-    unet.enable_xformers_memory_efficient_attention()
+# Optional xformers memory-efficient attention removed
+# if is_xformers_available():
+#     unet.enable_xformers_memory_efficient_attention()
 
 unet.enable_gradient_checkpointing()
 
@@ -583,4 +584,3 @@ if accelerator.is_main_process:
     )
     pipeline.save_pretrained(OUTPUT_DIR)
     print(f"Training complete. Saved to {OUTPUT_DIR}")
-
