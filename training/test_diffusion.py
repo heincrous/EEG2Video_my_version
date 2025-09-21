@@ -1,14 +1,14 @@
 import sys
 import os
-import torch  # <-- must be imported first
+import torch
 import numpy as np
 import imageio
 
-# ---------------- Add repo root ----------------
+# ---------------- Add repo root to Python path ----------------
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(repo_root)
 
-# ---------------- Imports from repo ----------------
+# ---------------- Imports ----------------
 from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
 from core_files.unet import UNet3DConditionModel
 from diffusers import AutoencoderKL, DDIMScheduler
@@ -22,12 +22,12 @@ SAVE_DIR = "/content/drive/MyDrive/EEG2Video_inference"
 os.makedirs(SAVE_DIR, exist_ok=True)
 VIDEO_LENGTH = 6
 
-# ---------------- INLINE GIF SAVE ----------------
+# ---------------- INLINE GIF SAVING ----------------
 def save_videos_grid(videos, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if isinstance(videos, torch.Tensor):
         videos = videos.cpu().numpy()
-    if videos.ndim == 5:
+    if videos.ndim == 5:  # [B, F, C, H, W]
         for i, video in enumerate(videos):
             frames = []
             for frame in video:
@@ -38,7 +38,7 @@ def save_videos_grid(videos, path):
                 frame = np.clip(frame*255,0,255).astype(np.uint8)
                 frames.append(frame)
             imageio.mimsave(f"{path}_{i}.gif", frames, fps=5)
-    elif videos.ndim == 4:
+    elif videos.ndim == 4:  # [F, C, H, W]
         frames = []
         for frame in videos:
             if frame.shape[0] == 1:
@@ -49,20 +49,19 @@ def save_videos_grid(videos, path):
             frames.append(frame)
         imageio.mimsave(path, frames, fps=5)
 
-# ---------------- LOAD UNET FIRST ----------------
+# ---------------- LOAD UNET ----------------
 unet_path = os.path.join(CHECKPOINT_DIR, "unet")
-unet = UNet3DConditionModel.from_pretrained_2d(unet_path, torch_dtype=torch.float16).to("cuda")
+unet = UNet3DConditionModel.from_pretrained_2d(unet_path).to("cuda")
+unet.half()  # cast to fp16 if desired
 
 # ---------------- LOAD PIPELINE ----------------
 pipeline = TuneAVideoPipeline.from_pretrained(
     CHECKPOINT_DIR,
-    unet=unet,               # pass the UNet manually
-    torch_dtype=torch.float16
+    unet=unet
 ).to("cuda")
-
 pipeline.enable_vae_slicing()
 
-# ---------------- FIND TEST CAPTIONS ----------------
+# ---------------- CROSS-CHECK TEST CAPTIONS ----------------
 test_blocks = sorted(os.listdir(TEST_SPLIT_DIR))
 test_captions = []
 
