@@ -594,7 +594,14 @@ for epoch in tqdm(range(1, num_epochs+1)):
     # -----------------------
     if accelerator.is_main_process:
         for i, prompt in enumerate(train_dataset.blip_paths):
-            sample = validation_pipeline(prompt, generator=torch.Generator(device=latents.device), latents=None).videos
+            # Determine video length for the pipeline
+            video_length = MAX_FRAMES  # or the number of frames in your latents if dynamic
+            sample = validation_pipeline(
+                prompt,
+                video_length=video_length,
+                latents=None,
+                generator=torch.Generator(device=latents.device)
+            ).videos
             save_videos_grid(sample, f"{OUTPUT_DIR}/samples/sample-{epoch}/{i}.gif")
 
 # -----------------------
