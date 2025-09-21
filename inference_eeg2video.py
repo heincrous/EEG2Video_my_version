@@ -100,15 +100,17 @@ from core_files.unet import UNet3DConditionModel
 BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/test"
 DE_TEST_DIR = os.path.join(BASE, "EEG_features/DE_1per2s")
 TEST_VIDEO_DIR = os.path.join(BASE, "Video_latents")
+PROCESSED_GIF_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/Video_Gif/Block1"  # ground-truth folder
 SAVE_DIR = "/content/drive/MyDrive/EEG2Video_inference"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 # ---------------- Load dataset ----------------
 test_ds = EEGVideoDataset(DE_TEST_DIR, TEST_VIDEO_DIR)
-test_loader = DataLoader(test_ds, batch_size=1, shuffle=True)  # random order
+test_loader = DataLoader(test_ds, batch_size=1, shuffle=True)
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ---------------- Load models ----------------
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 seq2seq_model = UNet3DConditionModel.from_pretrained_2d("/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output/unet").to(device)
 semantic_model = SemanticPredictor(input_dim=310).to(device)
 semantic_model.load_state_dict(torch.load("/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor.pt")["state_dict"])
@@ -130,12 +132,12 @@ def save_gif(frames, path, fps=4):
         gif_frames.append((f*255).astype(np.uint8))
     imageio.mimsave(path, gif_frames, fps=fps)
 
-# ---------------- Select one clip ----------------
-eeg_raw, vid = next(iter(test_loader))  # pick first clip
+# ---------------- Run for one clip ----------------
+eeg_raw, vid = next(iter(test_loader))
 eeg_seq = eeg_raw.to(device)
 eeg_flat = eeg_raw[:,0,:,:5].reshape(eeg_raw.shape[0], -1).to(device)
 
-# ---------------- Generate trained GIF ----------------
+# --- Trained GIF ---
 with torch.no_grad():
     semantic_embed = semantic_model(eeg_flat).view(eeg_flat.shape[0],77,768)
     b,f,c,h,w = vid.shape
@@ -149,18 +151,25 @@ with torch.no_grad():
 
 save_gif(trained_gif, os.path.join(SAVE_DIR, "trained.gif"))
 
-# ---------------- Generate random GIF ----------------
+# --- Random GIF ---
 random_latent = torch.randn_like(seq2seq_latent).unsqueeze(2)
 random_embed = torch.randn_like(semantic_embed)
 with torch.no_grad():
     random_gif = pipe(prompt_embeddings=random_embed, latents=random_latent,
                       video_length=6, height=288, width=512,
                       num_inference_steps=50, guidance_scale=12.5).videos
-
 save_gif(random_gif, os.path.join(SAVE_DIR, "random.gif"))
 
-# ---------------- Ground-truth GIF ----------------
-gt_latent = vid  # processed video latent for this clip
-save_gif(gt_latent, os.path.join(SAVE_DIR, "ground_truth.gif"))
-
-print("Saved: random.gif, trained.gif, ground_truth.gif")
+# --- Ground-truth GIF ---
+# Find the matching GIF file in the processed folder
+clip_name = os.path.basename(TEST_VIDEO_DIR)  # adjust to match your naming convention
+gt_gif_files = [f for f in os.listdir(PROCESSED_GIF_DIR) if clip_name in f]
+if gt_gif_files:
+    gt_gif_path = os.path.join(PROCESSED_GIF_DIR, gt_gif_files[0])
+    save_path = os.path.join(SAVE_DIR, "ground_truth.gif")
+    # Copy the existing GIF directly
+    import shutil
+    shutil.copy(gt_gif_path, save_path)
+    print(f"Saved ground-truth GIF: {save_path}")
+else:
+    print("Ground-truth GIF not found!")
