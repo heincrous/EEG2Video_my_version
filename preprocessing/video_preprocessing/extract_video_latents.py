@@ -72,11 +72,11 @@ def append_to_master_latents(new_latents):
     torch.save(updated, MASTER_LATENTS_FILE)
 
 # -----------------------------
-# Clear old master latents at start
+# Clear old master latents at start - use if you want to regenerate from scratch
 # -----------------------------
-if os.path.exists(MASTER_LATENTS_FILE):
-    os.remove(MASTER_LATENTS_FILE)
-    print(f"Old master latent file removed: {MASTER_LATENTS_FILE}")
+# if os.path.exists(MASTER_LATENTS_FILE):
+#     os.remove(MASTER_LATENTS_FILE)
+#     print(f"Old master latent file removed: {MASTER_LATENTS_FILE}")
 
 # Main loop
 block_folders = get_folders_in_directory(GIF_DIR)
