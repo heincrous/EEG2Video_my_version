@@ -212,6 +212,8 @@ with torch.no_grad():
     _, pred_latents = seq2seq(eeg_tensor, full_vid)
 pred_latents = pred_latents[:, :-1, :, :, :]  # remove padding
 pred_latents = pred_latents.to(torch.float16)
+# Fix shape for diffusion pipeline
+pred_latents = rearrange(pred_latents, "b f c h w -> b c f h w")
 
 # -------------------------
 # Run Semantic predictor → embeddings
