@@ -97,6 +97,7 @@ import torch
 import numpy as np
 import imageio
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 # ---------------- Add repo root ----------------
 repo_root = "/content/EEG2Video_my_version"
@@ -115,6 +116,7 @@ SEMANTIC_CKPT = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor
 DIFFUSION_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
 BLIP_CAP_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_captions"
 TEST_VIDEO_DIR = os.path.join(BASE, "test/Video_latents")
+DE_TEST_DIR = os.path.join(BASE, "EEG_features/DE_1per2s")  # precomputed DE features
 SAVE_DIR = "/content/drive/MyDrive/EEG2Video_inference"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
@@ -137,9 +139,9 @@ def save_videos_grid(videos, path):
         frames.append(np.clip(frame*255, 0, 255).astype(np.uint8))
     imageio.mimsave(path, frames, fps=4)
 
-# ---------------- Load test dataset ----------------
+# ---------------- Load test dataset (using DE features) ----------------
 test_ds = EEGVideoDataset(
-    os.path.join(BASE, "test/EEG_segments"),
+    os.path.join(DE_TEST_DIR),
     TEST_VIDEO_DIR
 )
 test_loader = DataLoader(test_ds, batch_size=1, shuffle=False)
@@ -184,15 +186,9 @@ block, txt_file, txt_path = test_captions[0]
 with open(txt_path, "r") as f:
     prompt_text = f.read().strip()
 
-for i, (eeg, vid) in enumerate(test_loader):
-    eeg = eeg.to(device)   # shape: [B, channels, time] or [B, 62, 200]
+for i, (eeg, vid) in enumerate(tqdm(test_loader, desc="Running EEG2Video inference")):
+    eeg = eeg.to(device)   # [B, 310] precomputed DE features
     vid = vid.to(device)
-
-    # ---------------- Process EEG for Semantic Predictor ----------------
-    # Average over temporal dimension to match training (310 features)
-    eeg_processed = eeg.mean(dim=2)  # [B, 62] if original [B, 62, 200]
-    eeg_processed = eeg_processed.reshape(eeg_processed.shape[0], 310)  # ensure 310 features
-    # Note: if your EEG preprocessing already outputs 310 DE features per clip, skip averaging
 
     # ---------------- Generate Seq2Seq latent ----------------
     b, f, c, h, w = vid.shape
@@ -204,8 +200,8 @@ for i, (eeg, vid) in enumerate(test_loader):
 
     # ---------------- Generate semantic embedding ----------------
     with torch.no_grad():
-        semantic_embed = semantic_model(eeg_processed)  # [B, 77*768]
-        semantic_embed = semantic_embed.view(eeg_processed.shape[0], 77, 768)  # [B, 77, 768]
+        semantic_embed = semantic_model(eeg)  # [B, 77*768]
+        semantic_embed = semantic_embed.view(eeg.shape[0], 77, 768)  # reshape for DANA
 
     # ---------------- Diffusion inference (DANA) ----------------
     with torch.no_grad():
