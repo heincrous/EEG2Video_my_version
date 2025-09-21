@@ -29,11 +29,15 @@ def update_processed_log(entry):
         with open(LOG_FILE, "a") as f:
             f.write(entry + "\n")
 
-# Load all meta arrays
+# Load all meta arrays, flatten if stored as 7 blocks
 meta_data = {}
 for fname in META_FILES:
     path = os.path.join(RAW_META_DIR, fname)
-    meta_data[fname.split(".")[0]] = np.load(path, allow_pickle=True)
+    arr = np.load(path, allow_pickle=True)
+    # If it's a list of 7 arrays (one per block), flatten to (1400,)
+    if arr.shape[0] == 7:
+        arr = np.concatenate(arr, axis=0)
+    meta_data[fname.split(".")[0]] = arr
 
 # Expect shape (1400,)
 total_clips = meta_data["All_video_label"].shape[0]
