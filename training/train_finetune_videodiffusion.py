@@ -412,7 +412,6 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 import imageio
-from einops import rearrange
 
 from accelerate import Accelerator
 from accelerate.logging import get_logger
@@ -421,14 +420,13 @@ from accelerate.utils import set_seed
 from diffusers import AutoencoderKL, DDPMScheduler, DDIMScheduler
 from transformers import CLIPTextModel, CLIPTokenizer
 
-# ----------------------- Fix sys.path for your repo
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core_files.unet import UNet3DConditionModel
 from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
 
-# ----------------------- Minimal save_videos_grid (inline)
+# ----------------------- Inline save_videos_grid
 def save_videos_grid(videos, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if isinstance(videos, torch.Tensor):
@@ -452,13 +450,13 @@ class LatentDataset(Dataset):
         return len(self.latent_paths)
 
     def __getitem__(self, idx):
-        latent = torch.from_numpy(np.load(self.latent_paths[idx]))  # 4D: frames, 4, 36, 64
+        latent = torch.from_numpy(np.load(self.latent_paths[idx]))  # (frames, 4, 36, 64)
         if self.max_frames is not None:
             latent = latent[:self.max_frames, :, :, :]
         prompt_id = torch.from_numpy(np.load(self.blip_paths[idx]))
         return {"pixel_values": latent, "prompt_ids": prompt_id}
 
-# ----------------------- Hardcoded paths & hyperparameters
+# ----------------------- Paths & hyperparameters
 PRETRAINED_MODEL_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 TRAIN_BASE = "/content/drive/MyDrive/EEG2Video_data/processed/Split_4train1test/train"
 OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/EEG2Video_diffusion_output"
@@ -532,15 +530,17 @@ for epoch in tqdm(range(1, NUM_EPOCHS+1)):
     unet.train()
     for step, batch in enumerate(train_dataloader):
         with accelerator.accumulate(unet):
-            pixel_values = batch["pixel_values"].unsqueeze(0).to(weight_dtype)
-            video_length = pixel_values.shape[1]
-            latents = rearrange(pixel_values, "(b f) c h w -> b c f h w", f=video_length)
+            pixel_values = batch["pixel_values"].to(weight_dtype)  # shape: [frames,4,36,64]
+            # Add batch dimension if missing
+            if pixel_values.ndim == 4:
+                pixel_values = pixel_values.unsqueeze(0)  # [1, frames, 4, 36, 64]
+            latents = pixel_values  # already 5D: [B, F, C, H, W]
 
             noise = torch.randn_like(latents)
             timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.shape[0],), device=latents.device).long()
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-            encoder_hidden_states = batch["prompt_ids"].unsqueeze(0).to(weight_dtype)
+            encoder_hidden_states = batch["prompt_ids"].unsqueeze(0).to(weight_dtype)  # [1, prompt_len]
             target = noise if noise_scheduler.prediction_type=="epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
 
             model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
@@ -552,10 +552,10 @@ for epoch in tqdm(range(1, NUM_EPOCHS+1)):
             optimizer.zero_grad()
         global_step += 1
 
-    # Validation: save first sample per epoch
+    # ----------------------- Validation
     if accelerator.is_main_process:
         for i, prompt_path in enumerate(train_dataset.blip_paths):
-            prompt = np.load(prompt_path)
+            prompt = torch.from_numpy(np.load(prompt_path)).to(weight_dtype)
             sample = validation_pipeline(prompt, generator=None, latents=None).videos
             save_videos_grid(sample, f"{OUTPUT_DIR}/samples/sample-{epoch}/{i}.gif")
 
