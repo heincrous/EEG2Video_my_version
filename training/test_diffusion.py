@@ -1,22 +1,28 @@
 import sys
 import os
-repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(repo_root)
-
 import torch
 import numpy as np
 import imageio
-# now the import will work
+
+# ---------------- Add repo root to path ----------------
+repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(repo_root)
+
+# ---------------- Imports ----------------
 from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
+from core_files.unet import UNet3DConditionModel
+from diffusers import AutoencoderKL, DDIMScheduler
+from transformers import CLIPTextModel
 
 # ---------------- CONFIG ----------------
-OUTPUT_DIR = "./EEG2Video_checkpoints/EEG2Video_diffusion_output"
+CHECKPOINT_DIR = "./EEG2Video_checkpoints/EEG2Video_diffusion_output"
 BLIP_CAP_DIR = "./EEG2Video_data/processed/BLIP_captions"
 TEST_SPLIT_DIR = "./EEG2Video_data/processed/Split_4train1test/test/Video_latents"
-SAVE_DIR = "./EEG2Video_inference"  # save to repo
+SAVE_DIR = "./EEG2Video_inference"
 os.makedirs(SAVE_DIR, exist_ok=True)
+VIDEO_LENGTH = 6  # must match training
 
-# ---------------- INLINE GIF SAVING FUNCTION ----------------
+# ---------------- INLINE GIF SAVING ----------------
 def save_videos_grid(videos, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if isinstance(videos, torch.Tensor):
@@ -25,11 +31,11 @@ def save_videos_grid(videos, path):
     if videos.ndim == 5:  # [B, F, C, H, W]
         for i, video in enumerate(videos):
             frames = []
-            for frame in video:  # [C, H, W]
+            for frame in video:
                 if frame.shape[0] == 1:
-                    frame = frame.squeeze(0)  # [H, W]
+                    frame = frame.squeeze(0)
                 else:
-                    frame = frame.transpose(1, 2, 0)  # [H, W, C]
+                    frame = frame.transpose(1, 2, 0)
                 frame = np.clip(frame * 255, 0, 255).astype(np.uint8)
                 frames.append(frame)
             imageio.mimsave(f"{path}_{i}.gif", frames, fps=5)
@@ -44,8 +50,19 @@ def save_videos_grid(videos, path):
             frames.append(frame)
         imageio.mimsave(path, frames, fps=5)
 
-# ---------------- LOAD PIPELINE ----------------
-pipeline = TuneAVideoPipeline.from_pretrained(OUTPUT_DIR)
+# ---------------- LOAD LOCAL MODELS ----------------
+unet = UNet3DConditionModel.from_pretrained_2d(os.path.join(CHECKPOINT_DIR, "unet"))
+vae = AutoencoderKL.from_pretrained(os.path.join(CHECKPOINT_DIR, "vae"))
+text_encoder = CLIPTextModel.from_pretrained(os.path.join(CHECKPOINT_DIR, "text_encoder"))
+scheduler = DDIMScheduler.from_pretrained(os.path.join(CHECKPOINT_DIR, "scheduler"))
+
+pipeline = TuneAVideoPipeline(
+    unet=unet,
+    vae=vae,
+    text_encoder=text_encoder,
+    scheduler=scheduler,
+    tokenizer=None  # set if needed
+)
 pipeline.enable_vae_slicing()
 pipeline.to("cuda")
 
@@ -73,7 +90,7 @@ for block, vf, txt_path in test_captions:
         prompt_text = f.read().strip()
 
     with torch.no_grad():
-        sample = pipeline(prompt_text, generator=None, latents=None, video_length=6).videos
+        sample = pipeline(prompt_text, generator=None, latents=None, video_length=VIDEO_LENGTH).videos
 
     save_path = os.path.join(SAVE_DIR, f"{block}_{vf.replace('.npy','.gif')}")
     save_videos_grid(sample, save_path)
