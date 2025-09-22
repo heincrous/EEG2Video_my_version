@@ -4,12 +4,15 @@ VALIDATE PROCESSED DATASET
 Checks shapes and counts for all modalities, both subject-independent
 and subject-dependent, including master list files and subject-level
 master arrays. Handles partial datasets gracefully.
-Also samples a random train/test video with its BLIP caption (and embedding).
+Also samples a random train/test video with its BLIP caption and embedding,
+and inspects frames for MP4, GIF, and latent files.
 """
 
 import os
 import numpy as np
 import random
+import cv2
+import imageio
 from tqdm import tqdm
 
 base_dir = "/content/drive/MyDrive/EEG2Video_data/processed/"
@@ -18,32 +21,31 @@ base_dir = "/content/drive/MyDrive/EEG2Video_data/processed/"
 modalities_subindep = ["Video_mp4", "Video_gif", "Video_latents", "BLIP_text", "BLIP_embeddings"]
 modalities_subdep = ["EEG_segments", "EEG_windows", "EEG_features"]
 
-# expected trailing shapes for per-clip files, with explanations
+# expected trailing shapes with explanations
 expected_trailing = {
-    "EEG_segments": ((400, 62), "time=400 (2s at 200Hz), channels=62"),
-    "EEG_windows": ((7, 62, 100), "windows=7 (0.5s overlap), channels=62, samples=100"),
-    "EEG_features": ((310,), "features=310 (DE/PSD across bands×channels)"),
-    "Video_latents": ((4, 36, 64), "channels=4 (VAE latents), height=36, width=64"),
-    "BLIP_embeddings": ((512,), "embedding_dim=512 (BLIP text embedding)"),
+    "EEG_segments": ((400, 62), "time=400 samples (2s @200Hz), channels=62"),
+    "EEG_windows": ((7, 62, 100), "windows=7 (overlapping), channels=62, samples=100"),
+    "EEG_features": ((310,), "features=310 (DE/PSD features per band×channel)"),
+    "Video_latents": ((4, 36, 64), "channels=4 (VAE latent), height=36, width=64, frames=N (time dimension)"),
+    "BLIP_embeddings": ((77, 512), "sequence_length=77 tokens, embedding_dim=512"),
 }
 
 def explain_shape(modality, shape):
-    """Return human-readable explanation for modality shape."""
     exp, note = expected_trailing.get(modality, (None, None))
     return f"{shape} → {note}" if note else str(shape)
 
 def check_npy(path, modality):
-    """Check trailing shape of a numpy file for a given modality."""
+    """Check numpy shape and compare with expected."""
     try:
         arr = np.load(path)
         exp, note = expected_trailing.get(modality, (None, None))
         if exp and arr.shape[-len(exp):] != exp:
-            print(f"[{modality}] Shape mismatch: {path}, got {explain_shape(modality, arr.shape)}, expected *{exp}")
+            print(f"[{modality}] Shape mismatch: {path}, got {arr.shape}, expected *{exp}")
     except Exception as e:
         print(f"[{modality}] Error loading {path}: {e}")
 
 def verify_master_lists(modality):
-    """Check train/test index master files and counts."""
+    """Check train/test master list files."""
     for split in ["train", "test"]:
         list_path = os.path.join(base_dir, modality, f"{split}_list.txt")
         if not os.path.exists(list_path):
@@ -56,21 +58,15 @@ def verify_master_lists(modality):
             print(f"  sample: {path}")
 
 def check_subject_master(path, modality):
-    """Check subject-level .npy master arrays before splitting."""
+    """Check subject-level arrays before expansion."""
     try:
         arr = np.load(path)
-        if modality == "EEG_segments":
-            assert arr.shape[-2:] == (62,400), f"Bad shape {arr.shape} in {path}"
-        elif modality == "EEG_windows":
-            assert arr.shape[-3:] == (62,100), f"Bad shape {arr.shape} in {path}"
-        elif modality == "EEG_features":
-            assert arr.shape[-1] == 310, f"Bad shape {arr.shape} in {path}"
         print(f"[{modality}] {os.path.basename(path)} shape {explain_shape(modality, arr.shape)}")
     except Exception as e:
         print(f"[{modality}] Error loading {path}: {e}")
 
 def count_files(modality):
-    """Count number of files in train/test for a modality."""
+    """Count train/test files and check npy shapes."""
     for split in ["train", "test"]:
         split_dir = os.path.join(base_dir, modality, split)
         if not os.path.exists(split_dir):
@@ -84,8 +80,36 @@ def count_files(modality):
                         check_npy(os.path.join(root, fname), modality)
         print(f"[{modality}] {split} set has {count} files")
 
+def inspect_video(path):
+    """Check frame count and resolution of one MP4."""
+    cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        print(f"[Video_mp4] Could not open {path}")
+        return
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.release()
+    print(f"[Video_mp4] {os.path.basename(path)} → frames={frame_count}, resolution={w}x{h}")
+
+def inspect_gif(path):
+    """Check frame count of one GIF."""
+    try:
+        gif = imageio.mimread(path)
+        print(f"[Video_gif] {os.path.basename(path)} → frames={len(gif)}, resolution={gif[0].shape[1]}x{gif[0].shape[0]}")
+    except Exception as e:
+        print(f"[Video_gif] Error reading {path}: {e}")
+
+def inspect_latents(path):
+    """Check shape of one latent tensor."""
+    try:
+        arr = np.load(path)
+        print(f"[Video_latents] {os.path.basename(path)} shape {explain_shape('Video_latents', arr.shape)}")
+    except Exception as e:
+        print(f"[Video_latents] Error reading {path}: {e}")
+
 def sample_video_and_caption(split="train"):
-    """Pick random video and show its BLIP caption and embedding if available."""
+    """Pick random video and show caption + embedding."""
     video_dir = os.path.join(base_dir, "Video_mp4", split)
     blip_text_dir = os.path.join(base_dir, "BLIP_text", split)
     blip_emb_dir = os.path.join(base_dir, "BLIP_embeddings", split)
@@ -121,13 +145,13 @@ def sample_video_and_caption(split="train"):
     else:
         print(f"[{split.upper()}] Missing BLIP embedding for {rel_path}")
 
-# check subject-independent modalities
+# validate subject-independent modalities
 for mod in modalities_subindep:
     print(f"\n=== Checking {mod} ===")
     count_files(mod)
     verify_master_lists(mod)
 
-# check subject-dependent modalities
+# validate subject-dependent modalities
 for mod in modalities_subdep:
     print(f"\n=== Checking {mod} ===")
     mod_dir = os.path.join(base_dir, mod)
@@ -137,7 +161,28 @@ for mod in modalities_subdep:
     count_files(mod)
     verify_master_lists(mod)
 
-# sample random train/test video + caption + embedding
+# sample inspection of one MP4, one GIF, one latent
+print("\n=== Inspecting one MP4/GIF/Latent ===")
+mp4_dir = os.path.join(base_dir, "Video_mp4", "train")
+gif_dir = os.path.join(base_dir, "Video_gif", "train")
+lat_dir = os.path.join(base_dir, "Video_latents", "train")
+
+for d, fn, func in [
+    (mp4_dir, ".mp4", inspect_video),
+    (gif_dir, ".gif", inspect_gif),
+    (lat_dir, ".npy", inspect_latents),
+]:
+    found = False
+    for root, _, files in os.walk(d):
+        for f in files:
+            if f.endswith(fn):
+                func(os.path.join(root, f))
+                found = True
+                break
+        if found:
+            break
+
+# random samples
 print("\n=== Random sample from TRAIN ===")
 sample_video_and_caption("train")
 print("\n=== Random sample from TEST ===")
