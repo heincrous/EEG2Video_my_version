@@ -1,90 +1,94 @@
+"""
+ALIGN BLIP CAPTIONS TO CLIPS
+------------------------------
+Input:
+  raw/BLIP-caption/1st_10min.txt ... 7th_10min.txt
+
+Process:
+  - Each line = caption for one 2s clip
+  - Use GT_LABEL to remap randomized order → class indices
+  - Save plain text
+  - Tokenize + encode with CLIP
+  - Save embeddings [77,768]
+
+Output:
+  processed/BLIP_text/BlockY/classYY_clipZZ.txt
+  processed/BLIP_embeddings/BlockY/classYY_clipZZ.npy
+"""
+
+# Pseudocode steps:
+# 1. Read raw caption file
+# 2. Remap lines → classYY_clipZZ order
+# 3. Save caption string in BLIP_text/
+# 4. Encode caption → [77,768] embedding
+# 5. Save embedding in BLIP_embeddings/
+
 import os
-import re
-import torch
 import numpy as np
-from transformers import BertTokenizer, BertModel
-from gt_label import GT_LABEL
+from tqdm import tqdm
+from transformers import CLIPTokenizer, CLIPTextModel
+import torch
 
-# CONFIG
-RAW_BLIP_DIR = "/content/drive/MyDrive/EEG2Video_data/raw/BLIP-caption/"
-EMB_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/"
-CAP_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_captions/"
+# paths
+caption_dir = "/content/drive/MyDrive/EEG2Video_data/raw/BLIP-caption/"
+out_text_dir = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/"
+out_embed_dir = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/"
+gt_label_path = "./core_files/gt_label.npy"
 
+os.makedirs(out_text_dir, exist_ok=True)
+os.makedirs(out_embed_dir, exist_ok=True)
+
+# load GT_LABEL [7,40,5] zero-indexed
+GT_LABEL = np.load(gt_label_path)
+
+# load CLIP model + tokenizer
 device = "cuda" if torch.cuda.is_available() else "cpu"
-
-# Load BLIP text encoder (BERT backbone)
-tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-text_encoder = BertModel.from_pretrained("bert-base-uncased").to(device)
+tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
+text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
 text_encoder.eval()
 
-os.makedirs(EMB_DIR, exist_ok=True)
-os.makedirs(CAP_DIR, exist_ok=True)
+# process block caption files
+for block_id in range(7):
+    fname = f"{block_id+1}th_10min.txt"
+    fpath = os.path.join(caption_dir, fname)
+    if not os.path.exists(fpath):
+        continue
 
-def get_blip_files(directory):
-    files = [f for f in os.listdir(directory) if f.endswith(".txt")]
-    return sorted(files, key=lambda x: int(re.findall(r'\d+', x)[0]))
+    with open(fpath, "r") as f:
+        captions = f.readlines()
+    captions = [c.strip() for c in captions]
 
-BLOCK_MAP = {
-    "1st_10min": "Block1",
-    "2nd_10min": "Block2",
-    "3rd_10min": "Block3",
-    "4th_10min": "Block4",
-    "5th_10min": "Block5",
-    "6th_10min": "Block6",
-    "7th_10min": "Block7",
-}
+    # create block folders
+    text_block_dir = os.path.join(out_text_dir, f"Block{block_id+1}")
+    embed_block_dir = os.path.join(out_embed_dir, f"Block{block_id+1}")
+    os.makedirs(text_block_dir, exist_ok=True)
+    os.makedirs(embed_block_dir, exist_ok=True)
 
-all_blip_files = get_blip_files(RAW_BLIP_DIR)
-print("Available BLIP caption files:", all_blip_files)
-
-user_input = input("Enter BLIP caption files to process (comma separated, e.g. 1st_10min.txt,2nd_10min.txt): ")
-blip_list = [f.strip() for f in user_input.split(",") if f.strip() in all_blip_files]
-
-if not blip_list:
-    raise ValueError("No valid BLIP caption files selected!")
-
-processed_count = 0
-
-for blip_file in blip_list:
-    block_key = os.path.splitext(blip_file)[0]
-    block_name = BLOCK_MAP.get(block_key, block_key)
-    block_idx = int(block_name.replace("Block", "")) - 1
-
-    block_emb_dir = os.path.join(EMB_DIR, block_name)
-    block_cap_dir = os.path.join(CAP_DIR, block_name)
-    os.makedirs(block_emb_dir, exist_ok=True)
-    os.makedirs(block_cap_dir, exist_ok=True)
-
-    print(f"\nProcessing {blip_file} -> {block_name}")
-
-    with open(os.path.join(RAW_BLIP_DIR, blip_file), "r") as f:
-        lines = [line.strip() for line in f.readlines() if line.strip()]
-
-    if len(lines) != 200:
-        print(f"Warning: {blip_file} has {len(lines)} captions (expected 200)")
-
-    for class_pos in range(40):
-        true_class = GT_LABEL[block_idx, class_pos]
+    # loop classes/clips
+    for class_id in tqdm(range(40), desc=f"Block {block_id+1}"):
         for clip_id in range(5):
-            idx = class_pos * 5 + clip_id
-            if idx >= len(lines):
-                continue
-            caption = lines[idx]
+            # get index from GT_LABEL
+            idx = GT_LABEL[block_id, class_id, clip_id]
+            caption = captions[idx]
+
+            # save text
+            text_path = os.path.join(text_block_dir, f"class{class_id:02d}_clip{clip_id+1:02d}.txt")
+            with open(text_path, "w") as f:
+                f.write(caption)
+
+            # tokenize + encode
+            tokens = tokenizer(
+                caption,
+                padding="max_length",
+                truncation=True,
+                max_length=77,
+                return_tensors="pt"
+            ).to(device)
 
             with torch.no_grad():
-                inputs = tokenizer(caption, return_tensors="pt", padding="max_length", max_length=77, truncation=True).to(device)
-                outputs = text_encoder(**inputs)
-                embedding = outputs.last_hidden_state.squeeze(0).cpu().numpy()  # (77,768)
+                emb = text_encoder(**tokens).last_hidden_state  # [1,77,768]
 
-            base_name = f"class{true_class:02d}_clip{clip_id+1:02d}"
-
-            np.save(os.path.join(block_emb_dir, base_name + ".npy"), embedding)
-
-            with open(os.path.join(block_cap_dir, base_name + ".txt"), "w") as ftxt:
-                ftxt.write(caption)
-
-            processed_count += 1
-
-    print(f"Finished {blip_file}, saved {processed_count} embeddings so far")
-
-print(f"\nSummary: {processed_count} captions embedded")
+            # save embedding
+            emb = emb.squeeze(0).cpu().numpy()  # [77,768]
+            embed_path = os.path.join(embed_block_dir, f"class{class_id:02d}_clip{clip_id+1:02d}.npy")
+            np.save(embed_path, emb)

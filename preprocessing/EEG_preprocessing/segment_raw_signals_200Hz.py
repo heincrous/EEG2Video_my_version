@@ -1,110 +1,89 @@
-# import numpy as np
-# import os
-# from tqdm import tqdm
+"""
+SEGMENT RAW EEG INTO CLIP-ALIGNED SEGMENTS
+------------------------------------------
+Input:
+  raw/EEG/subX.npy, subX_session2.npy ...
+  Sampling rate = 200 Hz
+  Channels      = 62
+  Video clip length = 2 s → 400 samples
 
-# # segment a EEG data numpy array with the shape of (7 * 62 * 520s*fre) into 2-sec EEG segments
-# # segment it into a new array with the shape of (7 * 40 * 5 * 62 * 2s*fre), 
-# # meaning 7 blocks, 40 concepts, 5 video clips, 62 channels, and 2s*fre time-points.
+Process:
+  - Use GT_LABEL to align EEG stream with video clip order.
+  - For each video clip, cut out the corresponding [400,62] EEG slice.
+  - Ensure each slice is stored under the correct Block and Class.
 
-# fre = 200
+Output:
+  processed/EEG_segments/subX/BlockY/classYY_clipZZ.npy
+    Shape = [400,62]
+"""
 
-# def get_files_names_in_directory(directory):
-#     files_names = []
-#     for root, _, filenames in os.walk(directory):
-#         for filename in filenames:
-#             files_names.append(filename)
-#     return files_names
+# Pseudocode steps:
+# 1. Load raw EEG file (subX.npy or subX_session2.npy)
+# 2. For each video clip in GT_LABEL:
+#     a. Find start index in EEG stream
+#     b. Slice 400 samples × 62 channels
+#     c. Verify shape = [400,62]
+#     d. Save as processed/EEG_segments/subX/BlockY/classYY_clipZZ.npy
+#3. Repeat for all clips and subjects
 
-# sub_list = get_files_names_in_directory("./data/Rawf_200Hz/")
-
-# for subname in sub_list:
-#     npydata = np.load('./data/Rawf_200Hz/' + subname)
-
-#     save_data = np.empty((0, 40, 5, 62, 2*fre))
-
-#     for block_id in range(7):
-#         print("block: ", block_id)
-#         now_data = npydata[block_id]
-#         l = 0
-#         block_data = np.empty((0, 5, 62, 2*fre))
-#         for class_id in tqdm(range(40)):
-#             l += (3 * fre)
-#             class_data = np.empty((0, 62, 2*fre))
-#             for i in range(5):
-#                 class_data = np.concatenate((class_data, now_data[:, l : l + 2*fre].reshape(1, 62, 2*fre)))
-#                 l += (2 * fre)
-#             block_data = np.concatenate((block_data, class_data.reshape(1, 5, 62, 2*fre)))
-#         save_data = np.concatenate((save_data, block_data.reshape(1, 40, 5, 62, 2*fre)))
-
-#     np.save('./data/Segmented_Rawf_200Hz_2s/' + subname, save_data)
-
-# ---------------------------------------------------------------------------------------------------------------
-# NEW VERSION
-# ---------------------------------------------------------------------------------------------------------------
-import numpy as np
 import os
-import re
+import numpy as np
 from tqdm import tqdm
-from gt_label import GT_LABEL   # <-- import the ground truth order
 
-fre = 200  # sampling frequency
+fre = 200
+segment_len = 2 * fre  # 400 samples
+channels = 62
 
-# CONFIG
-RAW_DIR = "/content/drive/MyDrive/EEG2Video_data/raw/EEG/"
-SAVE_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments/"
+# paths
+raw_dir = "/content/drive/MyDrive/EEG2Video_data/raw/EEG/"
+out_dir = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments/"
+gt_label_path = "./core_files/gt_label.npy"  # local in repo
 
-os.makedirs(SAVE_DIR, exist_ok=True)
+# load GT_LABEL (shape [7,40,5]) – zero-indexed
+GT_LABEL = np.load(gt_label_path)
 
-def get_files_names_in_directory(directory):
-    files = [f for f in os.listdir(directory) if f.endswith(".npy")]
-    return sorted(files, key=lambda x: int(re.findall(r'\d+', x)[0]))
+# list subject files
+all_files = [f for f in os.listdir(raw_dir) if f.endswith(".npy")]
+print("Available subject files:")
+for i, f in enumerate(all_files):
+    print(f"{i}: {f}")
 
-# -----------------------------
-# Ask user what to process
-# -----------------------------
-all_subjects = get_files_names_in_directory(RAW_DIR)
-print("Available subject files:", all_subjects)
+# user chooses which subjects
+chosen = input("Enter indices of subjects to process (comma separated, 'all' for all): ").strip()
+if chosen.lower() == "all":
+    selected_files = all_files
+else:
+    idxs = [int(x) for x in chosen.split(",")]
+    selected_files = [all_files[i] for i in idxs]
 
-user_input = input("Enter subject files to process (comma separated, e.g. sub1.npy,sub2.npy): ")
-sub_list = [f.strip() for f in user_input.split(",") if f.strip() in all_subjects]
+# process each subject
+for subj_file in selected_files:
+    subj_name = subj_file.replace(".npy", "")
+    os.makedirs(out_dir, exist_ok=True)
 
-if not sub_list:
-    raise ValueError("No valid subjects selected!")
+    eeg_data = np.load(os.path.join(raw_dir, subj_file))  # shape [7,62,T]
 
-processed_count = 0
-
-for subname in sub_list:
-    print(f"\nProcessing {subname} ...")
-    npydata = np.load(os.path.join(RAW_DIR, subname))  # shape: (7, 62, 104000)
-
-    # Create subject folder
-    subject_save_dir = os.path.join(SAVE_DIR, subname.replace(".npy", ""))
-    os.makedirs(subject_save_dir, exist_ok=True)
+    # container for subject: [7,40,5,62,400]
+    save_data = np.empty((0, 40, 5, channels, segment_len))
 
     for block_id in range(7):
-        block_name = f"Block{block_id+1}"
-        block_save_dir = os.path.join(subject_save_dir, block_name)
-        os.makedirs(block_save_dir, exist_ok=True)
+        now_data = eeg_data[block_id]  # [62,T]
+        block_data = np.empty((0, 5, channels, segment_len))
 
-        now_data = npydata[block_id]  # (62, 104000)
-        l = 0
-
-        for class_pos in tqdm(range(40), desc=f"{subname} {block_name}"):
-            true_class = GT_LABEL[block_id, class_pos]  # use GT_LABEL mapping
-            l += (3 * fre)  # skip 3s rest
+        for class_id in tqdm(range(40), desc=f"{subj_name} Block {block_id+1}"):
+            class_data = np.empty((0, channels, segment_len))
             for clip_id in range(5):
-                clip_data = now_data[:, l:l+2*fre]  # (62, 400)
-                l += (2 * fre)
+                start_idx = GT_LABEL[block_id, class_id, clip_id]
+                end_idx = start_idx + segment_len
 
-                save_name = f"class{true_class:02d}_clip{clip_id+1:02d}.npy"
-                save_path = os.path.join(block_save_dir, save_name)
+                eeg_slice = now_data[:, start_idx:end_idx]          # [62,400]
+                eeg_slice = eeg_slice.reshape(1, channels, segment_len)
+                class_data = np.concatenate((class_data, eeg_slice))
+            block_data = np.concatenate((block_data, class_data.reshape(1, 5, channels, segment_len)))
 
-                # ensure parent directory exists (extra safety)
-                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        save_data = np.concatenate((save_data, block_data.reshape(1, 40, 5, channels, segment_len)))
 
-                np.save(save_path, clip_data)
-
-    processed_count += 1
-    print(f"Finished {subname}, saved into {subject_save_dir}")
-
-print(f"\nSummary: {processed_count} subjects processed")
+    # save subject-level .npy
+    save_path = os.path.join(out_dir, subj_name + ".npy")
+    np.save(save_path, save_data)
+    print(f"Saved {save_path}, shape={save_data.shape}")

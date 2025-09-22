@@ -1,82 +1,100 @@
+"""
+ENCODE MP4 CLIPS INTO VIDEO LATENTS (VAE)
+------------------------------------------
+Input:
+  processed/Video_mp4/BlockY/classYY_clipZZ.mp4
+    Each clip = 48 frames @ 24 fps, 512x512
+
+Process:
+  - Load clip frames
+  - Optionally downsample to 24 frames (to match TuneMultiVideoDataset)
+  - Encode each frame with Stable Diffusion VAE
+  - Latent per frame = [4,36,64]
+  - Stack into sequence [N,4,36,64]
+    N = 48 if full, or 24 if subsampled
+
+Output:
+  processed/Video_latents/BlockY/classYY_clipZZ.npy
+    Shape = [N,4,36,64]
+"""
+
+# Pseudocode steps:
+# 1. Load 2s MP4 clip
+# 2. Resize to 512x512
+# 3. Extract frames
+# 4. Encode each frame using AutoencoderKL
+# 5. Save stacked latent array
+
 import os
-import torch
+import cv2
 import numpy as np
+import torch
 from tqdm import tqdm
-from PIL import Image
-import imageio
 from diffusers import AutoencoderKL
-import torch.nn.functional as F
 
-# CONFIG
-GIF_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/Video_Gif/"
-SAVE_DIR = "/content/drive/MyDrive/EEG2Video_data/processed/Video_latents/"
+# paths
+in_dir = "/content/drive/MyDrive/EEG2Video_data/processed/Video_mp4/"
+out_dir = "/content/drive/MyDrive/EEG2Video_data/processed/Video_latents/"
+os.makedirs(out_dir, exist_ok=True)
 
+# load pretrained Stable Diffusion VAE
 device = "cuda" if torch.cuda.is_available() else "cpu"
-
-# Load Stable Diffusion VAE
-vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="vae")
-vae = vae.to(device)
+vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="vae").to(device)
 vae.eval()
 
-os.makedirs(SAVE_DIR, exist_ok=True)
+# parameters
+target_size = (512, 512)
+fps = 24
+subsample = True   # set False if you want all 48 frames
 
-def get_block_folders(directory):
-    return sorted([f for f in os.listdir(directory) if os.path.isdir(os.path.join(directory, f))])
+for block in os.listdir(in_dir):
+    block_path = os.path.join(in_dir, block)
+    if not os.path.isdir(block_path):
+        continue
 
-def encode_gif_to_latent(gif_path):
-    frames = []
-    gif = imageio.mimread(gif_path)
-    for frame in gif:
-        img = Image.fromarray(frame)
-        img = img.resize((512, 512))
-        img = np.array(img).astype(np.float32) / 255.0
-        img = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0)
-        frames.append(img)
-    x = torch.cat(frames, dim=0).to(device)  # (frames,3,512,512)
-    x = 2.0 * x - 1.0
-    with torch.no_grad():
-        posterior = vae.encode(x).latent_dist
-        latents = posterior.sample() * 0.18215  # (frames,4,64,64)
+    out_block = os.path.join(out_dir, block)
+    os.makedirs(out_block, exist_ok=True)
 
-    # Downsample (4,64,64) -> (4,36,64) for consistency
-    latents = F.interpolate(latents, size=(36, 64), mode="bilinear", align_corners=False)
+    for fname in tqdm(os.listdir(block_path), desc=f"Encoding {block}"):
+        if not fname.endswith(".mp4"):
+            continue
 
-    return latents.cpu().numpy()
+        video_path = os.path.join(block_path, fname)
+        cap = cv2.VideoCapture(video_path)
 
-# -----------------------------
-# Ask user which blocks to process
-# -----------------------------
-all_blocks = get_block_folders(GIF_DIR)
-print("Available blocks:", all_blocks)
+        frames = []
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame = cv2.resize(frame, target_size, interpolation=cv2.INTER_LINEAR)
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frames.append(frame)
+        cap.release()
 
-user_input = input("Enter blocks to process (comma separated, e.g. Block1,Block2): ")
-block_list = [b.strip() for b in user_input.split(",") if b.strip() in all_blocks]
+        # convert to tensor [B,3,512,512]
+        frames = np.stack(frames, axis=0).astype(np.float32) / 255.0
+        frames = torch.from_numpy(frames).permute(0,3,1,2).to(device)
 
-if not block_list:
-    raise ValueError("No valid blocks selected!")
+        # optional subsample to 24 frames
+        if subsample and frames.shape[0] == 48:
+            idxs = np.linspace(0, 47, 24, dtype=int)
+            frames = frames[idxs]
 
-processed_count = 0
-first_shape_printed = False
+        # encode frames
+        with torch.no_grad():
+            latents = []
+            for i in range(frames.shape[0]):
+                f = frames[i].unsqueeze(0) * 2 - 1   # scale to [-1,1]
+                latent = vae.encode(f).latent_dist.sample()
+                latent = latent * 0.18215            # SD scaling factor
+                latents.append(latent)
+            latents = torch.cat(latents, dim=0)      # [N,4,64,64]
 
-for block in block_list:
-    block_path = os.path.join(GIF_DIR, block)
-    save_block_path = os.path.join(SAVE_DIR, block)
-    os.makedirs(save_block_path, exist_ok=True)
+        # resize spatial dimension to [36,64] (to match paper)
+        latents = torch.nn.functional.interpolate(latents, size=(36,64), mode="bilinear")
 
-    gif_files = sorted([f for f in os.listdir(block_path) if f.endswith(".gif")])
-
-    for gif_file in tqdm(gif_files, desc=f"Encoding {block}"):
-        gif_path = os.path.join(block_path, gif_file)
-        latents = encode_gif_to_latent(gif_path)
-
-        if not first_shape_printed:
-            print(f"Example latent shape for {gif_file}: {latents.shape}")
-            first_shape_printed = True
-
-        save_path = os.path.join(save_block_path, gif_file.replace(".gif", ".npy"))
+        # save
+        latents = latents.cpu().numpy()
+        save_path = os.path.join(out_block, fname.replace(".mp4",".npy"))
         np.save(save_path, latents)
-        processed_count += 1
-
-    print(f"Finished block {block} → saved into {save_block_path}")
-
-print(f"\nSummary: {processed_count} GIF clips processed into latents")
