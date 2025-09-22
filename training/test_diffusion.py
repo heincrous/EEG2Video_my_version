@@ -1,48 +1,49 @@
-import os
-import torch
-import imageio
-
-from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
+import os, sys, random, torch, imageio
+from einops import rearrange
 from diffusers import DDIMScheduler
 
-# paths
-model_dir = "/content/drive/MyDrive/EEG2Video_outputs"
-text_list_path = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/test_list.txt"
-save_dir = "/content/drive/MyDrive/EEG2Video_results"
+# === PATH SETUP ===
+repo_root = "/content/EEG2Video_my_version"
+sys.path.append(os.path.join(repo_root, "pipelines"))
+
+from pipeline_tuneavideo import TuneAVideoPipeline
+
+# === DIRECTORIES ===
+pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
+trained_output_dir    = "/content/drive/MyDrive/EEG2Video_outputs"
+test_text_list        = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/test_list.txt"
+save_dir              = os.path.join(trained_output_dir, "test_samples")
 os.makedirs(save_dir, exist_ok=True)
 
-# load pipeline
+# === LOAD PIPELINE ===
 pipe = TuneAVideoPipeline.from_pretrained(
-    model_dir,
-    torch_dtype=torch.float16
-).to("cuda")
-pipe.scheduler = DDIMScheduler.from_pretrained(model_dir, subfolder="scheduler")
+    trained_output_dir,
+    scheduler=DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler"),
+)
 pipe.enable_vae_slicing()
+pipe = pipe.to("cuda")
 
-# pick a test prompt
-with open(text_list_path) as f:
-    prompts = [line.strip() for line in f if line.strip()]
+# === PICK RANDOM PROMPT ===
+with open(test_text_list, "r") as f:
+    test_prompts = [line.strip() for line in f]
 
-idx = 0  # choose which test clip to use, 0 = first
-prompt_path = prompts[idx]
-with open(prompt_path, "r") as f:
-    prompt_text = f.read().strip()
+prompt = random.choice(test_prompts)
+print("Chosen prompt:", prompt)
 
-print("=== Test Sample ===")
-print("Clip:", prompt_path)
-print("Caption:", prompt_text)
+# === GENERATE VIDEO ===
+generator = torch.Generator(device="cuda").manual_seed(42)
 
-# generate video
-generator = torch.Generator("cuda").manual_seed(42)
-video = pipe(
-    prompt_text,
-    num_inference_steps=50,
+result = pipe(
+    prompt,
+    video_length=24,   # set to 24 or 48 depending on how your latents were made
     generator=generator,
-).videos  # [B, F, C, H, W]
+)
 
-# convert to mp4
-video = (video[0].permute(0, 2, 3, 1).cpu().numpy() * 255).astype("uint8")  # [F, H, W, C]
-save_path = os.path.join(save_dir, f"test_sample_{idx}.mp4")
-imageio.mimwrite(save_path, video, fps=8, quality=8, format="mp4")
+video_tensor = result.videos  # [1, f, c, h, w]
 
-print(f"Saved generated video to {save_path}")
+# === SAVE MP4 ===
+frames = (video_tensor[0].permute(0,2,3,1).cpu().numpy() * 255).astype("uint8")
+mp4_path = os.path.join(save_dir, "sample_test.mp4")
+imageio.mimsave(mp4_path, frames, fps=8)
+
+print("Video saved to:", mp4_path)

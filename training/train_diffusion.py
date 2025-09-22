@@ -14,29 +14,23 @@ import torch.utils.checkpoint
 import diffusers
 import transformers
 from accelerate import Accelerator
-from accelerate.logging import get_logger
 from accelerate.utils import set_seed
 from diffusers import AutoencoderKL, DDPMScheduler, DDIMScheduler
 from diffusers.optimization import get_scheduler
-from diffusers.utils.import_utils import is_xformers_available
-from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
+from tqdm import tqdm
 from einops import rearrange
 
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(os.path.join(repo_root, "pipelines"))
-
 from pipeline_tuneavideo import TuneAVideoPipeline
 
 sys.path.append(os.path.join(repo_root, "core_files"))
-
 from unet import UNet3DConditionModel
 from dataset import TuneMultiVideoDataset
-from util import save_videos_grid, ddim_inversion
+from util import save_videos_grid
 
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:24"
-
-logger = get_logger(__name__, log_level="INFO")
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # better memory handling
 
 def main(
     pretrained_model_path: str,
@@ -77,19 +71,9 @@ def main(
         mixed_precision=mixed_precision,
     )
 
-    logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO,
-    )
-    logger.info(accelerator.state, main_process_only=False)
-
-    if accelerator.is_local_main_process:
-        transformers.utils.logging.set_verbosity_warning()
-        diffusers.utils.logging.set_verbosity_info()
-    else:
-        transformers.utils.logging.set_verbosity_error()
-        diffusers.utils.logging.set_verbosity_error()
+    # suppress library logging
+    transformers.utils.logging.set_verbosity_error()
+    diffusers.utils.logging.set_verbosity_error()
 
     if seed is not None:
         set_seed(seed)
@@ -113,12 +97,6 @@ def main(
         if name.endswith(tuple(trainable_modules)):
             for params in module.parameters():
                 params.requires_grad = True
-
-    if enable_xformers_memory_efficient_attention:
-        if is_xformers_available():
-            unet.enable_xformers_memory_efficient_attention()
-        else:
-            raise ValueError("xformers is not available. Make sure it is installed correctly")
 
     if gradient_checkpointing:
         unet.enable_gradient_checkpointing()
@@ -177,14 +155,15 @@ def main(
     else:
         raise ValueError("Dataset did not return 'latents' or 'pixel_values'")
 
-    validation_data["video_length"] = inferred_video_length
-    print(f"[Validation] Using video_length={inferred_video_length}")
+    # limit validation length to save memory
+    validation_data["video_length"] = min(8, inferred_video_length)
+    print(f"[Validation] Using video_length={validation_data['video_length']}")
 
     # restrict validation prompts
     val_text_list_path = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/test_list.txt"
     with open(val_text_list_path, "r") as f:
         all_prompts = [line.strip() for line in f]
-    config["validation_data"]["prompts"] = random.sample(all_prompts, k=min(3, len(all_prompts)))
+    config["validation_data"]["prompts"] = random.sample(all_prompts, k=1)  # only 1 prompt to save memory
 
     validation_pipeline = TuneAVideoPipeline(
         vae=vae,
@@ -218,16 +197,12 @@ def main(
     if accelerator.is_main_process:
         accelerator.init_trackers("text2video-fine-tune")
 
-    logger.info("***** Running training *****")
-    logger.info(f"  Num examples = {len(train_dataset)}")
-    logger.info(f"  Num Epochs = {num_train_epochs}")
-
     global_step = 0
     first_epoch = 1
 
-    for epoch in tqdm(range(first_epoch, num_train_epochs + 1)):
+    for epoch in tqdm(range(first_epoch, num_train_epochs + 1), desc="Epochs"):
         unet.train()
-        for step, batch in enumerate(train_dataloader):
+        for step, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), leave=False, desc=f"Epoch {epoch}"):
             with accelerator.accumulate(unet):
                 if "latents" in batch:
                     latents = batch["latents"].to(weight_dtype)
@@ -258,12 +233,15 @@ def main(
 
             global_step += 1
 
-        # validate every 2 epochs only
+        # lightweight validation every 2 epochs
         if epoch % 2 == 0 and accelerator.is_main_process:
             generator = torch.Generator(device=latents.device).manual_seed(seed)
-            for prompt in validation_data["prompts"]:
+            for prompt in config["validation_data"]["prompts"]:
                 sample = validation_pipeline(
-                    prompt, video_length=validation_data["video_length"], generator=generator
+                    prompt,
+                    video_length=validation_data["video_length"],
+                    num_inference_steps=20,  # fewer steps to save memory
+                    generator=generator
                 ).videos
                 save_videos_grid(sample, f"{output_dir}/samples/sample-{epoch}/{prompt}.gif")
 
@@ -274,7 +252,7 @@ if __name__ == "__main__":
         pretrained_model_path="/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4",
         output_dir="/content/drive/MyDrive/EEG2Video_outputs",
         train_data=dict(video_path=None, prompt=None),
-        validation_data=dict(prompts=None, num_inv_steps=50, use_inv_latent=False),
+        validation_data=dict(prompts=None, num_inv_steps=20, use_inv_latent=False),
         train_batch_size=1,
         learning_rate=3e-5,
         num_train_epochs=2,  # demo run
