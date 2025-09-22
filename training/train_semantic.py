@@ -32,18 +32,18 @@ class SemanticPredictor(nn.Module):
 # Dataset wrapper (EEG DE features + BLIP embeddings)
 # -------------------------------------------------------------------------
 class EEGTextDataset(Dataset):
-    def __init__(self, list_path, eeg_root, text_root):
-        with open(list_path, 'r') as f:
-            files = [line.strip() for line in f.readlines()]
+    def __init__(self, eeg_list_path, text_list_path):
+        with open(eeg_list_path, "r") as f:
+            eeg_files = [line.strip() for line in f.readlines()]
+        with open(text_list_path, "r") as f:
+            text_files = [line.strip() for line in f.readlines()]
+
+        assert len(eeg_files) == len(text_files), "EEG and text list lengths differ"
 
         eeg_list, text_list = [], []
-        for f in files:
-            base = os.path.basename(f).replace('.mp4', '.npy')
-            eeg_path = os.path.join(eeg_root, base)
-            text_path = os.path.join(text_root, base)
-
-            eeg = np.load(eeg_path)  # DE features shape [310]
-            txt = np.load(text_path) # BLIP->CLIP embedding [77,768]
+        for eeg_path, text_path in zip(eeg_files, text_files):
+            eeg = np.load(eeg_path)        # shape [310]
+            txt = np.load(text_path)       # shape [77,768]
 
             eeg_list.append(eeg.reshape(1, -1))
             text_list.append(txt.reshape(1, -1))
@@ -61,23 +61,26 @@ class EEGTextDataset(Dataset):
         return self.eeg[idx], self.text[idx]
 
 # -------------------------------------------------------------------------
-# Training
+# Training loop (authors' settings)
 # -------------------------------------------------------------------------
 if __name__ == "__main__":
     drive_root = "/content/EEG2Video_my_version/processed"
+    save_root  = "/content/drive/MyDrive/EEG2Video_checkpoints"
+    os.makedirs(save_root, exist_ok=True)
 
-    train_list = os.path.join(drive_root, "Video_mp4/train_list.txt")  # index list
-    eeg_root   = os.path.join(drive_root, "EEG_features/train/sub1/Block1/..")  # adjust: use full train subdir
-    text_root  = os.path.join(drive_root, "BLIP_embeddings/train/Block1/..")    # adjust accordingly
+    eeg_train_list  = os.path.join(drive_root, "EEG_features/train_list.txt")
+    text_train_list = os.path.join(drive_root, "BLIP_embeddings/train_list.txt")
 
-    dataset = EEGTextDataset(train_list, eeg_root, text_root)
+    dataset = EEGTextDataset(eeg_train_list, text_train_list)
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+    print(f"Training samples: {len(dataset)}")
 
     model = SemanticPredictor().cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(dataloader))
 
-    for epoch in tqdm(range(200)):
+    for epoch in tqdm(range(20)): # was 200
         model.train()
         epoch_loss = 0
         for eeg, text in dataloader:
@@ -91,7 +94,9 @@ if __name__ == "__main__":
             optimizer.step()
             scheduler.step()
             epoch_loss += loss.item()
-        print(f"Epoch {epoch+1}: loss={epoch_loss:.4f}")
 
-    torch.save({'state_dict': model.state_dict()},
-               os.path.join(drive_root, "semantic_predictor.pt"))
+        print(f"Epoch {epoch+1}: train_loss={epoch_loss:.4f}")
+
+    save_path = os.path.join(save_root, "semantic_predictor.pt")
+    torch.save({'state_dict': model.state_dict()}, save_path)
+    print("Model saved to:", save_path)
