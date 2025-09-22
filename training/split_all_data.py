@@ -9,11 +9,11 @@ Rule:
 
 Inputs:
   Subject-independent modalities:
-    - Video_mp4
-    - Video_gif
-    - Video_latents
-    - BLIP_text
-    - BLIP_embeddings
+    - Video_mp4  (all processed blocks)
+    - Video_gif  (all processed blocks)
+    - Video_latents  (all processed blocks)
+    - BLIP_text  (only Block1 captions are processed, split only those)
+    - BLIP_embeddings  (all processed blocks, must align with EEG_features)
 
   Subject-dependent modalities:
     - EEG_segments (5D subject-level arrays: [7,40,5,62,400])
@@ -31,15 +31,22 @@ Outputs:
 
 Master Files:
   For faster loading, create train/test index files after splitting.
+
+Special Notes:
+  - BLIP_text should only include Block1 since only those captions were processed.
+  - BLIP_embeddings must align with EEG_features across all available blocks.
+  - Videos, GIFs, latents, EEG segments, windows, and features should be split
+    across all blocks that exist.
 """
 
 import os
-import numpy as np
 import shutil
 from tqdm import tqdm
 
 base_dir = "/content/drive/MyDrive/EEG2Video_data/processed/"
-modalities_subindep = ["Video_mp4", "Video_gif", "Video_latents", "BLIP_text", "BLIP_embeddings"]
+modalities_videos = ["Video_mp4", "Video_gif", "Video_latents"]
+modalities_text   = ["BLIP_text"]
+modalities_embed  = ["BLIP_embeddings"]
 modalities_subdep = ["EEG_segments", "EEG_windows", "EEG_features"]
 
 def get_split(clip_id):
@@ -57,29 +64,20 @@ def safe_link(src, dst):
     except OSError:
         shutil.copy2(src, dst)
 
-# --- find blocks that exist in ALL subject-independent modalities ---
-available_blocks = None
-for mod in modalities_subindep:
-    mod_dir = os.path.join(base_dir, mod)
-    blocks = [b for b in os.listdir(mod_dir) if os.path.isdir(os.path.join(mod_dir, b))]
-    available_blocks = set(blocks) if available_blocks is None else available_blocks & set(blocks)
-
-print("Blocks available in all modalities:", sorted(list(available_blocks)))
-
-# subject-independent split
-for mod in modalities_subindep:
+# ---------------- Subject-independent: Videos ----------------
+for mod in modalities_videos:
     in_dir = os.path.join(base_dir, mod)
+    blocks = [b for b in os.listdir(in_dir) if os.path.isdir(os.path.join(in_dir, b))]
     out_train = os.path.join(in_dir, "train")
     out_test = os.path.join(in_dir, "test")
     ensure_dir(out_train)
     ensure_dir(out_test)
 
     train_list, test_list = [], []
-
-    for block in tqdm(sorted(available_blocks), desc=f"Splitting {mod}"):
+    for block in tqdm(sorted(blocks), desc=f"Splitting {mod}"):
         block_path = os.path.join(in_dir, block)
         for fname in os.listdir(block_path):
-            if not any(fname.endswith(ext) for ext in [".mp4", ".gif", ".npy", ".txt"]):
+            if not any(fname.endswith(ext) for ext in [".mp4", ".gif", ".npy"]):
                 continue
             clip_id = int(fname.split("_")[-1].replace("clip","").split(".")[0]) - 1
             split = get_split(clip_id)
@@ -95,7 +93,67 @@ for mod in modalities_subindep:
     with open(os.path.join(in_dir, "test_list.txt"), "w") as f:
         f.write("\n".join(test_list))
 
-# subject-dependent split
+# ---------------- Subject-independent: BLIP text ----------------
+# Only split processed blocks (Block1 in your case)
+for mod in modalities_text:
+    in_dir = os.path.join(base_dir, mod)
+    blocks = ["Block1"]  # restrict to processed captions
+    out_train = os.path.join(in_dir, "train")
+    out_test = os.path.join(in_dir, "test")
+    ensure_dir(out_train)
+    ensure_dir(out_test)
+
+    train_list, test_list = [], []
+    for block in tqdm(sorted(blocks), desc=f"Splitting {mod}"):
+        block_path = os.path.join(in_dir, block)
+        for fname in os.listdir(block_path):
+            if not fname.endswith(".txt"):
+                continue
+            clip_id = int(fname.split("_")[-1].replace("clip","").split(".")[0]) - 1
+            split = get_split(clip_id)
+            out_dir = os.path.join(in_dir, split, block)
+            ensure_dir(out_dir)
+            src = os.path.join(block_path, fname)
+            dst = os.path.join(out_dir, fname)
+            safe_link(src, dst)
+            (train_list if split=="train" else test_list).append(dst)
+
+    with open(os.path.join(in_dir, "train_list.txt"), "w") as f:
+        f.write("\n".join(train_list))
+    with open(os.path.join(in_dir, "test_list.txt"), "w") as f:
+        f.write("\n".join(test_list))
+
+# ---------------- Subject-independent: BLIP embeddings ----------------
+# Must align with EEG_features
+for mod in modalities_embed:
+    in_dir = os.path.join(base_dir, mod)
+    blocks = [b for b in os.listdir(in_dir) if os.path.isdir(os.path.join(in_dir, b))]
+    out_train = os.path.join(in_dir, "train")
+    out_test = os.path.join(in_dir, "test")
+    ensure_dir(out_train)
+    ensure_dir(out_test)
+
+    train_list, test_list = [], []
+    for block in tqdm(sorted(blocks), desc=f"Splitting {mod}"):
+        block_path = os.path.join(in_dir, block)
+        for fname in os.listdir(block_path):
+            if not fname.endswith(".npy"):
+                continue
+            clip_id = int(fname.split("_")[-1].replace("clip","").split(".")[0]) - 1
+            split = get_split(clip_id)
+            out_dir = os.path.join(in_dir, split, block)
+            ensure_dir(out_dir)
+            src = os.path.join(block_path, fname)
+            dst = os.path.join(out_dir, fname)
+            safe_link(src, dst)
+            (train_list if split=="train" else test_list).append(dst)
+
+    with open(os.path.join(in_dir, "train_list.txt"), "w") as f:
+        f.write("\n".join(train_list))
+    with open(os.path.join(in_dir, "test_list.txt"), "w") as f:
+        f.write("\n".join(test_list))
+
+# ---------------- Subject-dependent modalities ----------------
 for mod in modalities_subdep:
     in_dir = os.path.join(base_dir, mod)
     out_train = os.path.join(in_dir, "train")
@@ -104,16 +162,13 @@ for mod in modalities_subdep:
     ensure_dir(out_test)
 
     train_list, test_list = [], []
-
     for subj in tqdm(os.listdir(in_dir), desc=f"Splitting {mod}"):
         subj_path = os.path.join(in_dir, subj)
         if not os.path.isdir(subj_path):
             continue
-
-        for block in sorted(available_blocks):
+        blocks = [b for b in os.listdir(subj_path) if os.path.isdir(os.path.join(subj_path, b))]
+        for block in sorted(blocks):
             block_path = os.path.join(subj_path, block)
-            if not os.path.exists(block_path):
-                continue
             for fname in os.listdir(block_path):
                 if not fname.endswith(".npy"):
                     continue

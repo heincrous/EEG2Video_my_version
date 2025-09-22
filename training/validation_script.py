@@ -27,7 +27,7 @@ expected_trailing = {
     "EEG_windows": ((7, 62, 100), "windows=7 (overlapping), channels=62, samples=100"),
     "EEG_features": ((310,), "features=310 (DE/PSD features per band×channel)"),
     "Video_latents": ((4, 36, 64), "channels=4 (VAE latent), height=36, width=64, frames=N (time dimension)"),
-    "BLIP_embeddings": ((77, 512), "sequence_length=77 tokens, embedding_dim=512"),
+    "BLIP_embeddings": ((77, 768), "sequence_length=77 tokens, embedding_dim=768"),
 }
 
 def explain_shape(modality, shape):
