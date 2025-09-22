@@ -87,7 +87,7 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20)
 
-    for epoch in range(30):
+    for epoch in range(10):
         model.train()
         epoch_loss = 0
         for batch_idx, (eeg, text) in enumerate(dataloader):
