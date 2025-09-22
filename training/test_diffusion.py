@@ -1,19 +1,28 @@
 import os, sys, random, torch, imageio
 from einops import rearrange
+from diffusers import DDIMScheduler, AutoencoderKL
+from transformers import CLIPTextModel, CLIPTokenizer
 
-# === PATH SETUP ===
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(os.path.join(repo_root, "pipelines"))
 from pipeline_tuneavideo import TuneAVideoPipeline
+from unet import UNet3DConditionModel
 
 # === DIRECTORIES ===
-trained_output_dir = "/content/drive/MyDrive/EEG2Video_outputs"
-test_text_list     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/test_list.txt"
-save_dir           = os.path.join(trained_output_dir, "test_samples")
+pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
+trained_output_dir    = "/content/drive/MyDrive/EEG2Video_outputs"
+test_text_list        = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/test_list.txt"
+save_dir              = os.path.join(trained_output_dir, "test_samples")
 os.makedirs(save_dir, exist_ok=True)
 
 # === LOAD TRAINED PIPELINE ===
-pipe = TuneAVideoPipeline.from_pretrained(trained_output_dir)
+pipe = TuneAVideoPipeline(
+    vae=AutoencoderKL.from_pretrained(trained_output_dir, subfolder="vae"),
+    text_encoder=CLIPTextModel.from_pretrained(trained_output_dir, subfolder="text_encoder"),
+    tokenizer=CLIPTokenizer.from_pretrained(trained_output_dir, subfolder="tokenizer"),
+    unet=UNet3DConditionModel.from_pretrained_2d(trained_output_dir, subfolder="unet"),
+    scheduler=DDIMScheduler.from_pretrained(trained_output_dir, subfolder="scheduler"),
+)
 pipe.enable_vae_slicing()
 pipe = pipe.to("cuda")
 
@@ -28,12 +37,12 @@ print("Chosen prompt:", prompt)
 generator = torch.Generator(device="cuda").manual_seed(42)
 result = pipe(
     prompt,
-    video_length=8,       # match your training validation setting
+    video_length=8,       # keep this consistent with validation length used in training
     num_inference_steps=20,
     generator=generator,
 )
 
-video_tensor = result.videos  # shape: [1, f, c, h, w]
+video_tensor = result.videos  # [1, f, c, h, w]
 
 # === SAVE MP4 ===
 frames = (video_tensor[0].permute(0, 2, 3, 1).cpu().numpy() * 255).astype("uint8")
