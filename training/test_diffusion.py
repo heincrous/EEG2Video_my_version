@@ -41,14 +41,20 @@ pipe = pipe.to("cuda")
 with open(test_text_list, "r") as f:
     test_prompts = [line.strip() for line in f]
 
-prompt = random.choice(test_prompts)
-print("Chosen prompt:", prompt)
+prompt_path = random.choice(test_prompts)
+with open(prompt_path, "r") as pf:
+    prompt_text = pf.read().strip()
+
+print("Chosen prompt file:", prompt_path)
+print("Caption text:", prompt_text)
 
 # === GENERATE VIDEO ===
 generator = torch.Generator(device="cuda").manual_seed(42)
 result = pipe(
-    prompt,
-    video_length=8,          # keep consistent with training validation
+    prompt_text,
+    video_length=8,          # consistent with training validation
+    height=288,              # enforce training resolution
+    width=512,
     num_inference_steps=20,  # reduce if still OOM
     generator=generator,
 )
@@ -73,4 +79,4 @@ mp4_path = os.path.join(save_dir, "sample_test.mp4")
 imageio.mimsave(mp4_path, [f for f in frames], fps=8)
 
 print("Video saved to:", mp4_path)
-print("Text prompt used:", prompt)
+print("Final caption used for generation:", prompt_text)
