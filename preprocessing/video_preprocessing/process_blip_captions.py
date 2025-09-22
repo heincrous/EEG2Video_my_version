@@ -1,6 +1,6 @@
 """
-ALIGN BLIP CAPTIONS TO CLIPS
-------------------------------
+ALIGN BLIP CAPTIONS TO CLIPS (Batched)
+---------------------------------------
 Input:
   raw/BLIP-caption/1st_10min.txt ... 7th_10min.txt
 
@@ -9,7 +9,7 @@ Process:
   - Captions are in randomized presentation order
   - Use GT_LABEL (7x40) to map order_idx → true class index
   - Save plain text
-  - Tokenize + encode with CLIP
+  - Tokenize + encode with CLIP in batches
   - Save embeddings [77,768]
 
 Output:
@@ -37,16 +37,23 @@ from gt_label import GT_LABEL   # GT_LABEL shape (7,40), values 0–39
 os.makedirs(out_text_dir, exist_ok=True)
 os.makedirs(out_embed_dir, exist_ok=True)
 
-# load CLIP model + tokenizer
+# load CLIP model + tokenizer (hidden dim must be 768)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
 text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
 text_encoder.eval()
 
+# sanity check
+hidden_size = text_encoder.config.hidden_size
+print("Loaded CLIP text encoder hidden size:", hidden_size)
+assert hidden_size == 768, f"Expected hidden size 768, got {hidden_size}"
+
 # correct ordinal filenames for 1–7
 ordinals = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th"]
 
-# process block caption files
+# batching setup
+batch_size = 64
+
 for block_id in range(7):
     fname = f"{ordinals[block_id]}_10min.txt"
     fpath = os.path.join(caption_dir, fname)
@@ -66,16 +73,30 @@ for block_id in range(7):
     os.makedirs(text_block_dir, exist_ok=True)
     os.makedirs(embed_block_dir, exist_ok=True)
 
-    # loop over 40 presented classes in this block
-    for order_idx in tqdm(range(40), desc=f"Block {block_id+1}"):
-        true_class = GT_LABEL[block_id, order_idx]  # map presentation → true class
+    # process in batches
+    for start in tqdm(range(0, len(captions), batch_size), desc=f"Block {block_id+1}"):
+        batch_caps = captions[start:start+batch_size]
 
-        for clip_id in range(5):
-            # caption index in presentation order
-            flat_idx = order_idx * 5 + clip_id
-            if flat_idx >= len(captions):
-                continue
-            caption = captions[flat_idx]
+        # tokenize as a batch
+        tokens = tokenizer(
+            batch_caps,
+            padding="max_length",
+            truncation=True,
+            max_length=77,
+            return_tensors="pt"
+        ).to(device)
+
+        with torch.no_grad():
+            emb = text_encoder(**tokens).last_hidden_state  # [B,77,768]
+
+        emb = emb.cpu().numpy()  # (B,77,768)
+
+        # save results for each caption in batch
+        for j, caption in enumerate(batch_caps):
+            flat_idx = start + j
+            order_idx = flat_idx // 5
+            clip_id = flat_idx % 5
+            true_class = GT_LABEL[block_id, order_idx]
 
             # save plain text
             text_path = os.path.join(
@@ -85,24 +106,15 @@ for block_id in range(7):
             with open(text_path, "w") as f:
                 f.write(caption)
 
-            # tokenize + encode
-            tokens = tokenizer(
-                caption,
-                padding="max_length",
-                truncation=True,
-                max_length=77,
-                return_tensors="pt"
-            ).to(device)
-
-            with torch.no_grad():
-                emb = text_encoder(**tokens).last_hidden_state  # [1,77,768]
+            # sanity check embedding shape
+            if emb[j].shape != (77, 768):
+                raise ValueError(f"Embedding shape mismatch: got {emb[j].shape}, expected (77,768)")
 
             # save embedding
-            emb = emb.squeeze(0).cpu().numpy()  # [77,768]
             embed_path = os.path.join(
                 embed_block_dir,
                 f"class{true_class:02d}_clip{clip_id+1:02d}.npy"
             )
-            np.save(embed_path, emb)
+            np.save(embed_path, emb[j])
 
     print(f"Finished Block {block_id+1}: saved {len(os.listdir(text_block_dir))} captions")
