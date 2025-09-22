@@ -1,41 +1,37 @@
 """
-DATA SPLITTING INSTRUCTIONS (WITH MASTER FILES)
------------------------------------------------
-Rule:
+DATA SPLITTING RULES (MASTER FILES)
+-----------------------------------
+
+General Rule:
   - For each Block (1–7)
   - For each class (00–39)
   - Clip01–Clip04 → train
-  - Clip05 → test
-
-Inputs:
-  Subject-independent modalities:
-    - Video_mp4  (all processed blocks)
-    - Video_gif  (all processed blocks)
-    - Video_latents  (all processed blocks)
-    - BLIP_text  (must align with Video_latents → only include blocks where latents exist)
-    - BLIP_embeddings  (all processed blocks, must align with EEG_features)
-
-  Subject-dependent modalities:
-    - EEG_segments (5D subject-level arrays: [7,40,5,62,400])
-    - EEG_windows
-    - EEG_features
+  - Clip05        → test
 
 Outputs:
-  Subject-independent:
-    processed/{Modality}/train/BlockY/classYY_clipZZ.*
-    processed/{Modality}/test/BlockY/classYY_clipZZ.*
+  Each modality has:
+    processed/{Modality}/train_list.txt   (MASTER FILE)
+    processed/{Modality}/test_list.txt    (MASTER FILE)
 
-  Subject-dependent:
-    processed/{Modality}/train/subX/BlockY/classYY_clipZZ.*
-    processed/{Modality}/test/subX/BlockY/classYY_clipZZ.*
+Subject-independent modalities (no subX in path):
+  - Video_mp4: split independently, full lists
+  - Video_gif: split independently, full lists
+  - Video_latents: split independently, full lists → ANCHOR for EEG_windows and BLIP_text
+  - BLIP_text: split, but KEEP ONLY entries that also exist in Video_latents
+  - BLIP_embeddings: split, but KEEP ONLY entries that also exist in EEG_features
 
-Master Files:
-  For faster loading, create train/test index files after splitting.
+Subject-dependent modalities (with subX/ in path):
+  - EEG_segments: split independently per subject, full lists
+  - EEG_windows: split per subject, but KEEP ONLY entries that also exist in Video_latents
+  - EEG_features: split per subject, full lists → ANCHOR for BLIP_embeddings
 
-Special Notes:
-  - BLIP_text aligns dynamically with Video_latents
-  - BLIP_embeddings + EEG features/windows/segments: use all processed blocks
-  - Videos, GIFs, latents: split everything present
+Master File Principle:
+  - The train/test lists written for each modality ARE the master files.
+  - Alignment rules are enforced when writing these lists:
+      * EEG_windows ↔ Video_latents
+      * BLIP_text ↔ Video_latents
+      * BLIP_embeddings ↔ EEG_features
+  - All other modalities keep full independent splits.
 """
 
 import os
@@ -43,11 +39,8 @@ import shutil
 from tqdm import tqdm
 
 base_dir = "/content/drive/MyDrive/EEG2Video_data/processed/"
-modalities_videos = ["Video_mp4", "Video_gif", "Video_latents"]
-modalities_text   = ["BLIP_text"]
-modalities_embed  = ["BLIP_embeddings"]
-modalities_subdep = ["EEG_segments", "EEG_windows", "EEG_features"]
 
+# ---------------- Helpers ----------------
 def get_split(clip_id):
     return "train" if clip_id < 4 else "test"
 
@@ -63,140 +56,130 @@ def safe_link(src, dst):
     except OSError:
         shutil.copy2(src, dst)
 
-# ---------------- Subject-independent: Videos ----------------
-for mod in modalities_videos:
-    in_dir = os.path.join(base_dir, mod)
-    if not os.path.exists(in_dir):
-        continue
-    blocks = [b for b in os.listdir(in_dir) if os.path.isdir(os.path.join(in_dir, b))]
-    out_train = os.path.join(in_dir, "train")
-    out_test = os.path.join(in_dir, "test")
-    ensure_dir(out_train); ensure_dir(out_test)
+def collect_files(in_dir, exts=(".npy", ".mp4", ".gif", ".txt")):
+    files = []
+    for root, _, fnames in os.walk(in_dir):
+        for f in fnames:
+            if f.endswith(exts):
+                rel = os.path.relpath(os.path.join(root, f), in_dir)
+                files.append(rel)
+    return sorted(files)
 
-    train_list, test_list = [], []
-    for block in tqdm(sorted(blocks), desc=f"Splitting {mod}"):
-        block_path = os.path.join(in_dir, block)
-        for fname in os.listdir(block_path):
-            if not any(fname.endswith(ext) for ext in [".mp4", ".gif", ".npy"]):
-                continue
-            clip_id = int(fname.split("_")[-1].replace("clip","").split(".")[0]) - 1
-            split = get_split(clip_id)
-            out_dir = os.path.join(in_dir, split, block)
-            ensure_dir(out_dir)
-            src = os.path.join(block_path, fname)
-            dst = os.path.join(out_dir, fname)
-            safe_link(src, dst)
-            (train_list if split=="train" else test_list).append(dst)
+def parse_clip_id(fname):
+    return int(fname.split("_")[-1].replace("clip", "").split(".")[0]) - 1
 
-    with open(os.path.join(in_dir, "train_list.txt"), "w") as f:
-        f.write("\n".join(train_list))
-    with open(os.path.join(in_dir, "test_list.txt"), "w") as f:
-        f.write("\n".join(test_list))
-
-# ---------------- Subject-independent: BLIP text (align with Video_latents) ----------------
+# ---------------- 1. Video_latents (anchor) ----------------
 video_latents_dir = os.path.join(base_dir, "Video_latents")
-video_blocks = [b for b in os.listdir(video_latents_dir) if os.path.isdir(os.path.join(video_latents_dir, b))]
+video_latents_files = collect_files(video_latents_dir, exts=(".npy",))
 
-for mod in modalities_text:
+latents_train, latents_test = [], []
+for rel in video_latents_files:
+    clip_id = parse_clip_id(rel)
+    (latents_train if get_split(clip_id)=="train" else latents_test).append(rel)
+
+with open(os.path.join(video_latents_dir, "train_list.txt"), "w") as f:
+    f.write("\n".join(latents_train))
+with open(os.path.join(video_latents_dir, "test_list.txt"), "w") as f:
+    f.write("\n".join(latents_test))
+
+print(f"[Video_latents] train={len(latents_train)} test={len(latents_test)}")
+
+# ---------------- 2. EEG_features (anchor for embeddings) ----------------
+eeg_features_dir = os.path.join(base_dir, "EEG_features")
+eeg_features_files = collect_files(eeg_features_dir, exts=(".npy",))
+
+features_train, features_test = [], []
+for rel in eeg_features_files:
+    clip_id = parse_clip_id(rel)
+    (features_train if get_split(clip_id)=="train" else features_test).append(rel)
+
+with open(os.path.join(eeg_features_dir, "train_list.txt"), "w") as f:
+    f.write("\n".join(features_train))
+with open(os.path.join(eeg_features_dir, "test_list.txt"), "w") as f:
+    f.write("\n".join(features_test))
+
+print(f"[EEG_features] train={len(features_train)} test={len(features_test)}")
+
+# ---------------- 3. EEG_windows (aligned with Video_latents) ----------------
+eeg_windows_dir = os.path.join(base_dir, "EEG_windows")
+eeg_windows_files = collect_files(eeg_windows_dir, exts=(".npy",))
+
+windows_train, windows_test = [], []
+for rel in eeg_windows_files:
+    if rel.replace("sub1"+os.sep, "") in latents_train:
+        windows_train.append(rel)
+    elif rel.replace("sub1"+os.sep, "") in latents_test:
+        windows_test.append(rel)
+
+with open(os.path.join(eeg_windows_dir, "train_list.txt"), "w") as f:
+    f.write("\n".join(windows_train))
+with open(os.path.join(eeg_windows_dir, "test_list.txt"), "w") as f:
+    f.write("\n".join(windows_test))
+
+print(f"[EEG_windows] train={len(windows_train)} test={len(windows_test)}")
+
+# ---------------- 4. BLIP_text (aligned with Video_latents) ----------------
+blip_text_dir = os.path.join(base_dir, "BLIP_text")
+blip_files = collect_files(blip_text_dir, exts=(".txt",))
+
+text_train, text_test = [], []
+for rel in blip_files:
+    if rel.replace(".txt", ".npy") in latents_train:
+        text_train.append(rel)
+    elif rel.replace(".txt", ".npy") in latents_test:
+        text_test.append(rel)
+
+with open(os.path.join(blip_text_dir, "train_list.txt"), "w") as f:
+    f.write("\n".join(text_train))
+with open(os.path.join(blip_text_dir, "test_list.txt"), "w") as f:
+    f.write("\n".join(text_test))
+
+print(f"[BLIP_text] train={len(text_train)} test={len(text_test)}")
+
+# ---------------- 5. BLIP_embeddings (aligned with EEG_features) ----------------
+blip_embed_dir = os.path.join(base_dir, "BLIP_embeddings")
+embed_files = collect_files(blip_embed_dir, exts=(".npy",))
+
+embed_train, embed_test = [], []
+for rel in embed_files:
+    if rel in [r.replace("sub1"+os.sep, "") for r in features_train]:
+        embed_train.append(rel)
+    elif rel in [r.replace("sub1"+os.sep, "") for r in features_test]:
+        embed_test.append(rel)
+
+with open(os.path.join(blip_embed_dir, "train_list.txt"), "w") as f:
+    f.write("\n".join(embed_train))
+with open(os.path.join(blip_embed_dir, "test_list.txt"), "w") as f:
+    f.write("\n".join(embed_test))
+
+print(f"[BLIP_embeddings] train={len(embed_train)} test={len(embed_test)}")
+
+# ---------------- 6. EEG_segments (independent) ----------------
+eeg_segments_dir = os.path.join(base_dir, "EEG_segments")
+seg_files = collect_files(eeg_segments_dir, exts=(".npy",))
+
+seg_train, seg_test = [], []
+for rel in seg_files:
+    clip_id = parse_clip_id(rel)
+    (seg_train if get_split(clip_id)=="train" else seg_test).append(rel)
+
+with open(os.path.join(eeg_segments_dir, "train_list.txt"), "w") as f:
+    f.write("\n".join(seg_train))
+with open(os.path.join(eeg_segments_dir, "test_list.txt"), "w") as f:
+    f.write("\n".join(seg_test))
+
+print(f"[EEG_segments] train={len(seg_train)} test={len(seg_test)}")
+
+# ---------------- 7. Video_mp4 & Video_gif (independent) ----------------
+for mod, ext in [("Video_mp4", ".mp4"), ("Video_gif", ".gif")]:
     in_dir = os.path.join(base_dir, mod)
-    if not os.path.exists(in_dir):
-        continue
-    blocks = [b for b in os.listdir(in_dir) if os.path.isdir(os.path.join(in_dir, b)) and b in video_blocks]
-    out_train = os.path.join(in_dir, "train")
-    out_test = os.path.join(in_dir, "test")
-    ensure_dir(out_train); ensure_dir(out_test)
-
-    train_list, test_list = [], []
-    for block in tqdm(sorted(blocks), desc=f"Splitting {mod}"):
-        block_path = os.path.join(in_dir, block)
-        for fname in os.listdir(block_path):
-            if not fname.endswith(".txt"):
-                continue
-            clip_id = int(fname.split("_")[-1].replace("clip","").split(".")[0]) - 1
-            split = get_split(clip_id)
-            out_dir = os.path.join(in_dir, split, block)
-            ensure_dir(out_dir)
-            src = os.path.join(block_path, fname)
-            dst = os.path.join(out_dir, fname)
-            safe_link(src, dst)
-            (train_list if split=="train" else test_list).append(dst)
-
+    files = collect_files(in_dir, exts=(ext,))
+    train, test = [], []
+    for rel in files:
+        clip_id = parse_clip_id(rel)
+        (train if get_split(clip_id)=="train" else test).append(rel)
     with open(os.path.join(in_dir, "train_list.txt"), "w") as f:
-        f.write("\n".join(train_list))
+        f.write("\n".join(train))
     with open(os.path.join(in_dir, "test_list.txt"), "w") as f:
-        f.write("\n".join(test_list))
-
-# ---------------- Subject-independent: BLIP embeddings ----------------
-for mod in modalities_embed:
-    in_dir = os.path.join(base_dir, mod)
-    if not os.path.exists(in_dir):
-        continue
-    blocks = [b for b in os.listdir(in_dir) if os.path.isdir(os.path.join(in_dir, b))]
-    out_train = os.path.join(in_dir, "train")
-    out_test = os.path.join(in_dir, "test")
-    ensure_dir(out_train); ensure_dir(out_test)
-
-    train_list, test_list = [], []
-    for block in tqdm(sorted(blocks), desc=f"Splitting {mod}"):
-        block_path = os.path.join(in_dir, block)
-        for fname in os.listdir(block_path):
-            if not fname.endswith(".npy"):
-                continue
-            clip_id = int(fname.split("_")[-1].replace("clip","").split(".")[0]) - 1
-            split = get_split(clip_id)
-            out_dir = os.path.join(in_dir, split, block)
-            ensure_dir(out_dir)
-            src = os.path.join(block_path, fname)
-            dst = os.path.join(out_dir, fname)
-            safe_link(src, dst)
-            (train_list if split=="train" else test_list).append(dst)
-
-    with open(os.path.join(in_dir, "train_list.txt"), "w") as f:
-        f.write("\n".join(train_list))
-    with open(os.path.join(in_dir, "test_list.txt"), "w") as f:
-        f.write("\n".join(test_list))
-
-# ---------------- Subject-dependent modalities ----------------
-for mod in modalities_subdep:
-    in_dir = os.path.join(base_dir, mod)
-    if not os.path.exists(in_dir):
-        continue
-    out_train = os.path.join(in_dir, "train")
-    out_test = os.path.join(in_dir, "test")
-    ensure_dir(out_train); ensure_dir(out_test)
-
-    train_list, test_list = [], []
-    for subj in tqdm(os.listdir(in_dir), desc=f"Splitting {mod}"):
-        subj_path = os.path.join(in_dir, subj)
-        if not os.path.isdir(subj_path):
-            continue
-        blocks = [b for b in os.listdir(subj_path) if os.path.isdir(os.path.join(subj_path, b))]
-        for block in sorted(blocks):
-            block_path = os.path.join(subj_path, block)
-            for fname in os.listdir(block_path):
-                if not fname.endswith(".npy"):
-                    continue
-                clip_id = int(fname.split("_")[-1].replace("clip","").split(".")[0]) - 1
-                split = get_split(clip_id)
-                out_dir = os.path.join(in_dir, split, subj, block)
-                ensure_dir(out_dir)
-                src = os.path.join(block_path, fname)
-                dst = os.path.join(out_dir, fname)
-                safe_link(src, dst)
-                (train_list if split=="train" else test_list).append(dst)
-
-    with open(os.path.join(in_dir, "train_list.txt"), "w") as f:
-        f.write("\n".join(train_list))
-    with open(os.path.join(in_dir, "test_list.txt"), "w") as f:
-        f.write("\n".join(test_list))
-
-# ---------------- Post-check summary ----------------
-def count_lines(path):
-    return sum(1 for _ in open(path)) if os.path.exists(path) else 0
-
-for mod in modalities_videos + modalities_text + modalities_embed + modalities_subdep:
-    mod_path = os.path.join(base_dir, mod)
-    train_count = count_lines(os.path.join(mod_path, "train_list.txt"))
-    test_count = count_lines(os.path.join(mod_path, "test_list.txt"))
-    if train_count or test_count:
-        print(f"{mod}: train={train_count}, test={test_count}, total={train_count+test_count}")
+        f.write("\n".join(test))
+    print(f"[{mod}] train={len(train)} test={len(test)}")
