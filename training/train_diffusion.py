@@ -23,11 +23,15 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from einops import rearrange
 
 repo_root = "/content/EEG2Video_my_version"
+sys.path.append(os.path.join(repo_root, "pipelines"))
+
+from pipeline_tuneavideo import TuneAVideoPipeline
+
 sys.path.append(os.path.join(repo_root, "core_files"))
 
 from unet import UNet3DConditionModel
 from dataset import TuneMultiVideoDataset
-from pipeline_tuneavideo import TuneAVideoPipeline
+
 from util import save_videos_grid, ddim_inversion
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:24"
