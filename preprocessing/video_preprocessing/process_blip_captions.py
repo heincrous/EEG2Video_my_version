@@ -1,6 +1,6 @@
 """
-ALIGN BLIP CAPTIONS TO CLIPS (Batched, Forced CLIP 768)
--------------------------------------------------------
+ALIGN BLIP CAPTIONS TO CLIPS (Batched, Correct CLIP ViT-B/32)
+-------------------------------------------------------------
 Input:
   raw/BLIP-caption/1st_10min.txt ... 7th_10min.txt
 
@@ -20,7 +20,7 @@ Output:
 import os
 import numpy as np
 from tqdm import tqdm
-from transformers import CLIPTokenizer, CLIPTextModel
+from transformers import CLIPModel, CLIPProcessor
 import torch
 import sys
 
@@ -37,15 +37,14 @@ from gt_label import GT_LABEL   # GT_LABEL shape (7,40), values 0–39
 os.makedirs(out_text_dir, exist_ok=True)
 os.makedirs(out_embed_dir, exist_ok=True)
 
-# clear any cached wrong versions
-os.system("rm -rf /root/.cache/huggingface/hub/models--openai--clip-vit-base-patch32")
-
-# load CLIP model + tokenizer (force correct OpenAI CLIP ViT-B/32 with hidden dim=768)
+# load CLIP model + tokenizer (guaranteed hidden dim = 768)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model_id = "openai/clip-vit-base-patch32"
 
-tokenizer = CLIPTokenizer.from_pretrained(model_id, revision="main", force_download=True)
-text_encoder = CLIPTextModel.from_pretrained(model_id, revision="main", force_download=True).to(device)
+clip_model = CLIPModel.from_pretrained(model_id).to(device)
+processor = CLIPProcessor.from_pretrained(model_id)
+tokenizer = processor.tokenizer
+text_encoder = clip_model.text_model
 text_encoder.eval()
 
 # sanity check
