@@ -13,7 +13,7 @@ pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-dif
 trained_output_dir    = "/content/drive/MyDrive/EEG2Video_outputs"
 test_text_list        = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/test_list.txt"
 blip_text_root        = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text"
-save_dir              = os.path.join(trained_output_dir, "test_videos")
+save_dir              = os.path.join(trained_output_dir, "test_diffusion")
 
 # ensure dirs exist
 os.makedirs(trained_output_dir, exist_ok=True)

@@ -9,7 +9,7 @@ from transformers import CLIPTokenizer
 
 # === PATHS ===
 drive_root = "/content/drive/MyDrive/EEG2Video_data/processed"
-output_dir = "/content/drive/MyDrive/EEG2Video_outputs/test_results"
+output_dir = "/content/drive/MyDrive/EEG2Video_outputs/test_seq2seq"
 vae_path   = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4/vae"
 caption_root = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text"
 
