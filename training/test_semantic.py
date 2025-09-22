@@ -72,7 +72,7 @@ if __name__ == "__main__":
     ckpt_path = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor.pt"
 
     eeg_test_list  = os.path.join(drive_root, "EEG_features/test_list.txt")
-    text_test_list = os.path.join(drive_root, "BLIP_embeddings/test_list.txt")
+    text_test_list = os.path.join(drive_root, "BLIP_embeddings/test_list_dup.txt")
 
     # Load dataset (limit samples for speed)
     test_dataset = EEGTextDataset(eeg_test_list, text_test_list, max_samples=50)
