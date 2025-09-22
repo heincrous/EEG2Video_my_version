@@ -71,7 +71,7 @@ if __name__ == "__main__":
     text_train_list = os.path.join(drive_root, "BLIP_embeddings/train_list_dup.txt")
 
     # choose max_samples=None for all data, or set a number like 200
-    dataset = EEGTextDataset(eeg_train_list, text_train_list, max_samples=800)
+    dataset = EEGTextDataset(eeg_train_list, text_train_list, max_samples=None)
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True,
                             pin_memory=True, num_workers=2)
 

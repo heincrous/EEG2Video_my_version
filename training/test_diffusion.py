@@ -12,6 +12,7 @@ from unet import UNet3DConditionModel
 pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 trained_output_dir    = "/content/drive/MyDrive/EEG2Video_outputs"
 test_text_list        = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/test_list.txt"
+blip_text_root        = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text"
 save_dir              = os.path.join(trained_output_dir, "test_videos")
 
 # ensure dirs exist
@@ -38,7 +39,7 @@ pipe = pipe.to("cuda")
 
 # === PICK RANDOM PROMPT FROM TEST LIST ===
 with open(test_text_list, "r") as f:
-    test_prompts = [line.strip() for line in f]
+    test_prompts = [os.path.join(blip_text_root, line.strip()) for line in f]
 
 prompt_path = random.choice(test_prompts)
 with open(prompt_path, "r") as pf:
