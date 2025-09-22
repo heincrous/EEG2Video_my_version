@@ -35,9 +35,7 @@ pipe = TuneAVideoPipeline(
 pipe.unet.to(torch.float16)
 
 pipe.enable_vae_slicing()
-pipe.enable_xformers_memory_efficient_attention()
 pipe = pipe.to("cuda")
-
 
 # === PICK RANDOM PROMPT FROM TEST LIST ===
 with open(test_text_list, "r") as f:
@@ -50,8 +48,8 @@ print("Chosen prompt:", prompt)
 generator = torch.Generator(device="cuda").manual_seed(42)
 result = pipe(
     prompt,
-    video_length=8,          # keep this consistent with validation length used in training
-    num_inference_steps=20,  # reduce if still OOM (e.g., 10–15)
+    video_length=8,          # keep consistent with training validation
+    num_inference_steps=20,  # reduce if still OOM
     generator=generator,
 )
 
