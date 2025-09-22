@@ -31,9 +31,9 @@ from scipy.signal import welch
 from tqdm import tqdm
 
 # parameters
-fre = 200
-segment_len = 400
+fs = 200
 channels = 62
+batch_size = 64  # adjust based on RAM
 
 # frequency bands (Hz)
 bands = {
@@ -50,39 +50,53 @@ out_dir = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_features/"
 os.makedirs(out_dir, exist_ok=True)
 
 def compute_de_psd(eeg_segment, fs=200):
-    """
-    Compute DE features for one EEG clip.
-    Input:  [400,62]
-    Output: [310] (62 channels × 5 bands)
-    """
+    """Compute DE features for one EEG clip [400,62] → [310]."""
     features = []
-    for ch in range(eeg_segment.shape[1]):  # loop over channels
+    for ch in range(eeg_segment.shape[1]):
         f, Pxx = welch(eeg_segment[:, ch], fs=fs, nperseg=fs*2)
         for band in bands.values():
             idx = np.logical_and(f >= band[0], f < band[1])
             band_power = np.sum(Pxx[idx])
-            de = np.log(band_power + 1e-8)   # Differential Entropy
+            de = np.log(band_power + 1e-8)
             features.append(de)
-    return np.array(features, dtype=np.float32)  # [310]
+    return np.array(features, dtype=np.float32)
 
-# walk through subjects
-for subj in os.listdir(in_dir):
+# collect subjects
+subjects = [s for s in sorted(os.listdir(in_dir)) if os.path.isdir(os.path.join(in_dir, s))]
+
+print("\nAvailable subjects:")
+for idx, subj in enumerate(subjects):
+    print(f"{idx}: {subj}")
+
+choices = input("\nEnter subject indices to process (comma separated): ")
+choices = [int(c.strip()) for c in choices.split(",") if c.strip().isdigit()]
+
+# process selected subjects
+for idx in choices:
+    subj = subjects[idx]
     subj_path = os.path.join(in_dir, subj)
-    if not os.path.isdir(subj_path):
-        continue
 
-    for block in os.listdir(subj_path):
+    for block in sorted(os.listdir(subj_path)):
         block_path = os.path.join(subj_path, block)
+        if not os.path.isdir(block_path):
+            continue
+
         out_block = os.path.join(out_dir, subj, block)
         os.makedirs(out_block, exist_ok=True)
 
-        for fname in tqdm(os.listdir(block_path), desc=f"{subj} {block}"):
-            if not fname.endswith(".npy"):
-                continue
+        fnames = [f for f in os.listdir(block_path) if f.endswith(".npy")]
+        for i in tqdm(range(0, len(fnames), batch_size), desc=f"{subj} {block}"):
+            batch = fnames[i:i+batch_size]
 
-            seg = np.load(os.path.join(block_path, fname))  # [400,62]
-            feats = compute_de_psd(seg, fs=fre)             # [310]
-            assert feats.shape == (310,)
+            # load batch into memory
+            segs = [np.load(os.path.join(block_path, f)) for f in batch]
 
-            save_path = os.path.join(out_block, fname)
-            np.save(save_path, feats)
+            # compute features for batch
+            feats_batch = [compute_de_psd(seg, fs=fs) for seg in segs]
+
+            # save batch
+            for fname, feats in zip(batch, feats_batch):
+                save_path = os.path.join(out_block, fname)
+                np.save(save_path, feats)
+
+print("\nProcessing complete.")
