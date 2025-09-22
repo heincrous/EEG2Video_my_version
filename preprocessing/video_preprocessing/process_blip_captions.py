@@ -37,6 +37,9 @@ from gt_label import GT_LABEL   # GT_LABEL shape (7,40), values 0–39
 os.makedirs(out_text_dir, exist_ok=True)
 os.makedirs(out_embed_dir, exist_ok=True)
 
+# clear any cached wrong versions
+os.system("rm -rf /root/.cache/huggingface/hub/models--openai--clip-vit-base-patch32")
+
 # load CLIP model + tokenizer (force correct OpenAI CLIP ViT-B/32 with hidden dim=768)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model_id = "openai/clip-vit-base-patch32"
