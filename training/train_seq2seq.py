@@ -119,16 +119,17 @@ class Seq2SeqEEG2Video(nn.Module):
 # Dataset
 # -------------------------
 class EEGVideoDataset(Dataset):
-    def __init__(self, eeg_list, video_list):
+    def __init__(self, eeg_list, video_list, base_dir="/content/drive/MyDrive/EEG2Video_data/processed"):
+        self.base_dir = base_dir
         self.eeg_files = [l.strip() for l in open(eeg_list).readlines()]
         self.video_files = [l.strip() for l in open(video_list).readlines()]
         assert len(self.eeg_files) == len(self.video_files)
-        self.scaler = None
 
         # fit scaler on EEG
         eeg_all = []
-        for path in self.eeg_files:
-            eeg = np.load(path)  # [7,62,100]
+        for rel_path in self.eeg_files:
+            abs_path = os.path.join(self.base_dir, "EEG_windows", rel_path)
+            eeg = np.load(abs_path)  # [7,62,100]
             eeg_all.append(eeg.reshape(-1, 100))
         eeg_all = np.vstack(eeg_all)
         self.scaler = StandardScaler().fit(eeg_all)
@@ -137,10 +138,13 @@ class EEGVideoDataset(Dataset):
         return len(self.eeg_files)
 
     def __getitem__(self, idx):
-        eeg = np.load(self.eeg_files[idx])  # [7,62,100]
-        video = np.load(self.video_files[idx])  # [F,4,36,64]
+        eeg_path = os.path.join(self.base_dir, "EEG_windows", self.eeg_files[idx])
+        vid_path = os.path.join(self.base_dir, "Video_latents", self.video_files[idx])
 
-        # normalize EEG per window
+        eeg = np.load(eeg_path)      # [7,62,100]
+        video = np.load(vid_path)    # [F,4,36,64]
+
+        # normalize EEG
         b, c, t = eeg.shape
         eeg = eeg.reshape(-1, t)
         eeg = self.scaler.transform(eeg)
