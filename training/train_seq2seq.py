@@ -65,7 +65,7 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x + self.pe[:, :x.size(1)])
 
 # -------------------------
-# Autoregressive Transformer (authors’)
+# Autoregressive Transformer (authors’ style)
 # -------------------------
 class MyTransformer(nn.Module):
     def __init__(self, d_model=512):
@@ -101,7 +101,7 @@ class MyTransformer(nn.Module):
 
         enc_out = self.encoder(src)
 
-        # Autoregressive rollout
+        # Autoregressive rollout: prepend zero, then generate F steps
         new_tgt = torch.zeros((b, 1, tgt.shape[2]), device=tgt.device)
         for i in range(tgt.shape[1]):
             dec_out = self.decoder(new_tgt, enc_out, tgt_mask=tgt_mask[:i+1, :i+1])
@@ -111,7 +111,7 @@ class MyTransformer(nn.Module):
         return out
 
 # -------------------------
-# Dataset (aligned lists with DUPs)
+# Dataset
 # -------------------------
 class EEGVideoDataset(Dataset):
     def __init__(self, eeg_list, video_list, base_dir="/content/drive/MyDrive/EEG2Video_data/processed", debug=False):
@@ -120,7 +120,6 @@ class EEGVideoDataset(Dataset):
         self.video_files = [l.strip() for l in open(video_list).readlines()]
         assert len(self.eeg_files) == len(self.video_files)
 
-        # Fit scaler on all EEG
         eeg_all = []
         for rel_path in self.eeg_files:
             abs_path = os.path.join(self.base_dir, "EEG_windows", rel_path)
@@ -129,7 +128,6 @@ class EEGVideoDataset(Dataset):
         eeg_all = np.vstack(eeg_all)
         self.scaler = StandardScaler().fit(eeg_all)
 
-        # Fit scaler on all video latents
         vid_all = []
         for rel_path in self.video_files:
             abs_path = os.path.join(self.base_dir, "Video_latents", rel_path)
@@ -150,13 +148,11 @@ class EEGVideoDataset(Dataset):
         eeg = np.load(eeg_path)      # [7,62,100]
         video = np.load(vid_path)    # [F,4,36,64]
 
-        # normalize EEG
         b, c, t = eeg.shape
         eeg = eeg.reshape(-1, t)
         eeg = self.scaler.transform(eeg)
         eeg = eeg.reshape(b, c, t)
 
-        # normalize video latents
         f, ch, h, w = video.shape
         video = video.reshape(-1, ch*h*w)
         video = self.latent_scaler.transform(video)
@@ -193,14 +189,13 @@ if __name__ == "__main__":
         for eeg, video in tqdm(dataloader, desc=f"Epoch {epoch+1}"):
             eeg, video = eeg.cuda(), video.cuda()
 
-            # prepend zero frame
             b, f, c, h, w = video.shape
             zero_frame = torch.zeros((b,1,c,h,w), device=video.device)
             full_video = torch.cat([zero_frame, video], dim=1)
 
             optimizer.zero_grad()
             out = model(eeg, full_video)
-            loss = criterion(out[:, :-1], video)
+            loss = criterion(out[:, :-1], video)  # align like authors
             loss.backward()
             optimizer.step()
             scheduler.step()
@@ -208,11 +203,9 @@ if __name__ == "__main__":
 
         print(f"Epoch {epoch+1}, Loss={epoch_loss/len(dataloader):.6f}")
 
-        # Debug: check latent vs prediction stats
         with torch.no_grad():
             eeg, video = next(iter(dataloader))
             eeg, video = eeg.cuda(), video.cuda()
-            b, f, c, h, w = video.shape
             zero_frame = torch.zeros((b,1,c,h,w), device=video.device)
             full_video = torch.cat([zero_frame, video], dim=1)
             pred = model(eeg, full_video)[:, :-1]
