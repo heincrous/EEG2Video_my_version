@@ -1,9 +1,10 @@
 import os, sys, torch, imageio, gc, numpy as np
 from diffusers import DDIMScheduler, AutoencoderKL
 
+# === repo setup ===
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(os.path.join(repo_root, "pipelines"))
-from pipeline_tuneavideo import TuneAVideoPipeline
+from pipeline_tuneeeg2video import TuneAVideoPipeline   # <-- use EEG pipeline
 
 sys.path.append(os.path.join(repo_root, "core_files"))
 from unet import UNet3DConditionModel
@@ -59,23 +60,23 @@ pred_embed = pred_embed.view(1, 77, 768)
 
 # === diffusion pipeline ===
 gc.collect(); torch.cuda.empty_cache()
-pipe = TuneAVideoPipeline(
-    vae=AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae", torch_dtype=torch.float16),
-    text_encoder=None, tokenizer=None,
+pipe = TuneAVideoPipeline.from_pretrained(
+    pretrained_model_path,
     unet=UNet3DConditionModel.from_pretrained_2d(pretrained_model_path, subfolder="unet"),
-    scheduler=DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler"),
+    torch_dtype=torch.float16,
 ).to("cuda")
-pipe.unet.to(torch.float16)
 pipe.enable_vae_slicing()
 
 # === generate video ===
 generator = torch.Generator(device="cuda").manual_seed(42)
 result = pipe(
-    prompt_embeds=pred_embed,
+    model=None,
+    eeg=pred_embed,         # EEG embedding [1,77,768]
     video_length=8,
-    width=512,
     height=288,
+    width=512,
     num_inference_steps=20,
+    guidance_scale=7.5,
     generator=generator,
 )
 
