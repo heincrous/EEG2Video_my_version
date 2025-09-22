@@ -114,7 +114,7 @@ class MyTransformer(nn.Module):
 # Dataset (aligned lists with DUPs)
 # -------------------------
 class EEGVideoDataset(Dataset):
-    def __init__(self, eeg_list, video_list, base_dir="/content/drive/MyDrive/EEG2Video_data/processed"):
+    def __init__(self, eeg_list, video_list, base_dir="/content/drive/MyDrive/EEG2Video_data/processed", debug=False):
         self.base_dir = base_dir
         self.eeg_files = [l.strip() for l in open(eeg_list).readlines()]
         self.video_files = [l.strip() for l in open(video_list).readlines()]
@@ -128,6 +128,17 @@ class EEGVideoDataset(Dataset):
             eeg_all.append(eeg.reshape(-1, 100))
         eeg_all = np.vstack(eeg_all)
         self.scaler = StandardScaler().fit(eeg_all)
+
+        # Fit scaler on all video latents
+        vid_all = []
+        for rel_path in self.video_files:
+            abs_path = os.path.join(self.base_dir, "Video_latents", rel_path)
+            vid = np.load(abs_path)  # [F,4,36,64]
+            vid_all.append(vid.reshape(-1, 4*36*64))
+        vid_all = np.vstack(vid_all)
+        self.latent_scaler = StandardScaler().fit(vid_all)
+
+        self.debug = debug
 
     def __len__(self):
         return len(self.eeg_files)
@@ -145,8 +156,17 @@ class EEGVideoDataset(Dataset):
         eeg = self.scaler.transform(eeg)
         eeg = eeg.reshape(b, c, t)
 
+        # normalize video latents
+        f, ch, h, w = video.shape
+        video = video.reshape(-1, ch*h*w)
+        video = self.latent_scaler.transform(video)
+        video = video.reshape(f, ch, h, w)
+
         eeg = torch.tensor(eeg, dtype=torch.float32)
         video = torch.tensor(video, dtype=torch.float32)
+
+        if self.debug and idx < 2:
+            print(f"[DEBUG ALIGNMENT] eeg={self.eeg_files[idx]} | video={self.video_files[idx]}")
 
         return eeg, video
 
@@ -158,10 +178,8 @@ if __name__ == "__main__":
 
     eeg_train_list = os.path.join(drive_root, "EEG_windows/train_list.txt")
     vid_train_list = os.path.join(drive_root, "Video_latents/train_list_dup.txt")
-    eeg_test_list  = os.path.join(drive_root, "EEG_windows/test_list.txt")
-    vid_test_list  = os.path.join(drive_root, "Video_latents/test_list_dup.txt")
 
-    dataset = EEGVideoDataset(eeg_train_list, vid_train_list)
+    dataset = EEGVideoDataset(eeg_train_list, vid_train_list, debug=True)
     dataloader = DataLoader(dataset, batch_size=16, shuffle=True, num_workers=2)
 
     model = MyTransformer().cuda()
@@ -190,6 +208,20 @@ if __name__ == "__main__":
 
         print(f"Epoch {epoch+1}, Loss={epoch_loss/len(dataloader):.6f}")
 
-    save_path = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_model_authors.pt"
+        # Debug: check latent vs prediction stats
+        with torch.no_grad():
+            eeg, video = next(iter(dataloader))
+            eeg, video = eeg.cuda(), video.cuda()
+            b, f, c, h, w = video.shape
+            zero_frame = torch.zeros((b,1,c,h,w), device=video.device)
+            full_video = torch.cat([zero_frame, video], dim=1)
+            pred = model(eeg, full_video)[:, :-1]
+
+            print("[DEBUG] GT latents: mean {:.4f}, std {:.4f}, min {:.4f}, max {:.4f}".format(
+                video.mean().item(), video.std().item(), video.min().item(), video.max().item()))
+            print("[DEBUG] Predicted : mean {:.4f}, std {:.4f}, min {:.4f}, max {:.4f}".format(
+                pred.mean().item(), pred.std().item(), pred.min().item(), pred.max().item()))
+
+    save_path = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoint.pt"
     torch.save({"state_dict": model.state_dict()}, save_path)
     print("Model saved to:", save_path)

@@ -5,26 +5,25 @@ from tqdm import tqdm
 from sklearn.metrics import mean_squared_error
 from skimage.metrics import structural_similarity as ssim
 from diffusers import AutoencoderKL
-from transformers import CLIPTokenizer
 
 # === PATHS ===
-drive_root = "/content/drive/MyDrive/EEG2Video_data/processed"
-output_dir = "/content/drive/MyDrive/EEG2Video_outputs/test_seq2seq"
-vae_path   = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4/vae"
+drive_root   = "/content/drive/MyDrive/EEG2Video_data/processed"
+output_dir   = "/content/drive/MyDrive/EEG2Video_outputs/test_seq2seq"
+vae_path     = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4/vae"
 caption_root = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text"
 
-eeg_test_list = os.path.join(drive_root, "EEG_windows/test_list.txt")
-vid_test_list = os.path.join(drive_root, "Video_latents/test_list_dup.txt")
+eeg_test_list  = os.path.join(drive_root, "EEG_windows/test_list.txt")
+vid_test_list  = os.path.join(drive_root, "Video_latents/test_list_dup.txt")
 text_test_list = os.path.join(caption_root, "test_list.txt")
 
 os.makedirs(output_dir, exist_ok=True)
 
-# === IMPORT YOUR MODEL ===
-from seq2seq_model import Seq2SeqEEG2Video  # assumes you saved model definition here
+# === IMPORT YOUR MODEL (authors’ transformer) ===
+from train_seq2seq import MyTransformer  # must match your training script
 
 # === LOAD MODEL ===
-checkpoint_path = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_model.pt"
-model = Seq2SeqEEG2Video().cuda()
+checkpoint_path = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoint.pt"
+model = MyTransformer().cuda()
 ckpt = torch.load(checkpoint_path, map_location="cuda")
 model.load_state_dict(ckpt["state_dict"])
 model.eval()
@@ -41,10 +40,10 @@ with open(vid_test_list) as f:
 with open(text_test_list) as f:
     txt_files = [os.path.join(caption_root, l.strip()) for l in f]
 
-idx = random.randint(0, len(eeg_files)-1)
+idx = random.randint(0, len(eeg_files) - 1)
 eeg_path = os.path.join(drive_root, "EEG_windows", eeg_files[idx])
 vid_path = os.path.join(drive_root, "Video_latents", vid_files[idx])
-txt_path = txt_files[idx % len(txt_files)]  # align index to caption list
+txt_path = txt_files[idx % len(txt_files)]  # simple alignment
 
 # === LOAD DATA ===
 eeg = np.load(eeg_path)   # [7,62,100]
@@ -59,12 +58,12 @@ print("Chosen caption file:", txt_path)
 print("Caption text:", caption_text)
 
 # === PREP TENSORS ===
-eeg = torch.tensor(eeg, dtype=torch.float32).unsqueeze(0).cuda()   # [1,7,62,100]
-video = torch.tensor(video, dtype=torch.float32).unsqueeze(0).cuda() # [1,F,4,36,64]
+eeg   = torch.tensor(eeg, dtype=torch.float32).unsqueeze(0).cuda()    # [1,7,62,100]
+video = torch.tensor(video, dtype=torch.float32).unsqueeze(0).cuda()  # [1,F,4,36,64]
 
 # === PREDICTED VIDEO ===
 b, f, c, h, w = video.shape
-zero_frame = torch.zeros((b,1,c,h,w), device=video.device)
+zero_frame = torch.zeros((b, 1, c, h, w), device=video.device)
 full_video = torch.cat([zero_frame, video], dim=1)
 
 with torch.no_grad():
@@ -74,9 +73,9 @@ with torch.no_grad():
 rand_latent = torch.randn_like(video)
 
 # === SHUFFLED BASELINE ===
-shuffle_idx = random.randint(0, len(vid_files)-1)
+shuffle_idx = random.randint(0, len(vid_files) - 1)
 while shuffle_idx == idx:
-    shuffle_idx = random.randint(0, len(vid_files)-1)
+    shuffle_idx = random.randint(0, len(vid_files) - 1)
 shuffle_latent = np.load(os.path.join(drive_root, "Video_latents", vid_files[shuffle_idx]))
 shuffle_latent = torch.tensor(shuffle_latent, dtype=torch.float32).unsqueeze(0).cuda()
 
@@ -100,13 +99,12 @@ print("Shuffled vs GT:", mse_ssim(shuffle_latent, video))
 # === DECODE & SAVE MP4s ===
 def decode_and_save(latents, name):
     # latents: [1,F,4,36,64]
-    latents = latents.squeeze(0) / 0.18215
-    latents = rearrange(latents, "f c h w -> f c h w")
+    latents = latents.squeeze(0) / 0.18215  # scale back to VAE space
+    frames = []
     with torch.no_grad():
-        frames = []
         for i in range(latents.shape[0]):
             frame = vae.decode(latents[i:i+1]).sample
-            frame = (frame.clamp(-1,1)+1)/2
+            frame = (frame.clamp(-1,1) + 1) / 2  # to [0,1]
             frame = (frame * 255).cpu().numpy().astype(np.uint8)
             frame = rearrange(frame, "b c h w -> h w c b")[...,0]
             frames.append(frame)
