@@ -56,8 +56,12 @@ result = pipe(
 video_tensor = result.videos  # [1, f, c, h, w]
 
 # === SAVE MP4 ===
-frames = (video_tensor[0].permute(0, 2, 3, 1).cpu().numpy() * 255).astype("uint8")
+# video_tensor: [1, f, c, h, w]
+frames = (video_tensor[0] * 255).clamp(0, 255).byte()  # [f, c, h, w]
+frames = frames.permute(0, 2, 3, 1).cpu().numpy()      # [f, h, w, c]
+
 mp4_path = os.path.join(save_dir, "sample_test.mp4")
-imageio.mimsave(mp4_path, frames, fps=8)
+imageio.mimsave(mp4_path, list(frames), fps=8)
 
 print("Video saved to:", mp4_path)
+
