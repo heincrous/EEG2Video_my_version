@@ -29,11 +29,14 @@ class SemanticPredictor(nn.Module):
 # Dataset wrapper with optional max_samples
 # -------------------------------------------------------------------------
 class EEGTextDataset(Dataset):
-    def __init__(self, eeg_list_path, text_list_path, max_samples=200): # set max_samples=None to use all data
+    def __init__(self, eeg_list_path, text_list_path, max_samples=200):  # set max_samples=None to use all data
+        eeg_root = os.path.dirname(eeg_list_path)     # /.../EEG_features
+        text_root = os.path.dirname(text_list_path)   # /.../BLIP_embeddings
+
         with open(eeg_list_path, 'r') as f:
-            self.eeg_files = [line.strip() for line in f.readlines()]
+            self.eeg_files = [os.path.join(eeg_root, line.strip()) for line in f.readlines()]
         with open(text_list_path, 'r') as f:
-            self.text_files = [line.strip() for line in f.readlines()]
+            self.text_files = [os.path.join(text_root, line.strip()) for line in f.readlines()]
 
         assert len(self.eeg_files) == len(self.text_files), "Mismatch between EEG and text file counts"
 
