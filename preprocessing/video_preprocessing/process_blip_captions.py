@@ -1,6 +1,6 @@
 """
-ALIGN BLIP CAPTIONS TO CLIPS (Batched)
----------------------------------------
+ALIGN BLIP CAPTIONS TO CLIPS (Batched, Forced CLIP 768)
+-------------------------------------------------------
 Input:
   raw/BLIP-caption/1st_10min.txt ... 7th_10min.txt
 
@@ -9,7 +9,7 @@ Process:
   - Captions are in randomized presentation order
   - Use GT_LABEL (7x40) to map order_idx → true class index
   - Save plain text
-  - Tokenize + encode with CLIP in batches
+  - Tokenize + encode with CLIP ViT-B/32 in batches
   - Save embeddings [77,768]
 
 Output:
@@ -37,10 +37,12 @@ from gt_label import GT_LABEL   # GT_LABEL shape (7,40), values 0–39
 os.makedirs(out_text_dir, exist_ok=True)
 os.makedirs(out_embed_dir, exist_ok=True)
 
-# load CLIP model + tokenizer (hidden dim must be 768)
+# load CLIP model + tokenizer (force correct OpenAI CLIP ViT-B/32 with hidden dim=768)
 device = "cuda" if torch.cuda.is_available() else "cpu"
-tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
-text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+model_id = "openai/clip-vit-base-patch32"
+
+tokenizer = CLIPTokenizer.from_pretrained(model_id, revision="main", force_download=True)
+text_encoder = CLIPTextModel.from_pretrained(model_id, revision="main", force_download=True).to(device)
 text_encoder.eval()
 
 # sanity check
