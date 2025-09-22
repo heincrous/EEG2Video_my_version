@@ -112,20 +112,26 @@ def main(
 
     train_dataset = TuneMultiVideoDataset(**train_data)
 
-    latent_list_path = "/content/drive/MyDrive/EEG2Video_data/processed/Video_latents/train_list.txt"
-    text_list_path   = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/train_list.txt"
+    # ---- Root directories for modalities ----
+    video_latents_root = "/content/drive/MyDrive/EEG2Video_data/processed/Video_latents"
+    blip_text_root     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text"
+
+    # ---- Load train lists ----
+    latent_list_path = os.path.join(video_latents_root, "train_list.txt")
+    text_list_path   = os.path.join(blip_text_root, "train_list.txt")
 
     with open(latent_list_path, "r") as f:
-        train_dataset.video_path = [line.strip() for line in f]
+        train_dataset.video_path = [os.path.join(video_latents_root, line.strip()) for line in f]
 
     with open(text_list_path, "r") as f:
-        train_dataset.prompt = [line.strip() for line in f]
+        train_dataset.prompt = [os.path.join(blip_text_root, line.strip()) for line in f]
 
     print("video_path_length:", len(train_dataset.video_path))
     print("prompt_length:", len(train_dataset.prompt))
 
+    # ---- Tokenize prompts ----
     train_dataset.prompt_ids = tokenizer(
-        list(train_dataset.prompt),
+        [open(p).read().strip() for p in train_dataset.prompt],
         max_length=tokenizer.model_max_length,
         padding="max_length",
         truncation=True,
@@ -152,10 +158,14 @@ def main(
     validation_data["video_length"] = min(8, inferred_video_length)
     print(f"[Validation] Using video_length={validation_data['video_length']}")
 
-    val_text_list_path = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/test_list.txt"
+    # ---- Validation prompts ----
+    val_text_list_path = os.path.join(blip_text_root, "test_list.txt")
     with open(val_text_list_path, "r") as f:
-        all_prompts = [line.strip() for line in f]
-    config["validation_data"]["prompts"] = random.sample(all_prompts, k=1)
+        all_prompts = [os.path.join(blip_text_root, line.strip()) for line in f]
+
+    config["validation_data"]["prompts"] = [
+        open(random.choice(all_prompts)).read().strip()
+    ]
 
     validation_pipeline = TuneAVideoPipeline(
         vae=vae,
@@ -225,7 +235,6 @@ def main(
 
             global_step += 1
 
-        # validation every 2 epochs (but no sample saving)
         if epoch % 2 == 0 and accelerator.is_main_process:
             generator = torch.Generator(device=latents.device).manual_seed(seed)
             for prompt in config["validation_data"]["prompts"]:
@@ -236,7 +245,6 @@ def main(
                     generator=generator
                 )
 
-    # save the trained pipeline
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
         unet = accelerator.unwrap_model(unet)

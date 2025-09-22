@@ -68,7 +68,7 @@ if __name__ == "__main__":
     drive_root = "/content/drive/MyDrive/EEG2Video_data/processed"
 
     eeg_train_list  = os.path.join(drive_root, "EEG_features/train_list.txt")
-    text_train_list = os.path.join(drive_root, "BLIP_embeddings/train_list.txt")
+    text_train_list = os.path.join(drive_root, "BLIP_embeddings/train_list_dup.txt")
 
     # choose max_samples=None for all data, or set a number like 200
     dataset = EEGTextDataset(eeg_train_list, text_train_list, max_samples=800)
