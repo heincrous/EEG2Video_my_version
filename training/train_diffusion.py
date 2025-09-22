@@ -280,7 +280,7 @@ def main(
                 accelerator.log({"train_loss": train_loss}, step=global_step)
                 train_loss = 0.0
 
-        if epoch % 100 == 0:
+        if epoch % 1 == 0: # change to 100 for full training
             if accelerator.is_main_process:
                 samples = []
                 generator = torch.Generator(device=latents.device)
@@ -325,7 +325,7 @@ if __name__ == "__main__":
         validation_data=dict(prompts=None, num_inv_steps=50, use_inv_latent=False),
         train_batch_size=10,
         learning_rate=3e-5,
-        num_train_epochs=200,
+        num_train_epochs=5, # change to 200 for full training
         mixed_precision="fp16",
         gradient_accumulation_steps=1,
         enable_xformers_memory_efficient_attention=False,

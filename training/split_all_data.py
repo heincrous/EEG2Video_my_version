@@ -38,12 +38,10 @@ import numpy as np
 import shutil
 from tqdm import tqdm
 
-# paths
 base_dir = "/content/drive/MyDrive/EEG2Video_data/processed/"
 modalities_subindep = ["Video_mp4", "Video_gif", "Video_latents", "BLIP_text", "BLIP_embeddings"]
 modalities_subdep = ["EEG_segments", "EEG_windows", "EEG_features"]
 
-# train/test split rule
 def get_split(clip_id):
     return "train" if clip_id < 4 else "test"
 
@@ -52,7 +50,6 @@ def ensure_dir(path):
         os.makedirs(path)
 
 def safe_link(src, dst):
-    """Try to symlink, fallback to copy if not supported."""
     if os.path.exists(dst):
         return
     try:
@@ -60,47 +57,49 @@ def safe_link(src, dst):
     except OSError:
         shutil.copy2(src, dst)
 
+# --- find blocks that exist in ALL subject-independent modalities ---
+available_blocks = None
+for mod in modalities_subindep:
+    mod_dir = os.path.join(base_dir, mod)
+    blocks = [b for b in os.listdir(mod_dir) if os.path.isdir(os.path.join(mod_dir, b))]
+    available_blocks = set(blocks) if available_blocks is None else available_blocks & set(blocks)
+
+print("Blocks available in all modalities:", sorted(list(available_blocks)))
+
 # subject-independent split
 for mod in modalities_subindep:
     in_dir = os.path.join(base_dir, mod)
-    out_train = os.path.join(base_dir, mod, "train")
-    out_test = os.path.join(base_dir, mod, "test")
+    out_train = os.path.join(in_dir, "train")
+    out_test = os.path.join(in_dir, "test")
     ensure_dir(out_train)
     ensure_dir(out_test)
 
     train_list, test_list = [], []
 
-    for block in tqdm(os.listdir(in_dir), desc=f"Splitting {mod}"):
+    for block in tqdm(sorted(available_blocks), desc=f"Splitting {mod}"):
         block_path = os.path.join(in_dir, block)
-        if not os.path.isdir(block_path):
-            continue
         for fname in os.listdir(block_path):
             if not any(fname.endswith(ext) for ext in [".mp4", ".gif", ".npy", ".txt"]):
                 continue
-            parts = fname.split("_")
-            clip_id = int(parts[-1].replace("clip","").split(".")[0]) - 1
+            clip_id = int(fname.split("_")[-1].replace("clip","").split(".")[0]) - 1
             split = get_split(clip_id)
-            out_dir = os.path.join(base_dir, mod, split, block)
+            out_dir = os.path.join(in_dir, split, block)
             ensure_dir(out_dir)
             src = os.path.join(block_path, fname)
             dst = os.path.join(out_dir, fname)
             safe_link(src, dst)
-            if split == "train":
-                train_list.append(dst)
-            else:
-                test_list.append(dst)
+            (train_list if split=="train" else test_list).append(dst)
 
-    # write master lists
-    with open(os.path.join(base_dir, mod, "train_list.txt"), "w") as f:
+    with open(os.path.join(in_dir, "train_list.txt"), "w") as f:
         f.write("\n".join(train_list))
-    with open(os.path.join(base_dir, mod, "test_list.txt"), "w") as f:
+    with open(os.path.join(in_dir, "test_list.txt"), "w") as f:
         f.write("\n".join(test_list))
 
 # subject-dependent split
 for mod in modalities_subdep:
     in_dir = os.path.join(base_dir, mod)
-    out_train = os.path.join(base_dir, mod, "train")
-    out_test = os.path.join(base_dir, mod, "test")
+    out_train = os.path.join(in_dir, "train")
+    out_test = os.path.join(in_dir, "test")
     ensure_dir(out_train)
     ensure_dir(out_test)
 
@@ -111,45 +110,23 @@ for mod in modalities_subdep:
         if not os.path.isdir(subj_path):
             continue
 
-        subj_file = subj_path + ".npy"
-        if os.path.exists(subj_file):
-            # subject-level arrays
-            arr = np.load(subj_file)
-            for block_id in range(7):
-                for class_id in range(40):
-                    for clip_id in range(5):
-                        split = get_split(clip_id)
-                        out_dir = os.path.join(base_dir, mod, split, subj, f"Block{block_id+1}")
-                        ensure_dir(out_dir)
-                        fname = f"class{class_id:02d}_clip{clip_id+1:02d}.npy"
-                        save_path = os.path.join(out_dir, fname)
-                        np.save(save_path, arr[block_id, class_id, clip_id])
-                        if split == "train":
-                            train_list.append(save_path)
-                        else:
-                            test_list.append(save_path)
-        else:
-            # already expanded per-clip
-            for block in os.listdir(subj_path):
-                block_path = os.path.join(subj_path, block)
-                for fname in os.listdir(block_path):
-                    if not fname.endswith(".npy"):
-                        continue
-                    parts = fname.split("_")
-                    clip_id = int(parts[-1].replace("clip","").split(".")[0]) - 1
-                    split = get_split(clip_id)
-                    out_dir = os.path.join(base_dir, mod, split, subj, block)
-                    ensure_dir(out_dir)
-                    src = os.path.join(block_path, fname)
-                    dst = os.path.join(out_dir, fname)
-                    safe_link(src, dst)
-                    if split == "train":
-                        train_list.append(dst)
-                    else:
-                        test_list.append(dst)
+        for block in sorted(available_blocks):
+            block_path = os.path.join(subj_path, block)
+            if not os.path.exists(block_path):
+                continue
+            for fname in os.listdir(block_path):
+                if not fname.endswith(".npy"):
+                    continue
+                clip_id = int(fname.split("_")[-1].replace("clip","").split(".")[0]) - 1
+                split = get_split(clip_id)
+                out_dir = os.path.join(in_dir, split, subj, block)
+                ensure_dir(out_dir)
+                src = os.path.join(block_path, fname)
+                dst = os.path.join(out_dir, fname)
+                safe_link(src, dst)
+                (train_list if split=="train" else test_list).append(dst)
 
-    # write master lists
-    with open(os.path.join(base_dir, mod, "train_list.txt"), "w") as f:
+    with open(os.path.join(in_dir, "train_list.txt"), "w") as f:
         f.write("\n".join(train_list))
-    with open(os.path.join(base_dir, mod, "test_list.txt"), "w") as f:
+    with open(os.path.join(in_dir, "test_list.txt"), "w") as f:
         f.write("\n".join(test_list))
