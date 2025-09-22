@@ -31,35 +31,11 @@ Outputs:
 
 Master Files:
   For faster loading, create train/test index files after splitting.
-
-  Example per-modality:
-    processed/Video_latents/train_list.txt
-    processed/Video_latents/test_list.txt
-
-    processed/EEG_windows/train_list.txt
-    processed/EEG_windows/test_list.txt
-
-    processed/BLIP_embeddings/train_list.txt
-    processed/BLIP_embeddings/test_list.txt
-
-  Each .txt file contains absolute paths of all samples in that split.
-
-  Additionally, save subject-level arrays before splitting:
-    processed/EEG_segments/subX.npy
-    Shape = [7,40,5,62,400]
-
-    processed/EEG_features/subX.npy
-    Shape = [7,40,5,310]
-
-    processed/EEG_windows/subX.npy
-    Shape = [7,40,5,7,62,100]
-
-  During splitting, expand these subject-level files into per-clip
-  train/test files according to the 4/1 rule above.
 """
 
 import os
 import numpy as np
+import shutil
 from tqdm import tqdm
 
 # paths
@@ -71,10 +47,18 @@ modalities_subdep = ["EEG_segments", "EEG_windows", "EEG_features"]
 def get_split(clip_id):
     return "train" if clip_id < 4 else "test"
 
-# ensure dirs exist
 def ensure_dir(path):
     if not os.path.exists(path):
         os.makedirs(path)
+
+def safe_link(src, dst):
+    """Try to symlink, fallback to copy if not supported."""
+    if os.path.exists(dst):
+        return
+    try:
+        os.symlink(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
 
 # subject-independent split
 for mod in modalities_subindep:
@@ -94,14 +78,13 @@ for mod in modalities_subindep:
             if not any(fname.endswith(ext) for ext in [".mp4", ".gif", ".npy", ".txt"]):
                 continue
             parts = fname.split("_")
-            clip_id = int(parts[-1].replace("clip","").replace(".mp4","").replace(".gif","").replace(".npy","").replace(".txt","")) - 1
+            clip_id = int(parts[-1].replace("clip","").split(".")[0]) - 1
             split = get_split(clip_id)
             out_dir = os.path.join(base_dir, mod, split, block)
             ensure_dir(out_dir)
             src = os.path.join(block_path, fname)
             dst = os.path.join(out_dir, fname)
-            if not os.path.exists(dst):
-                os.symlink(src, dst)  # save space with symlink
+            safe_link(src, dst)
             if split == "train":
                 train_list.append(dst)
             else:
@@ -128,10 +111,10 @@ for mod in modalities_subdep:
         if not os.path.isdir(subj_path):
             continue
 
-        # case 1: subject-level array before splitting
-        subj_file = os.path.join(subj_path + ".npy")
+        subj_file = subj_path + ".npy"
         if os.path.exists(subj_file):
-            arr = np.load(subj_file)  # EEG_segments: [7,40,5,62,400], EEG_features: [7,40,5,310], EEG_windows: [7,40,5,7,62,100]
+            # subject-level arrays
+            arr = np.load(subj_file)
             for block_id in range(7):
                 for class_id in range(40):
                     for clip_id in range(5):
@@ -146,21 +129,20 @@ for mod in modalities_subdep:
                         else:
                             test_list.append(save_path)
         else:
-            # case 2: already expanded into per-clip files
+            # already expanded per-clip
             for block in os.listdir(subj_path):
                 block_path = os.path.join(subj_path, block)
                 for fname in os.listdir(block_path):
                     if not fname.endswith(".npy"):
                         continue
                     parts = fname.split("_")
-                    clip_id = int(parts[-1].replace("clip","").replace(".npy","")) - 1
+                    clip_id = int(parts[-1].replace("clip","").split(".")[0]) - 1
                     split = get_split(clip_id)
                     out_dir = os.path.join(base_dir, mod, split, subj, block)
                     ensure_dir(out_dir)
                     src = os.path.join(block_path, fname)
                     dst = os.path.join(out_dir, fname)
-                    if not os.path.exists(dst):
-                        os.symlink(src, dst)
+                    safe_link(src, dst)
                     if split == "train":
                         train_list.append(dst)
                     else:
