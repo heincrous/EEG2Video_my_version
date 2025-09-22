@@ -12,13 +12,15 @@ from unet import UNet3DConditionModel
 pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 trained_output_dir    = "/content/drive/MyDrive/EEG2Video_outputs"
 test_text_list        = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/test_list.txt"
-save_dir              = os.path.join(trained_output_dir, "test_samples")
+save_dir              = os.path.join(trained_output_dir, "test_videos")
+
+# ensure dirs exist
+os.makedirs(trained_output_dir, exist_ok=True)
 os.makedirs(save_dir, exist_ok=True)
 
 # === MEMORY CONFIG ===
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-# Clear any cached memory
 gc.collect()
 torch.cuda.empty_cache()
 
@@ -27,13 +29,10 @@ pipe = TuneAVideoPipeline(
     vae=AutoencoderKL.from_pretrained(trained_output_dir, subfolder="vae", torch_dtype=torch.float16),
     text_encoder=CLIPTextModel.from_pretrained(trained_output_dir, subfolder="text_encoder", torch_dtype=torch.float16),
     tokenizer=CLIPTokenizer.from_pretrained(trained_output_dir, subfolder="tokenizer"),
-    unet=UNet3DConditionModel.from_pretrained_2d(trained_output_dir, subfolder="unet"),  # no torch_dtype here
+    unet=UNet3DConditionModel.from_pretrained_2d(trained_output_dir, subfolder="unet"),
     scheduler=DDIMScheduler.from_pretrained(trained_output_dir, subfolder="scheduler"),
 )
-
-# cast UNet after loading
 pipe.unet.to(torch.float16)
-
 pipe.enable_vae_slicing()
 pipe = pipe.to("cuda")
 
@@ -52,31 +51,35 @@ print("Caption text:", prompt_text)
 generator = torch.Generator(device="cuda").manual_seed(42)
 result = pipe(
     prompt_text,
-    video_length=8,          # consistent with training validation
-    height=288,              # enforce training resolution
+    video_length=8,
+    height=288,
     width=512,
-    num_inference_steps=20,  # reduce if still OOM
+    num_inference_steps=20,
     generator=generator,
 )
 
-video_tensor = result.videos  # [1, f, c, h, w]
+video_tensor = result.videos
 print("Result.videos shape:", video_tensor.shape)
 
 # === SAVE MP4 ===
-# video_tensor: [1, f, c, h, w]
 frames = (video_tensor[0] * 255).clamp(0, 255).to(torch.uint8)  # [f, c, h, w]
 frames = frames.permute(0, 2, 3, 1).cpu().numpy()               # [f, h, w, c]
 
-# enforce 3 channels only
 if frames.shape[-1] > 3:
     frames = frames[..., :3]
 elif frames.shape[-1] == 1:
     frames = frames.repeat(3, axis=-1)
 
-print("Final frame shape:", frames.shape)  # should be (f, h, w, 3)
+print("Final frame shape:", frames.shape)
 
-mp4_path = os.path.join(save_dir, "sample_test.mp4")
-imageio.mimsave(mp4_path, [f for f in frames], fps=8)
+# derive filename from prompt_path (classXX_clipYY.txt -> classXX_clipYY.mp4)
+base_name = os.path.splitext(os.path.basename(prompt_path))[0] + ".mp4"
+mp4_path = os.path.join(save_dir, base_name)
+
+writer = imageio.get_writer(mp4_path, fps=8, codec="libx264")
+for f in frames:
+    writer.append_data(f)
+writer.close()
 
 print("Video saved to:", mp4_path)
 print("Final caption used for generation:", prompt_text)
