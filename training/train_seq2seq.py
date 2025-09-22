@@ -1,12 +1,3 @@
-"""
-SEQ2SEQ TRAINING WITH EEG WINDOWS → VIDEO LATENTS
--------------------------------------------------
-- EEG_windows: subject-dependent, shape [7,62,100]
-- Video_latents: subject-independent, shape [N,4,36,64]
-- Train autoregressively: prepend zero frame, predict next frame
-- Loss: MSE between predicted frames and ground truth frames
-"""
-
 import os
 import numpy as np
 import torch
@@ -125,7 +116,7 @@ class EEGVideoDataset(Dataset):
         self.video_files = [l.strip() for l in open(video_list).readlines()]
         assert len(self.eeg_files) == len(self.video_files)
 
-        # fit scaler on EEG
+        # fit scaler on EEG (flattened over all windows/channels)
         eeg_all = []
         for rel_path in self.eeg_files:
             abs_path = os.path.join(self.base_dir, "EEG_windows", rel_path)
@@ -162,7 +153,7 @@ if __name__ == "__main__":
     drive_root = "/content/drive/MyDrive/EEG2Video_data/processed"
 
     eeg_train_list = os.path.join(drive_root, "EEG_windows/train_list.txt")
-    vid_train_list = os.path.join(drive_root, "Video_latents/train_list.txt")
+    vid_train_list = os.path.join(drive_root, "Video_latents/train_list_dup.txt")  # use DUP to align with EEG
 
     dataset = EEGVideoDataset(eeg_train_list, vid_train_list)
     dataloader = DataLoader(dataset, batch_size=16, shuffle=True, num_workers=2)

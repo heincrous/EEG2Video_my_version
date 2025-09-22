@@ -28,7 +28,10 @@ class SemanticPredictor(nn.Module):
 # Dataset wrapper (for test set)
 # -------------------------------------------------------------------------
 class EEGTextDataset(Dataset):
-    def __init__(self, eeg_list_path, text_list_path, max_samples=None):
+    def __init__(self, eeg_list_path, text_list_path, base_dir, max_samples=None):
+        self.eeg_base = os.path.join(base_dir, "EEG_features")
+        self.text_base = os.path.join(base_dir, "BLIP_embeddings")
+
         with open(eeg_list_path, 'r') as f:
             self.eeg_files = [line.strip() for line in f.readlines()]
         with open(text_list_path, 'r') as f:
@@ -43,7 +46,8 @@ class EEGTextDataset(Dataset):
         # Fit scaler on EEG test data
         eeg_all = []
         for eeg_f in self.eeg_files:
-            eeg_all.append(np.load(eeg_f).reshape(-1))
+            abs_eeg_path = os.path.join(self.eeg_base, eeg_f)
+            eeg_all.append(np.load(abs_eeg_path).reshape(-1))
         eeg_all = np.vstack(eeg_all)
         self.scaler = StandardScaler().fit(eeg_all)
 
@@ -51,8 +55,12 @@ class EEGTextDataset(Dataset):
         return len(self.eeg_files)
 
     def __getitem__(self, idx):
-        eeg = np.load(self.eeg_files[idx]).reshape(-1)
-        txt = np.load(self.text_files[idx]).reshape(-1)
+        eeg_path = os.path.join(self.eeg_base, self.eeg_files[idx])
+        txt_path = os.path.join(self.text_base, self.text_files[idx])
+
+        eeg = np.load(eeg_path).reshape(-1)
+        txt = np.load(txt_path).reshape(-1)
+
         eeg = self.scaler.transform([eeg])[0]
         return torch.tensor(eeg, dtype=torch.float32), torch.tensor(txt, dtype=torch.float32)
 
@@ -75,7 +83,7 @@ if __name__ == "__main__":
     text_test_list = os.path.join(drive_root, "BLIP_embeddings/test_list_dup.txt")
 
     # Load dataset (limit samples for speed)
-    test_dataset = EEGTextDataset(eeg_test_list, text_test_list, max_samples=50)
+    test_dataset = EEGTextDataset(eeg_test_list, text_test_list, base_dir=drive_root, max_samples=50)
 
     # Load model + checkpoint
     model = SemanticPredictor().cuda()
