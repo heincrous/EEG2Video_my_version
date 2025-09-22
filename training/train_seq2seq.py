@@ -174,7 +174,7 @@ if __name__ == "__main__":
     vid_train_list = os.path.join(drive_root, "Video_latents/train_list_dup.txt")
 
     dataset = EEGVideoDataset(eeg_train_list, vid_train_list, debug=True)
-    dataloader = DataLoader(dataset, batch_size=16, shuffle=True, num_workers=2)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=2)
 
     # assume all videos have same length F (e.g., 24)
     sample_vid = np.load(os.path.join(drive_root, "Video_latents", dataset.video_files[0]))
