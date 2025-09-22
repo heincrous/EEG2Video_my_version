@@ -52,8 +52,8 @@ generator = torch.Generator(device="cuda").manual_seed(42)
 result = pipe(
     prompt_text,
     video_length=8,
-    height=288,
     width=512,
+    height=288,
     num_inference_steps=20,
     generator=generator,
 )
