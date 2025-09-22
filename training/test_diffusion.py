@@ -15,15 +15,15 @@ test_text_list        = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_te
 save_dir              = os.path.join(trained_output_dir, "test_samples")
 os.makedirs(save_dir, exist_ok=True)
 
-# === LOAD PIPELINE ===
+# === LOAD TRAINED PIPELINE ===
 pipe = TuneAVideoPipeline.from_pretrained(
-    trained_output_dir,
+    trained_output_dir,  # trained pipeline saved here
     scheduler=DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler"),
 )
 pipe.enable_vae_slicing()
 pipe = pipe.to("cuda")
 
-# === PICK RANDOM PROMPT ===
+# === PICK RANDOM PROMPT FROM TEST LIST ===
 with open(test_text_list, "r") as f:
     test_prompts = [line.strip() for line in f]
 
@@ -35,14 +35,15 @@ generator = torch.Generator(device="cuda").manual_seed(42)
 
 result = pipe(
     prompt,
-    video_length=24,   # set to 24 or 48 depending on how your latents were made
+    video_length=8,       # match your training validation_data["video_length"]
+    num_inference_steps=20,
     generator=generator,
 )
 
-video_tensor = result.videos  # [1, f, c, h, w]
+video_tensor = result.videos  # shape: [1, f, c, h, w]
 
 # === SAVE MP4 ===
-frames = (video_tensor[0].permute(0,2,3,1).cpu().numpy() * 255).astype("uint8")
+frames = (video_tensor[0].permute(0, 2, 3, 1).cpu().numpy() * 255).astype("uint8")
 mp4_path = os.path.join(save_dir, "sample_test.mp4")
 imageio.mimsave(mp4_path, frames, fps=8)
 
