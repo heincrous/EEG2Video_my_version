@@ -21,10 +21,11 @@ from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 from einops import rearrange
 
-from core_files.models.unet import UNet3DConditionModel
-from core_files.dataset import TuneMultiVideoDataset
-from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
-from core_files.util import save_videos_grid, ddim_inversion
+# updated imports (relative, since script is in training/)
+from ..core_files.unet import UNet3DConditionModel
+from ..core_files.dataset import TuneMultiVideoDataset
+from ..pipelines.pipeline_tuneavideo import TuneAVideoPipeline
+from ..core_files.util import save_videos_grid, ddim_inversion
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:24"
 
@@ -91,7 +92,6 @@ def main(
         os.makedirs(f"{output_dir}/samples", exist_ok=True)
         os.makedirs(f"{output_dir}/inv_latents", exist_ok=True)
 
-    # Load scheduler, tokenizer and models
     noise_scheduler = DDPMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
     tokenizer = CLIPTokenizer.from_pretrained(pretrained_model_path, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(pretrained_model_path, subfolder="text_encoder")
@@ -129,13 +129,14 @@ def main(
         eps=adam_epsilon,
     )
 
-    # Training dataset
+    # dataset
     train_dataset = TuneMultiVideoDataset(**train_data)
 
-    video_list_path = "/content/drive/MyDrive/EEG2Video_data/processed/Video_mp4/train_list.txt"
-    text_list_path = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/train_list.txt"
+    # switch between MP4 or precomputed latents by swapping list paths
+    latent_list_path = "/content/drive/MyDrive/EEG2Video_data/processed/Video_latents/train_list.txt"
+    text_list_path   = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/train_list.txt"
 
-    with open(video_list_path, "r") as f:
+    with open(latent_list_path, "r") as f:
         train_dataset.video_path = [line.strip() for line in f]
 
     with open(text_list_path, "r") as f:
@@ -156,12 +157,10 @@ def main(
         train_dataset, batch_size=train_batch_size, shuffle=True
     )
 
-    # Validation prompts (from test split)
     val_text_list_path = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/test_list.txt"
     with open(val_text_list_path, "r") as f:
         config["validation_data"]["prompts"] = [line.strip() for line in f]
 
-    # Validation pipeline
     validation_pipeline = TuneAVideoPipeline(
         vae=vae,
         text_encoder=text_encoder,
@@ -196,12 +195,11 @@ def main(
     if accelerator.is_main_process:
         accelerator.init_trackers("text2video-fine-tune")
 
-    total_batch_size = train_batch_size * accelerator.num_processes * gradient_accumulation_steps
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {num_train_epochs}")
     logger.info(f"  Instantaneous batch size per device = {train_batch_size}")
-    logger.info(f"  Total train batch size = {total_batch_size}")
+    logger.info(f"  Total train batch size = {train_batch_size * accelerator.num_processes * gradient_accumulation_steps}")
     logger.info(f"  Gradient Accumulation steps = {gradient_accumulation_steps}")
 
     global_step = 0
@@ -212,12 +210,17 @@ def main(
         train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(unet):
-                pixel_values = batch["pixel_values"].to(weight_dtype)
-                video_length = pixel_values.shape[1]
-                pixel_values = rearrange(pixel_values, "b f c h w -> (b f) c h w")
-                latents = vae.encode(pixel_values).latent_dist.sample()
-                latents = rearrange(latents, "(b f) c h w -> b c f h w", f=video_length)
-                latents = latents * 0.18215
+
+                # --- UPDATE POINT: use precomputed latents if available
+                if "latents" in batch:
+                    latents = batch["latents"].to(weight_dtype)
+                else:
+                    pixel_values = batch["pixel_values"].to(weight_dtype)
+                    video_length = pixel_values.shape[1]
+                    pixel_values = rearrange(pixel_values, "b f c h w -> (b f) c h w")
+                    latents = vae.encode(pixel_values).latent_dist.sample()
+                    latents = rearrange(latents, "(b f) c h w -> b c f h w", f=video_length)
+                    latents = latents * 0.18215
 
                 noise = torch.randn_like(latents)
                 bsz = latents.shape[0]
