@@ -4,10 +4,12 @@ VALIDATE PROCESSED DATASET
 Checks shapes and counts for all modalities, both subject-independent
 and subject-dependent, including master list files and subject-level
 master arrays. Handles partial datasets gracefully.
+Also samples a random train/test video with its BLIP caption (and embedding).
 """
 
 import os
 import numpy as np
+import random
 from tqdm import tqdm
 
 base_dir = "/content/drive/MyDrive/EEG2Video_data/processed/"
@@ -71,12 +73,51 @@ def count_files(modality):
         count = 0
         for root, _, files in os.walk(split_dir):
             for fname in files:
-                if fname.endswith(".npy") or fname.endswith(".mp4") or fname.endswith(".gif") or fname.endswith(".txt"):
+                if fname.endswith((".npy", ".mp4", ".gif", ".txt")):
                     count += 1
                     # optionally check shape for npy
                     if fname.endswith(".npy"):
                         check_npy(os.path.join(root, fname), modality)
         print(f"[{modality}] {split} set has {count} files")
+
+def sample_video_and_caption(split="train"):
+    """Pick random video and show its BLIP caption and embedding if available."""
+    video_dir = os.path.join(base_dir, "Video_mp4", split)
+    blip_text_dir = os.path.join(base_dir, "BLIP_text", split)
+    blip_emb_dir = os.path.join(base_dir, "BLIP_embeddings", split)
+
+    all_videos = []
+    for root, _, files in os.walk(video_dir):
+        for f in files:
+            if f.endswith(".mp4"):
+                all_videos.append(os.path.join(root, f))
+    if not all_videos:
+        print(f"No videos found in {video_dir}")
+        return
+    chosen_video = random.choice(all_videos)
+    rel_path = os.path.relpath(chosen_video, video_dir)
+
+    # matching BLIP caption
+    txt_path = os.path.join(blip_text_dir, rel_path).replace(".mp4", ".txt")
+    # matching BLIP embedding
+    emb_path = os.path.join(blip_emb_dir, rel_path).replace(".mp4", ".npy")
+
+    print(f"[{split.upper()}] Video: {chosen_video}")
+    if os.path.exists(txt_path):
+        with open(txt_path, "r") as f:
+            firstline = f.readline().strip()
+        print(f"[{split.upper()}] Caption: {firstline}")
+    else:
+        print(f"[{split.upper()}] Missing BLIP caption for {rel_path}")
+
+    if os.path.exists(emb_path):
+        try:
+            emb = np.load(emb_path)
+            print(f"[{split.upper()}] BLIP embedding shape: {emb.shape}")
+        except Exception as e:
+            print(f"[{split.upper()}] Error loading embedding {emb_path}: {e}")
+    else:
+        print(f"[{split.upper()}] Missing BLIP embedding for {rel_path}")
 
 # check subject-independent modalities
 for mod in modalities_subindep:
@@ -97,3 +138,9 @@ for mod in modalities_subdep:
 
     count_files(mod)
     verify_master_lists(mod)
+
+# sample random train/test video + caption + embedding
+print("\n=== Random sample from TRAIN ===")
+sample_video_and_caption("train")
+print("\n=== Random sample from TEST ===")
+sample_video_and_caption("test")
