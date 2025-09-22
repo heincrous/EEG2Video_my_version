@@ -1,5 +1,5 @@
 """
-ALIGN BLIP CAPTIONS TO CLIPS (Batched, Strict CLIP ViT-B/32)
+ALIGN BLIP CAPTIONS TO CLIPS (Batched, Strict CLIP ViT-L/14)
 ------------------------------------------------------------
 Ensures that embeddings are exactly [77,768].
 Will not run if the loaded CLIP model reports hidden_size != 768.
@@ -25,9 +25,9 @@ from gt_label import GT_LABEL
 os.makedirs(out_text_dir, exist_ok=True)
 os.makedirs(out_embed_dir, exist_ok=True)
 
-# load CLIP model + tokenizer (LAION version with hidden_size=768)
+# load CLIP model + tokenizer (ViT-L/14 with hidden_size=768)
 device = "cuda" if torch.cuda.is_available() else "cpu"
-model_id = "laion/CLIP-ViT-B-32-laion2B-s34B-b79K"
+model_id = "openai/clip-vit-large-patch14"
 
 tokenizer = CLIPTokenizer.from_pretrained(model_id)
 text_encoder = CLIPTextModel.from_pretrained(model_id).to(device)
