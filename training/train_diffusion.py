@@ -157,6 +157,24 @@ def main(
         train_dataset, batch_size=train_batch_size, shuffle=True
     )
 
+    # === SHAPE SANITY CHECK ===
+    first_batch = next(iter(train_dataloader))
+    if "latents" in first_batch:
+        latents = first_batch["latents"]
+        print("Sanity check: latents shape =", latents.shape)
+        # expect [B, 4, 24, 36, 64]
+        if latents.ndim != 5 or latents.shape[1:] != (4, 24, 36, 64):
+            raise ValueError(f"Latents shape mismatch: got {latents.shape}, expected [B, 4, 24, 36, 64]")
+    elif "pixel_values" in first_batch:
+        pixel_values = first_batch["pixel_values"]
+        print("Sanity check: pixel_values shape =", pixel_values.shape)
+        # expect [B, F, 3, H, W] (e.g. [B, 24, 3, 288, 512])
+        if pixel_values.ndim != 5 or pixel_values.shape[2] != 3:
+            raise ValueError(f"Pixel values shape mismatch: got {pixel_values.shape}")
+    else:
+        raise ValueError("Dataset did not return 'latents' or 'pixel_values'")
+    # === END SANITY CHECK ===
+
     val_text_list_path = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/test_list.txt"
     with open(val_text_list_path, "r") as f:
         config["validation_data"]["prompts"] = [line.strip() for line in f]
