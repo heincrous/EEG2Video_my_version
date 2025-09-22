@@ -49,10 +49,10 @@ def make_windows(seg):
 # collect available subjects
 subjects = [s for s in sorted(os.listdir(in_dir)) if os.path.isdir(os.path.join(in_dir, s))]
 
-# display subject options
+# display subject options in "0: subX" format
 print("\nAvailable subjects to process:")
 for idx, subj in enumerate(subjects):
-    print(f"[{idx}] {subj}")
+    print(f"{idx}: {subj}")
 
 # ask user
 choices = input("\nEnter subject indices to process (comma separated): ")
@@ -83,3 +83,4 @@ for idx in choices:
                 np.save(save_path, windows)
 
 print("\nProcessing complete.")
+
