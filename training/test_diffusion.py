@@ -21,7 +21,6 @@ os.makedirs(save_dir, exist_ok=True)
 
 # === MEMORY CONFIG ===
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
 gc.collect()
 torch.cuda.empty_cache()
 
@@ -50,9 +49,14 @@ print("Caption text:", prompt_text)
 
 # === GENERATE VIDEO ===
 generator = torch.Generator(device="cuda").manual_seed(42)
+
+# target 48 frames (2 seconds @ 24fps); fallback = 24 frames if VRAM is low
+video_length = 48   # set to 24 if out of memory
+fps = 24            # match dataset timing
+
 result = pipe(
     prompt_text,
-    video_length=8,
+    video_length=video_length,
     width=512,
     height=288,
     num_inference_steps=20,
@@ -73,11 +77,10 @@ elif frames.shape[-1] == 1:
 
 print("Final frame shape:", frames.shape)
 
-# derive filename from prompt_path (classXX_clipYY.txt -> classXX_clipYY.mp4)
-base_name = os.path.splitext(os.path.basename(prompt_path))[0] + ".mp4"
+base_name = os.path.splitext(os.path.basename(prompt_path))[0] + f"_{video_length}f.mp4"
 mp4_path = os.path.join(save_dir, base_name)
 
-writer = imageio.get_writer(mp4_path, fps=8, codec="libx264")
+writer = imageio.get_writer(mp4_path, fps=fps, codec="libx264")
 for f in frames:
     writer.append_data(f)
 writer.close()
