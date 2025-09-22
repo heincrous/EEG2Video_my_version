@@ -2,7 +2,7 @@
 SPLIT BLOCK-LEVEL MP4 INTO CLIP-LEVEL MP4 (GT-LABEL DRIVEN)
 ------------------------------------------------------------
 Input:
-  raw/Video/BlockY_full.mp4
+  raw/Video/BlockY_full.mp4 or Xth_10min.mp4
   core_files/gt_label.py   (true class order per block)
 
 Process:
@@ -20,6 +20,7 @@ import os
 import cv2
 from tqdm import tqdm
 import sys
+import re
 
 # paths
 repo_root = "/content/EEG2Video_my_version"
@@ -53,8 +54,13 @@ else:
 
 # process
 for fname in selected_files:
-    block_name = os.path.splitext(fname)[0]   # e.g. Block1_full
-    block_id = int(''.join([c for c in block_name if c.isdigit()])) - 1  # zero-index
+    block_name = os.path.splitext(fname)[0]
+
+    # extract the first number in the name (works for 1st_10min, Block1_full, etc.)
+    match = re.search(r"(\d+)", block_name)
+    if not match:
+        raise ValueError(f"Could not parse block number from {block_name}")
+    block_id = int(match.group(1)) - 1  # zero-based 0–6
 
     block_out_dir = os.path.join(out_dir, f"Block{block_id+1}")
     os.makedirs(block_out_dir, exist_ok=True)
@@ -67,10 +73,10 @@ for fname in selected_files:
 
     for order_idx in tqdm(range(40), desc=f"Processing {fname}"):
         true_class = GT_LABEL[block_id, order_idx]  # 0–39
-        slot_start = order_idx * (hint_len + clips_per_class*clip_len)
+        slot_start = order_idx * (hint_len + clips_per_class * clip_len)
 
         for clip_id in range(clips_per_class):
-            start_idx = slot_start + hint_len + clip_id*clip_len
+            start_idx = slot_start + hint_len + clip_id * clip_len
             end_idx = start_idx + clip_len
 
             if end_idx > total_frames:
