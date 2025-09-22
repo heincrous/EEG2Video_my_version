@@ -18,22 +18,27 @@ base_dir = "/content/drive/MyDrive/EEG2Video_data/processed/"
 modalities_subindep = ["Video_mp4", "Video_gif", "Video_latents", "BLIP_text", "BLIP_embeddings"]
 modalities_subdep = ["EEG_segments", "EEG_windows", "EEG_features"]
 
-# expected trailing shapes for per-clip files
+# expected trailing shapes for per-clip files, with explanations
 expected_trailing = {
-    "EEG_segments": (400, 62),
-    "EEG_windows": (7, 62, 100),
-    "EEG_features": (310,),
-    "Video_latents": (4, 36, 64),  # adjust if different
-    "BLIP_embeddings": (512,),     # adjust if different
+    "EEG_segments": ((400, 62), "time=400 (2s at 200Hz), channels=62"),
+    "EEG_windows": ((7, 62, 100), "windows=7 (0.5s overlap), channels=62, samples=100"),
+    "EEG_features": ((310,), "features=310 (DE/PSD across bands×channels)"),
+    "Video_latents": ((4, 36, 64), "channels=4 (VAE latents), height=36, width=64"),
+    "BLIP_embeddings": ((512,), "embedding_dim=512 (BLIP text embedding)"),
 }
+
+def explain_shape(modality, shape):
+    """Return human-readable explanation for modality shape."""
+    exp, note = expected_trailing.get(modality, (None, None))
+    return f"{shape} → {note}" if note else str(shape)
 
 def check_npy(path, modality):
     """Check trailing shape of a numpy file for a given modality."""
     try:
         arr = np.load(path)
-        exp = expected_trailing.get(modality, None)
+        exp, note = expected_trailing.get(modality, (None, None))
         if exp and arr.shape[-len(exp):] != exp:
-            print(f"[{modality}] Shape mismatch: {path}, got {arr.shape}, expected *{exp}")
+            print(f"[{modality}] Shape mismatch: {path}, got {explain_shape(modality, arr.shape)}, expected *{exp}")
     except Exception as e:
         print(f"[{modality}] Error loading {path}: {e}")
 
@@ -60,7 +65,7 @@ def check_subject_master(path, modality):
             assert arr.shape[-3:] == (62,100), f"Bad shape {arr.shape} in {path}"
         elif modality == "EEG_features":
             assert arr.shape[-1] == 310, f"Bad shape {arr.shape} in {path}"
-        print(f"[{modality}] {os.path.basename(path)} shape {arr.shape}")
+        print(f"[{modality}] {os.path.basename(path)} shape {explain_shape(modality, arr.shape)}")
     except Exception as e:
         print(f"[{modality}] Error loading {path}: {e}")
 
@@ -75,7 +80,6 @@ def count_files(modality):
             for fname in files:
                 if fname.endswith((".npy", ".mp4", ".gif", ".txt")):
                     count += 1
-                    # optionally check shape for npy
                     if fname.endswith(".npy"):
                         check_npy(os.path.join(root, fname), modality)
         print(f"[{modality}] {split} set has {count} files")
@@ -97,9 +101,7 @@ def sample_video_and_caption(split="train"):
     chosen_video = random.choice(all_videos)
     rel_path = os.path.relpath(chosen_video, video_dir)
 
-    # matching BLIP caption
     txt_path = os.path.join(blip_text_dir, rel_path).replace(".mp4", ".txt")
-    # matching BLIP embedding
     emb_path = os.path.join(blip_emb_dir, rel_path).replace(".mp4", ".npy")
 
     print(f"[{split.upper()}] Video: {chosen_video}")
@@ -113,7 +115,7 @@ def sample_video_and_caption(split="train"):
     if os.path.exists(emb_path):
         try:
             emb = np.load(emb_path)
-            print(f"[{split.upper()}] BLIP embedding shape: {emb.shape}")
+            print(f"[{split.upper()}] BLIP embedding shape: {explain_shape('BLIP_embeddings', emb.shape)}")
         except Exception as e:
             print(f"[{split.upper()}] Error loading embedding {emb_path}: {e}")
     else:
@@ -121,21 +123,17 @@ def sample_video_and_caption(split="train"):
 
 # check subject-independent modalities
 for mod in modalities_subindep:
-    mod_dir = os.path.join(base_dir, mod)
     print(f"\n=== Checking {mod} ===")
     count_files(mod)
     verify_master_lists(mod)
 
 # check subject-dependent modalities
 for mod in modalities_subdep:
-    mod_dir = os.path.join(base_dir, mod)
     print(f"\n=== Checking {mod} ===")
-
-    # subject-level master arrays
+    mod_dir = os.path.join(base_dir, mod)
     for fname in os.listdir(mod_dir):
         if fname.endswith(".npy") and not os.path.isdir(os.path.join(mod_dir, fname)):
             check_subject_master(os.path.join(mod_dir, fname), mod)
-
     count_files(mod)
     verify_master_lists(mod)
 
