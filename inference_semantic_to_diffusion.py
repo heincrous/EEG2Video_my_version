@@ -13,7 +13,7 @@ from unet import UNet3DConditionModel
 
 # Semantic predictor is under training
 sys.path.append(os.path.join(repo_root, "training"))
-from train_semantic_predictor import SemanticPredictor
+from train_semantic import SemanticPredictor
 
 # Paths
 drive_root = "/content/drive/MyDrive/EEG2Video_data/processed"
