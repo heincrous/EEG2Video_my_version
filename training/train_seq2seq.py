@@ -4,11 +4,10 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from sklearn.preprocessing import StandardScaler
-from einops import rearrange
 from tqdm import tqdm
 
 # -------------------------
-# EEG Encoder (authors’ version)
+# EEG Encoder
 # -------------------------
 class MyEEGNet_embedding(nn.Module):
     def __init__(self, d_model=128, C=62, T=100, F1=16, D=4, F2=16, cross_subject=False):
@@ -65,7 +64,7 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x + self.pe[:, :x.size(1)])
 
 # -------------------------
-# Autoregressive Transformer (authors’ style)
+# Transformer
 # -------------------------
 class MyTransformer(nn.Module):
     def __init__(self, d_model=512):
@@ -91,7 +90,7 @@ class MyTransformer(nn.Module):
         eeg = eeg.reshape(b*n, 1, c, t)
         src = self.eeg_embedding(eeg).reshape(b, n, -1)  # [B,7,d_model]
 
-        tgt = video.reshape(b, video.shape[1], -1)  # [B,F,9216]
+        tgt = video.reshape(b, video.shape[1], -1)  # [B,F+1,9216]
         tgt = self.img_embedding(tgt)
 
         src = self.positional_encoding(src)
@@ -101,14 +100,14 @@ class MyTransformer(nn.Module):
 
         enc_out = self.encoder(src)
 
-        # Autoregressive rollout: prepend zero, then generate F steps
+        # Autoregressive rollout: only F steps, not F+1
         new_tgt = torch.zeros((b, 1, tgt.shape[2]), device=tgt.device)
-        for i in range(tgt.shape[1]):
+        for i in range(tgt.shape[1] - 1):
             dec_out = self.decoder(new_tgt, enc_out, tgt_mask=tgt_mask[:i+1, :i+1])
             new_tgt = torch.cat((new_tgt, dec_out[:, -1:, :]), dim=1)
 
         out = self.predictor(new_tgt).reshape(b, new_tgt.shape[1], 4, 36, 64)
-        return out
+        return out  # shape [B,F,4,36,64]
 
 # -------------------------
 # Dataset
@@ -189,13 +188,14 @@ if __name__ == "__main__":
         for eeg, video in tqdm(dataloader, desc=f"Epoch {epoch+1}"):
             eeg, video = eeg.cuda(), video.cuda()
 
+            # prepend zero frame
             b, f, c, h, w = video.shape
             zero_frame = torch.zeros((b,1,c,h,w), device=video.device)
             full_video = torch.cat([zero_frame, video], dim=1)
 
             optimizer.zero_grad()
-            out = model(eeg, full_video)
-            loss = criterion(out[:, :-1], video)  # align like authors
+            out = model(eeg, full_video)  # out now has shape [B,F,...]
+            loss = criterion(out, video)  # aligned directly
             loss.backward()
             optimizer.step()
             scheduler.step()
@@ -208,7 +208,7 @@ if __name__ == "__main__":
             eeg, video = eeg.cuda(), video.cuda()
             zero_frame = torch.zeros((b,1,c,h,w), device=video.device)
             full_video = torch.cat([zero_frame, video], dim=1)
-            pred = model(eeg, full_video)[:, :-1]
+            pred = model(eeg, full_video)
 
             print("[DEBUG] GT latents: mean {:.4f}, std {:.4f}, min {:.4f}, max {:.4f}".format(
                 video.mean().item(), video.std().item(), video.min().item(), video.max().item()))

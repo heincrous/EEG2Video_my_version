@@ -17,7 +17,7 @@ drive_root = "/content/drive/MyDrive/EEG2Video_data/processed"
 ckpt_path  = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor.pt"
 pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 output_dir = "/content/drive/MyDrive/EEG2Video_outputs"
-save_dir   = os.path.join(output_dir, "semantic_only_one")
+save_dir   = os.path.join(output_dir, "semantic_to_diffusion")
 
 # ensure dirs exist
 os.makedirs(output_dir, exist_ok=True)
