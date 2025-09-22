@@ -16,13 +16,6 @@ Output:
   processed/BLIP_embeddings/BlockY/classYY_clipZZ.npy
 """
 
-# Pseudocode steps:
-# 1. Read raw caption file
-# 2. Remap lines → classYY_clipZZ order
-# 3. Save caption string in BLIP_text/
-# 4. Encode caption → [77,768] embedding
-# 5. Save embedding in BLIP_embeddings/
-
 import os
 import numpy as np
 from tqdm import tqdm
@@ -33,12 +26,15 @@ import torch
 caption_dir = "/content/drive/MyDrive/EEG2Video_data/raw/BLIP-caption/"
 out_text_dir = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/"
 out_embed_dir = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/"
-gt_label_path = "./core_files/gt_label.npy"
+
+# resolve repo root and core files
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+gt_label_path = os.path.join(repo_root, "core_files", "gt_label.npy")
 
 os.makedirs(out_text_dir, exist_ok=True)
 os.makedirs(out_embed_dir, exist_ok=True)
 
-# load GT_LABEL [7,40,5] zero-indexed
+# load GT_LABEL [7,40,5]
 GT_LABEL = np.load(gt_label_path)
 
 # load CLIP model + tokenizer

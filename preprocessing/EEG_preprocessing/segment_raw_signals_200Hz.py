@@ -37,9 +37,10 @@ channels = 62
 # paths
 raw_dir = "/content/drive/MyDrive/EEG2Video_data/raw/EEG/"
 out_dir = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments/"
-gt_label_path = "./core_files/gt_label.npy"  # local in repo
 
 # load GT_LABEL (shape [7,40,5]) – zero-indexed
+repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+gt_label_path = os.path.join(repo_root, "core_files", "gt_label.npy")
 GT_LABEL = np.load(gt_label_path)
 
 # list subject files
