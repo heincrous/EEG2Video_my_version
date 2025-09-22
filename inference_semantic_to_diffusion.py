@@ -63,7 +63,7 @@ gc.collect(); torch.cuda.empty_cache()
 pipe = TuneAVideoPipeline.from_pretrained(
     pretrained_model_path,
     unet=UNet3DConditionModel.from_pretrained_2d(pretrained_model_path, subfolder="unet"),
-    torch_dtype=torch.float16,
+    torch_dtype=torch.float32,   # <-- run everything in full precision
 ).to("cuda")
 pipe.enable_vae_slicing()
 
