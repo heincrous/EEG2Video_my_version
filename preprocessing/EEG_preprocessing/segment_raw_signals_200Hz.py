@@ -17,15 +17,6 @@ Output:
     Shape = [400,62]
 """
 
-# Pseudocode steps:
-# 1. Load raw EEG file (subX.npy or subX_session2.npy)
-# 2. For each video clip in GT_LABEL:
-#     a. Find start index in EEG stream
-#     b. Slice 400 samples × 62 channels
-#     c. Verify shape = [400,62]
-#     d. Save as processed/EEG_segments/subX/BlockY/classYY_clipZZ.npy
-#3. Repeat for all clips and subjects
-
 import os
 import numpy as np
 from tqdm import tqdm
@@ -38,10 +29,11 @@ channels = 62
 raw_dir = "/content/drive/MyDrive/EEG2Video_data/raw/EEG/"
 out_dir = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments/"
 
-# load GT_LABEL (shape [7,40,5]) – zero-indexed
+# import GT_LABEL directly from core_files/gt_label.py
+import sys
 repo_root = "/content/EEG2Video_my_version"
-gt_label_path = os.path.join(repo_root, "core_files", "gt_label.npy")
-GT_LABEL = np.load(gt_label_path)
+sys.path.append(os.path.join(repo_root, "core_files"))
+from core_files.gt_label import GT_LABEL   # GT_LABEL is defined in gt_label.py
 
 # list subject files
 all_files = [f for f in os.listdir(raw_dir) if f.endswith(".npy")]
@@ -64,27 +56,23 @@ for subj_file in selected_files:
 
     eeg_data = np.load(os.path.join(raw_dir, subj_file))  # shape [7,62,T]
 
-    # container for subject: [7,40,5,62,400]
-    save_data = np.empty((0, 40, 5, channels, segment_len))
-
     for block_id in range(7):
         now_data = eeg_data[block_id]  # [62,T]
-        block_data = np.empty((0, 5, channels, segment_len))
 
         for class_id in tqdm(range(40), desc=f"{subj_name} Block {block_id+1}"):
-            class_data = np.empty((0, channels, segment_len))
             for clip_id in range(5):
                 start_idx = GT_LABEL[block_id, class_id, clip_id]
                 end_idx = start_idx + segment_len
 
-                eeg_slice = now_data[:, start_idx:end_idx]          # [62,400]
-                eeg_slice = eeg_slice.reshape(1, channels, segment_len)
-                class_data = np.concatenate((class_data, eeg_slice))
-            block_data = np.concatenate((block_data, class_data.reshape(1, 5, channels, segment_len)))
+                eeg_slice = now_data[:, start_idx:end_idx]  # [62,400]
 
-        save_data = np.concatenate((save_data, block_data.reshape(1, 40, 5, channels, segment_len)))
+                out_path = os.path.join(
+                    out_dir,
+                    subj_name,
+                    f"Block{block_id+1}",
+                    f"class{class_id:02d}_clip{clip_id+1:02d}.npy"
+                )
+                os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                np.save(out_path, eeg_slice)
 
-    # save subject-level .npy
-    save_path = os.path.join(out_dir, subj_name + ".npy")
-    np.save(save_path, save_data)
-    print(f"Saved {save_path}, shape={save_data.shape}")
+    print(f"Finished {subj_name}")
