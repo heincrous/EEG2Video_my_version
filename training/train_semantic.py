@@ -3,62 +3,55 @@ import torch
 import numpy as np
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
-from sklearn import preprocessing
+from sklearn.preprocessing import StandardScaler
 import torch.nn.functional as F
 from tqdm import tqdm
 
 # -------------------------------------------------------------------------
-# Semantic Predictor (authors' MLP)
+# Semantic Predictor (smaller MLP, still deep)
 # -------------------------------------------------------------------------
 class SemanticPredictor(nn.Module):
     def __init__(self):
         super(SemanticPredictor, self).__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(310, 10000),
+            nn.Linear(310, 1024),
             nn.ReLU(),
-            nn.Linear(10000, 10000),
+            nn.Linear(1024, 2048),
             nn.ReLU(),
-            nn.Linear(10000, 10000),
+            nn.Linear(2048, 4096),
             nn.ReLU(),
-            nn.Linear(10000, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, 77 * 768)
+            nn.Linear(4096, 77 * 768)
         )
     def forward(self, eeg):
         return self.mlp(eeg)
 
 # -------------------------------------------------------------------------
-# Dataset wrapper (EEG DE features + BLIP embeddings)
+# Dataset wrapper (lazy load to save RAM)
 # -------------------------------------------------------------------------
 class EEGTextDataset(Dataset):
     def __init__(self, eeg_list_path, text_list_path):
         with open(eeg_list_path, 'r') as f:
-            eeg_files = [line.strip() for line in f.readlines()]
+            self.eeg_files = [line.strip() for line in f.readlines()]
         with open(text_list_path, 'r') as f:
-            text_files = [line.strip() for line in f.readlines()]
+            self.text_files = [line.strip() for line in f.readlines()]
 
-        assert len(eeg_files) == len(text_files), "Mismatch between EEG and text file counts"
+        assert len(self.eeg_files) == len(self.text_files), "Mismatch between EEG and text file counts"
 
-        eeg_list, text_list = [], []
-        for eeg_f, txt_f in zip(eeg_files, text_files):
-            eeg = np.load(eeg_f)   # shape [310]
-            txt = np.load(txt_f)   # shape [77,768]
-
-            eeg_list.append(eeg.reshape(1, -1))
-            text_list.append(txt.reshape(1, -1))
-
-        self.eeg = np.concatenate(eeg_list, axis=0)
-        self.text = np.concatenate(text_list, axis=0)
-
-        # normalize EEG features
-        scaler = preprocessing.StandardScaler().fit(self.eeg)
-        self.eeg = scaler.transform(self.eeg)
+        # fit scaler on EEG only (load once per file)
+        eeg_all = []
+        for eeg_f in self.eeg_files:
+            eeg_all.append(np.load(eeg_f).reshape(-1))
+        eeg_all = np.vstack(eeg_all)
+        self.scaler = StandardScaler().fit(eeg_all)
 
     def __len__(self):
-        return self.eeg.shape[0]
+        return len(self.eeg_files)
 
     def __getitem__(self, idx):
-        return self.eeg[idx], self.text[idx]
+        eeg = np.load(self.eeg_files[idx]).reshape(-1)
+        txt = np.load(self.text_files[idx]).reshape(-1)
+        eeg = self.scaler.transform([eeg])[0]
+        return torch.tensor(eeg, dtype=torch.float32), torch.tensor(txt, dtype=torch.float32)
 
 # -------------------------------------------------------------------------
 # Training
@@ -70,32 +63,33 @@ if __name__ == "__main__":
     text_train_list = os.path.join(drive_root, "BLIP_embeddings/train_list.txt")
 
     dataset = EEGTextDataset(eeg_train_list, text_train_list)
+    dataloader = DataLoader(dataset, batch_size=32, shuffle=True,
+                            pin_memory=True, num_workers=2)
 
     print("Sanity check:")
-    print("EEG shape:", dataset.eeg.shape)    # (N, 310)
-    print("Text shape:", dataset.text.shape)  # (N, 77*768)
-
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    eeg, txt = dataset[0]
+    print("EEG sample shape:", eeg.shape)   # (310,)
+    print("Text sample shape:", txt.shape)  # (77*768,)
 
     model = SemanticPredictor().cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(dataloader))
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20)  # match epochs
 
-    for epoch in tqdm(range(20)): # originally 200 epochs
+    for epoch in range(20):  # can scale to 200
         model.train()
         epoch_loss = 0
-        for eeg, text in dataloader:
-            eeg = eeg.float().cuda()
-            text = text.float().cuda()
+        for eeg, text in tqdm(dataloader):
+            eeg, text = eeg.cuda(non_blocking=True), text.cuda(non_blocking=True)
 
             optimizer.zero_grad()
             pred = model(eeg)
             loss = F.mse_loss(pred, text)
             loss.backward()
             optimizer.step()
-            scheduler.step()
+
             epoch_loss += loss.item()
-        print(f"Epoch {epoch+1}: loss={epoch_loss:.4f}")
+        scheduler.step()
+        print(f"Epoch {epoch+1}: loss={epoch_loss/len(dataloader):.6f}")
 
     save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints"
     os.makedirs(save_dir, exist_ok=True)

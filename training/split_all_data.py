@@ -12,7 +12,7 @@ Inputs:
     - Video_mp4  (all processed blocks)
     - Video_gif  (all processed blocks)
     - Video_latents  (all processed blocks)
-    - BLIP_text  (only Block1 captions are processed, split only those)
+    - BLIP_text  (must align with Video_latents → only include blocks where latents exist)
     - BLIP_embeddings  (all processed blocks, must align with EEG_features)
 
   Subject-dependent modalities:
@@ -33,10 +33,9 @@ Master Files:
   For faster loading, create train/test index files after splitting.
 
 Special Notes:
-  - BLIP_text should only include Block1 since only those captions were processed.
-  - BLIP_embeddings must align with EEG_features across all available blocks.
-  - Videos, GIFs, latents, EEG segments, windows, and features should be split
-    across all blocks that exist.
+  - BLIP_text aligns dynamically with Video_latents
+  - BLIP_embeddings + EEG features/windows/segments: use all processed blocks
+  - Videos, GIFs, latents: split everything present
 """
 
 import os
@@ -67,11 +66,12 @@ def safe_link(src, dst):
 # ---------------- Subject-independent: Videos ----------------
 for mod in modalities_videos:
     in_dir = os.path.join(base_dir, mod)
+    if not os.path.exists(in_dir):
+        continue
     blocks = [b for b in os.listdir(in_dir) if os.path.isdir(os.path.join(in_dir, b))]
     out_train = os.path.join(in_dir, "train")
     out_test = os.path.join(in_dir, "test")
-    ensure_dir(out_train)
-    ensure_dir(out_test)
+    ensure_dir(out_train); ensure_dir(out_test)
 
     train_list, test_list = [], []
     for block in tqdm(sorted(blocks), desc=f"Splitting {mod}"):
@@ -93,15 +93,18 @@ for mod in modalities_videos:
     with open(os.path.join(in_dir, "test_list.txt"), "w") as f:
         f.write("\n".join(test_list))
 
-# ---------------- Subject-independent: BLIP text ----------------
-# Only split processed blocks (Block1 in your case)
+# ---------------- Subject-independent: BLIP text (align with Video_latents) ----------------
+video_latents_dir = os.path.join(base_dir, "Video_latents")
+video_blocks = [b for b in os.listdir(video_latents_dir) if os.path.isdir(os.path.join(video_latents_dir, b))]
+
 for mod in modalities_text:
     in_dir = os.path.join(base_dir, mod)
-    blocks = ["Block1"]  # restrict to processed captions
+    if not os.path.exists(in_dir):
+        continue
+    blocks = [b for b in os.listdir(in_dir) if os.path.isdir(os.path.join(in_dir, b)) and b in video_blocks]
     out_train = os.path.join(in_dir, "train")
     out_test = os.path.join(in_dir, "test")
-    ensure_dir(out_train)
-    ensure_dir(out_test)
+    ensure_dir(out_train); ensure_dir(out_test)
 
     train_list, test_list = [], []
     for block in tqdm(sorted(blocks), desc=f"Splitting {mod}"):
@@ -124,14 +127,14 @@ for mod in modalities_text:
         f.write("\n".join(test_list))
 
 # ---------------- Subject-independent: BLIP embeddings ----------------
-# Must align with EEG_features
 for mod in modalities_embed:
     in_dir = os.path.join(base_dir, mod)
+    if not os.path.exists(in_dir):
+        continue
     blocks = [b for b in os.listdir(in_dir) if os.path.isdir(os.path.join(in_dir, b))]
     out_train = os.path.join(in_dir, "train")
     out_test = os.path.join(in_dir, "test")
-    ensure_dir(out_train)
-    ensure_dir(out_test)
+    ensure_dir(out_train); ensure_dir(out_test)
 
     train_list, test_list = [], []
     for block in tqdm(sorted(blocks), desc=f"Splitting {mod}"):
@@ -156,10 +159,11 @@ for mod in modalities_embed:
 # ---------------- Subject-dependent modalities ----------------
 for mod in modalities_subdep:
     in_dir = os.path.join(base_dir, mod)
+    if not os.path.exists(in_dir):
+        continue
     out_train = os.path.join(in_dir, "train")
     out_test = os.path.join(in_dir, "test")
-    ensure_dir(out_train)
-    ensure_dir(out_test)
+    ensure_dir(out_train); ensure_dir(out_test)
 
     train_list, test_list = [], []
     for subj in tqdm(os.listdir(in_dir), desc=f"Splitting {mod}"):
@@ -185,3 +189,14 @@ for mod in modalities_subdep:
         f.write("\n".join(train_list))
     with open(os.path.join(in_dir, "test_list.txt"), "w") as f:
         f.write("\n".join(test_list))
+
+# ---------------- Post-check summary ----------------
+def count_lines(path):
+    return sum(1 for _ in open(path)) if os.path.exists(path) else 0
+
+for mod in modalities_videos + modalities_text + modalities_embed + modalities_subdep:
+    mod_path = os.path.join(base_dir, mod)
+    train_count = count_lines(os.path.join(mod_path, "train_list.txt"))
+    test_count = count_lines(os.path.join(mod_path, "test_list.txt"))
+    if train_count or test_count:
+        print(f"{mod}: train={train_count}, test={test_count}, total={train_count+test_count}")
