@@ -328,7 +328,7 @@ if __name__ == "__main__":
         num_train_epochs=200,
         mixed_precision="fp16",
         gradient_accumulation_steps=1,
-        enable_xformers_memory_efficient_attention=True,
+        enable_xformers_memory_efficient_attention=False,
         seed=42,
     )
     main(**config)
