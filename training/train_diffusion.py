@@ -28,9 +28,8 @@ from pipeline_tuneavideo import TuneAVideoPipeline
 sys.path.append(os.path.join(repo_root, "core_files"))
 from unet import UNet3DConditionModel
 from dataset import TuneMultiVideoDataset
-from util import save_videos_grid
 
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # better memory handling
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 def main(
     pretrained_model_path: str,
@@ -71,7 +70,6 @@ def main(
         mixed_precision=mixed_precision,
     )
 
-    # suppress library logging
     transformers.utils.logging.set_verbosity_error()
     diffusers.utils.logging.set_verbosity_error()
 
@@ -80,8 +78,6 @@ def main(
 
     if accelerator.is_main_process:
         os.makedirs(output_dir, exist_ok=True)
-        os.makedirs(f"{output_dir}/samples", exist_ok=True)
-        os.makedirs(f"{output_dir}/inv_latents", exist_ok=True)
 
     noise_scheduler = DDPMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
     tokenizer = CLIPTokenizer.from_pretrained(pretrained_model_path, subfolder="tokenizer")
@@ -114,7 +110,6 @@ def main(
         eps=adam_epsilon,
     )
 
-    # dataset
     train_dataset = TuneMultiVideoDataset(**train_data)
 
     latent_list_path = "/content/drive/MyDrive/EEG2Video_data/processed/Video_latents/train_list.txt"
@@ -142,7 +137,6 @@ def main(
         num_workers=2, pin_memory=True
     )
 
-    # === SHAPE SANITY CHECK ===
     first_batch = next(iter(train_dataloader))
     if "latents" in first_batch:
         latents = first_batch["latents"]
@@ -155,15 +149,13 @@ def main(
     else:
         raise ValueError("Dataset did not return 'latents' or 'pixel_values'")
 
-    # limit validation length to save memory
     validation_data["video_length"] = min(8, inferred_video_length)
     print(f"[Validation] Using video_length={validation_data['video_length']}")
 
-    # restrict validation prompts
     val_text_list_path = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/test_list.txt"
     with open(val_text_list_path, "r") as f:
         all_prompts = [line.strip() for line in f]
-    config["validation_data"]["prompts"] = random.sample(all_prompts, k=1)  # only 1 prompt to save memory
+    config["validation_data"]["prompts"] = random.sample(all_prompts, k=1)
 
     validation_pipeline = TuneAVideoPipeline(
         vae=vae,
@@ -233,17 +225,28 @@ def main(
 
             global_step += 1
 
-        # lightweight validation every 2 epochs
+        # validation every 2 epochs (but no sample saving)
         if epoch % 2 == 0 and accelerator.is_main_process:
             generator = torch.Generator(device=latents.device).manual_seed(seed)
             for prompt in config["validation_data"]["prompts"]:
-                sample = validation_pipeline(
+                _ = validation_pipeline(
                     prompt,
                     video_length=validation_data["video_length"],
-                    num_inference_steps=20,  # fewer steps to save memory
+                    num_inference_steps=20,
                     generator=generator
-                ).videos
-                save_videos_grid(sample, f"{output_dir}/samples/sample-{epoch}/{prompt}.gif")
+                )
+
+    # save the trained pipeline
+    accelerator.wait_for_everyone()
+    if accelerator.is_main_process:
+        unet = accelerator.unwrap_model(unet)
+        pipeline = TuneAVideoPipeline.from_pretrained(
+            pretrained_model_path,
+            text_encoder=text_encoder,
+            vae=vae,
+            unet=unet,
+        )
+        pipeline.save_pretrained(output_dir)
 
     accelerator.end_training()
 
@@ -255,7 +258,7 @@ if __name__ == "__main__":
         validation_data=dict(prompts=None, num_inv_steps=20, use_inv_latent=False),
         train_batch_size=1,
         learning_rate=3e-5,
-        num_train_epochs=2,  # demo run
+        num_train_epochs=2,
         mixed_precision="fp16",
         gradient_accumulation_steps=4,
         enable_xformers_memory_efficient_attention=False,
