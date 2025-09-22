@@ -27,12 +27,17 @@ pipe = TuneAVideoPipeline(
     vae=AutoencoderKL.from_pretrained(trained_output_dir, subfolder="vae", torch_dtype=torch.float16),
     text_encoder=CLIPTextModel.from_pretrained(trained_output_dir, subfolder="text_encoder", torch_dtype=torch.float16),
     tokenizer=CLIPTokenizer.from_pretrained(trained_output_dir, subfolder="tokenizer"),
-    unet=UNet3DConditionModel.from_pretrained_2d(trained_output_dir, subfolder="unet", torch_dtype=torch.float16),
+    unet=UNet3DConditionModel.from_pretrained_2d(trained_output_dir, subfolder="unet"),  # no torch_dtype here
     scheduler=DDIMScheduler.from_pretrained(trained_output_dir, subfolder="scheduler"),
 )
+
+# cast UNet after loading
+pipe.unet.to(torch.float16)
+
 pipe.enable_vae_slicing()
 pipe.enable_xformers_memory_efficient_attention()
 pipe = pipe.to("cuda")
+
 
 # === PICK RANDOM PROMPT FROM TEST LIST ===
 with open(test_text_list, "r") as f:
