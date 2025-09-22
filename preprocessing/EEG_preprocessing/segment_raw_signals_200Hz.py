@@ -39,7 +39,7 @@ raw_dir = "/content/drive/MyDrive/EEG2Video_data/raw/EEG/"
 out_dir = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments/"
 
 # load GT_LABEL (shape [7,40,5]) – zero-indexed
-repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+repo_root = "/content/EEG2Video_my_version"
 gt_label_path = os.path.join(repo_root, "core_files", "gt_label.npy")
 GT_LABEL = np.load(gt_label_path)
 
