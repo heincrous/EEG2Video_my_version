@@ -33,7 +33,7 @@ out_dir = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments/"
 import sys
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(os.path.join(repo_root, "core_files"))
-from core_files.gt_label import GT_LABEL   # GT_LABEL is defined in gt_label.py
+from gt_label import GT_LABEL   # GT_LABEL is defined in gt_label.py
 
 # list subject files
 all_files = [f for f in os.listdir(raw_dir) if f.endswith(".npy")]
