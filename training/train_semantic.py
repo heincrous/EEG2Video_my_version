@@ -71,7 +71,7 @@ if __name__ == "__main__":
     text_train_list = os.path.join(drive_root, "BLIP_embeddings/train_list.txt")
 
     # choose max_samples=None for all data, or set a number like 200
-    dataset = EEGTextDataset(eeg_train_list, text_train_list, max_samples=400)
+    dataset = EEGTextDataset(eeg_train_list, text_train_list, max_samples=800)
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True,
                             pin_memory=True, num_workers=2)
 
@@ -84,7 +84,7 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20)
 
-    for epoch in range(20):
+    for epoch in range(30):
         model.train()
         epoch_loss = 0
         for batch_idx, (eeg, text) in enumerate(dataloader):
