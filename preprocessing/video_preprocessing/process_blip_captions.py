@@ -1,56 +1,43 @@
 """
-ALIGN BLIP CAPTIONS TO CLIPS (Batched, Correct CLIP ViT-B/32)
--------------------------------------------------------------
-Input:
-  raw/BLIP-caption/1st_10min.txt ... 7th_10min.txt
-
-Process:
-  - Each line = caption for one 2s clip (200 per block)
-  - Captions are in randomized presentation order
-  - Use GT_LABEL (7x40) to map order_idx → true class index
-  - Save plain text
-  - Tokenize + encode with CLIP ViT-B/32 in batches
-  - Save embeddings [77,768]
-
-Output:
-  processed/BLIP_text/BlockY/classYY_clipZZ.txt
-  processed/BLIP_embeddings/BlockY/classYY_clipZZ.npy
+ALIGN BLIP CAPTIONS TO CLIPS (Batched, Strict CLIP ViT-B/32)
+------------------------------------------------------------
+Ensures that embeddings are exactly [77,768].
+Will not run if the loaded CLIP model reports hidden_size != 768.
 """
 
 import os
+import sys
 import numpy as np
 from tqdm import tqdm
-from transformers import CLIPModel, CLIPProcessor
+from transformers import CLIPTokenizer, CLIPTextModel
 import torch
-import sys
 
 # paths
 caption_dir = "/content/drive/MyDrive/EEG2Video_data/raw/BLIP-caption/"
 out_text_dir = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/"
 out_embed_dir = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/"
 
-# import GT_LABEL directly from core_files/gt_label.py
+# import GT_LABEL directly
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(os.path.join(repo_root, "core_files"))
-from gt_label import GT_LABEL   # GT_LABEL shape (7,40), values 0–39
+from gt_label import GT_LABEL
 
 os.makedirs(out_text_dir, exist_ok=True)
 os.makedirs(out_embed_dir, exist_ok=True)
 
-# load CLIP model + tokenizer (guaranteed hidden dim = 768)
+# load CLIP model + tokenizer
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model_id = "openai/clip-vit-base-patch32"
 
-clip_model = CLIPModel.from_pretrained(model_id).to(device)
-processor = CLIPProcessor.from_pretrained(model_id)
-tokenizer = processor.tokenizer
-text_encoder = clip_model.text_model
+tokenizer = CLIPTokenizer.from_pretrained(model_id)
+text_encoder = CLIPTextModel.from_pretrained(model_id).to(device)
 text_encoder.eval()
 
-# sanity check
+# strict sanity check
 hidden_size = text_encoder.config.hidden_size
 print("Loaded CLIP text encoder hidden size:", hidden_size)
-assert hidden_size == 768, f"Expected hidden size 768, got {hidden_size}"
+if hidden_size != 768:
+    sys.exit("❌ Wrong model loaded (got hidden_size=%d). Aborting to avoid wrong embeddings." % hidden_size)
 
 # correct ordinal filenames for 1–7
 ordinals = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th"]
@@ -112,7 +99,7 @@ for block_id in range(7):
 
             # sanity check embedding shape
             if emb[j].shape != (77, 768):
-                raise ValueError(f"Embedding shape mismatch: got {emb[j].shape}, expected (77,768)")
+                sys.exit(f"❌ Embedding shape mismatch: got {emb[j].shape}, expected (77,768). Aborting.")
 
             # save embedding
             embed_path = os.path.join(
