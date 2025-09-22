@@ -25,9 +25,9 @@ from gt_label import GT_LABEL
 os.makedirs(out_text_dir, exist_ok=True)
 os.makedirs(out_embed_dir, exist_ok=True)
 
-# load CLIP model + tokenizer
+# load CLIP model + tokenizer (LAION version with hidden_size=768)
 device = "cuda" if torch.cuda.is_available() else "cpu"
-model_id = "openai/clip-vit-base-patch32"
+model_id = "laion/CLIP-ViT-B-32-laion2B-s34B-b79K"
 
 tokenizer = CLIPTokenizer.from_pretrained(model_id)
 text_encoder = CLIPTextModel.from_pretrained(model_id).to(device)
@@ -37,7 +37,7 @@ text_encoder.eval()
 hidden_size = text_encoder.config.hidden_size
 print("Loaded CLIP text encoder hidden size:", hidden_size)
 if hidden_size != 768:
-    sys.exit("❌ Wrong model loaded (got hidden_size=%d). Aborting to avoid wrong embeddings." % hidden_size)
+    sys.exit(f"❌ Wrong model loaded (got hidden_size={hidden_size}). Aborting to avoid wrong embeddings.")
 
 # correct ordinal filenames for 1–7
 ordinals = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th"]
