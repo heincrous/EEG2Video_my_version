@@ -3,10 +3,10 @@ SPLIT BLOCK-LEVEL MP4 INTO CLIP-LEVEL MP4 (GT-LABEL DRIVEN)
 ------------------------------------------------------------
 Input:
   raw/Video/BlockY_full.mp4
-  core_files/gt_label.npy   (ground truth alignment)
+  core_files/gt_label.py   (ground truth alignment)
 
 Process:
-  - Load GT_LABEL[block, class, clip] → frame index of clip start
+  - Use GT_LABEL[block, class, clip] → frame index of clip start
   - Skip 3s hint frames (encoded in GT_LABEL offsets)
   - Extract exact 2s (48 frames at 24 fps) per clip
   - Save each as its own MP4
@@ -19,21 +19,22 @@ import os
 import cv2
 import numpy as np
 from tqdm import tqdm
+import sys
 
 # paths
 repo_root = "/content/EEG2Video_my_version"
 in_dir = "/content/drive/MyDrive/EEG2Video_data/raw/Video/"
 out_dir = "/content/drive/MyDrive/EEG2Video_data/processed/Video_mp4/"
-gt_label_path = os.path.join(repo_root, "core_files", "gt_label.npy")
+
+# import GT_LABEL from Python module
+sys.path.append(os.path.join(repo_root, "core_files"))
+from gt_label import GT_LABEL   # GT_LABEL defined in gt_label.py
 
 os.makedirs(out_dir, exist_ok=True)
 
 # parameters
 fps = 24
 clip_len = 2 * fps   # 48 frames
-
-# load GT_LABEL
-GT_LABEL = np.load(gt_label_path)   # shape [7,40,5], entries = frame start indices
 
 # list all block videos
 all_files = [f for f in os.listdir(in_dir) if f.endswith(".mp4")]
