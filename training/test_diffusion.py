@@ -57,18 +57,21 @@ video_tensor = result.videos  # [1, f, c, h, w]
 
 # === SAVE MP4 ===
 # video_tensor: [1, f, c, h, w]
-frames = (video_tensor[0] * 255).clamp(0, 255).byte()  # [f, c, h, w]
-frames = frames.permute(0, 2, 3, 1).cpu().numpy()      # [f, h, w, c]
+frames = (video_tensor[0] * 255).clamp(0, 255).to(torch.uint8)  # [f, c, h, w]
+frames = frames.permute(0, 2, 3, 1).cpu().numpy()               # [f, h, w, c]
 
-# If c != 3, convert to RGB by dropping extra channels
-if frames.shape[-1] == 1:        # grayscale → RGB
-    frames = frames.repeat(3, -1)
-elif frames.shape[-1] == 4:      # RGBA → RGB
+# enforce 3 channels only
+if frames.shape[-1] > 3:
     frames = frames[..., :3]
+elif frames.shape[-1] == 1:
+    frames = frames.repeat(3, axis=-1)
+
+print("Final frame shape:", frames.shape)  # should be (f, h, w, 3)
 
 mp4_path = os.path.join(save_dir, "sample_test.mp4")
-imageio.mimsave(mp4_path, list(frames), fps=8)
+imageio.mimsave(mp4_path, [f for f in frames], fps=8)
 
 print("Video saved to:", mp4_path)
+
 
 
