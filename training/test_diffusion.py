@@ -1,25 +1,19 @@
 import os, sys, random, torch, imageio
 from einops import rearrange
-from diffusers import DDIMScheduler
 
 # === PATH SETUP ===
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(os.path.join(repo_root, "pipelines"))
-
 from pipeline_tuneavideo import TuneAVideoPipeline
 
 # === DIRECTORIES ===
-pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
-trained_output_dir    = "/content/drive/MyDrive/EEG2Video_outputs"
-test_text_list        = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/test_list.txt"
-save_dir              = os.path.join(trained_output_dir, "test_samples")
+trained_output_dir = "/content/drive/MyDrive/EEG2Video_outputs"
+test_text_list     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/test_list.txt"
+save_dir           = os.path.join(trained_output_dir, "test_samples")
 os.makedirs(save_dir, exist_ok=True)
 
 # === LOAD TRAINED PIPELINE ===
-pipe = TuneAVideoPipeline.from_pretrained(
-    trained_output_dir,  # trained pipeline saved here
-    scheduler=DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler"),
-)
+pipe = TuneAVideoPipeline.from_pretrained(trained_output_dir)
 pipe.enable_vae_slicing()
 pipe = pipe.to("cuda")
 
@@ -32,10 +26,9 @@ print("Chosen prompt:", prompt)
 
 # === GENERATE VIDEO ===
 generator = torch.Generator(device="cuda").manual_seed(42)
-
 result = pipe(
     prompt,
-    video_length=8,       # match your training validation_data["video_length"]
+    video_length=8,       # match your training validation setting
     num_inference_steps=20,
     generator=generator,
 )
