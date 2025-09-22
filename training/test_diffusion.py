@@ -1,4 +1,4 @@
-import os, sys, random, torch, imageio
+import os, sys, random, torch, imageio, gc
 from einops import rearrange
 from diffusers import DDIMScheduler, AutoencoderKL
 from transformers import CLIPTextModel, CLIPTokenizer
@@ -15,15 +15,23 @@ test_text_list        = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_te
 save_dir              = os.path.join(trained_output_dir, "test_samples")
 os.makedirs(save_dir, exist_ok=True)
 
-# === LOAD TRAINED PIPELINE ===
+# === MEMORY CONFIG ===
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+# Clear any cached memory
+gc.collect()
+torch.cuda.empty_cache()
+
+# === LOAD TRAINED PIPELINE WITH FP16 ===
 pipe = TuneAVideoPipeline(
-    vae=AutoencoderKL.from_pretrained(trained_output_dir, subfolder="vae"),
-    text_encoder=CLIPTextModel.from_pretrained(trained_output_dir, subfolder="text_encoder"),
+    vae=AutoencoderKL.from_pretrained(trained_output_dir, subfolder="vae", torch_dtype=torch.float16),
+    text_encoder=CLIPTextModel.from_pretrained(trained_output_dir, subfolder="text_encoder", torch_dtype=torch.float16),
     tokenizer=CLIPTokenizer.from_pretrained(trained_output_dir, subfolder="tokenizer"),
-    unet=UNet3DConditionModel.from_pretrained_2d(trained_output_dir, subfolder="unet"),
+    unet=UNet3DConditionModel.from_pretrained_2d(trained_output_dir, subfolder="unet", torch_dtype=torch.float16),
     scheduler=DDIMScheduler.from_pretrained(trained_output_dir, subfolder="scheduler"),
 )
 pipe.enable_vae_slicing()
+pipe.enable_xformers_memory_efficient_attention()
 pipe = pipe.to("cuda")
 
 # === PICK RANDOM PROMPT FROM TEST LIST ===
@@ -37,8 +45,8 @@ print("Chosen prompt:", prompt)
 generator = torch.Generator(device="cuda").manual_seed(42)
 result = pipe(
     prompt,
-    video_length=8,       # keep this consistent with validation length used in training
-    num_inference_steps=20,
+    video_length=8,          # keep this consistent with validation length used in training
+    num_inference_steps=20,  # reduce if still OOM (e.g., 10–15)
     generator=generator,
 )
 
