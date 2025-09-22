@@ -75,7 +75,7 @@ if __name__ == "__main__":
 
     # choose max_samples=None for all data, or set a number like 200
     dataset = EEGTextDataset(eeg_train_list, text_train_list, max_samples=None)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True,
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True,
                             pin_memory=True, num_workers=2)
 
     print("Sanity check:")
