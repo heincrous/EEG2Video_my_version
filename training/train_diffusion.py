@@ -323,11 +323,11 @@ if __name__ == "__main__":
         output_dir="/content/drive/MyDrive/EEG2Video_outputs",
         train_data=dict(video_path=None, prompt=None),
         validation_data=dict(prompts=None, num_inv_steps=50, use_inv_latent=False),
-        train_batch_size=2, # change to 10 for full training
+        train_batch_size=1, # change to 10 for full training
         learning_rate=3e-5,
         num_train_epochs=5, # change to 200 for full training
         mixed_precision="fp16",
-        gradient_accumulation_steps=1,
+        gradient_accumulation_steps=4, # change to 1 for full training
         enable_xformers_memory_efficient_attention=False,
         seed=42,
     )
