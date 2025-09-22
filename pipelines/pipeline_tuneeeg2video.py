@@ -1,9 +1,3 @@
-'''
-Description: 
-Author: Zhou Tianyi
-LastEditTime: 2025-04-24 14:43:06
-LastEditors:  
-'''
 # Adapted from https://github.com/huggingface/diffusers/blob/main/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py
 
 import inspect
@@ -31,7 +25,12 @@ from diffusers.utils import deprecate, logging, BaseOutput
 
 from einops import rearrange
 
-from core_files.unet import UNet3DConditionModel
+# === FIX: add repo root so core_files is visible ===
+import sys, os
+repo_root = "/content/EEG2Video_my_version"
+sys.path.append(os.path.join(repo_root, "core_files"))
+
+from unet import UNet3DConditionModel
 
 torch.cuda.set_device(0)
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name

@@ -17,9 +17,9 @@ Output:
 """
 
 import os
+import sys
 import cv2
 from tqdm import tqdm
-import sys
 import re
 
 # paths

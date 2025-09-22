@@ -19,6 +19,7 @@ Output:
 """
 
 import os
+import sys
 import numpy as np
 from tqdm import tqdm
 
@@ -32,7 +33,6 @@ raw_dir = "/content/drive/MyDrive/EEG2Video_data/raw/EEG/"
 out_dir = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments/"
 
 # import GT_LABEL directly from core_files/gt_label.py
-import sys
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(os.path.join(repo_root, "core_files"))
 from gt_label import GT_LABEL   # GT_LABEL shape (7,40), values 0–39

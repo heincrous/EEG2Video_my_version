@@ -26,8 +26,12 @@ from diffusers.utils import deprecate, logging, BaseOutput
 
 from einops import rearrange
 
-from core_files.unet import UNet3DConditionModel
+# === FIX: add repo root to sys.path so core_files is visible ===
+import sys, os
+repo_root = "/content/EEG2Video_my_version"
+sys.path.append(os.path.join(repo_root, "core_files"))
 
+from unet import UNet3DConditionModel
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
