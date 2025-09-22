@@ -54,6 +54,7 @@ result = pipe(
 )
 
 video_tensor = result.videos  # [1, f, c, h, w]
+print("Result.videos shape:", video_tensor.shape)
 
 # === SAVE MP4 ===
 # video_tensor: [1, f, c, h, w]
@@ -72,6 +73,4 @@ mp4_path = os.path.join(save_dir, "sample_test.mp4")
 imageio.mimsave(mp4_path, [f for f in frames], fps=8)
 
 print("Video saved to:", mp4_path)
-
-
-
+print("Text prompt used:", prompt)
