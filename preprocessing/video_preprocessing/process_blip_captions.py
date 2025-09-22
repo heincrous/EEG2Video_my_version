@@ -43,9 +43,12 @@ tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-base-patch32")
 text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
 text_encoder.eval()
 
+# correct ordinal filenames for 1–7
+ordinals = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th"]
+
 # process block caption files
 for block_id in range(7):
-    fname = f"{block_id+1}th_10min.txt"
+    fname = f"{ordinals[block_id]}_10min.txt"
     fpath = os.path.join(caption_dir, fname)
     if not os.path.exists(fpath):
         print(f"Missing caption file: {fname}, skipping Block {block_id+1}")
