@@ -3,13 +3,14 @@ SPLIT BLOCK-LEVEL MP4 INTO CLIP-LEVEL MP4 (GT-LABEL DRIVEN)
 ------------------------------------------------------------
 Input:
   raw/Video/BlockY_full.mp4
-  core_files/gt_label.py   (ground truth alignment)
+  core_files/gt_label.py   (true class order per block)
 
 Process:
-  - Use GT_LABEL[block, class, clip] → frame index of clip start
-  - Skip 3s hint frames (encoded in GT_LABEL offsets)
-  - Extract exact 2s (48 frames at 24 fps) per clip
-  - Save each as its own MP4
+  - Each block = 40 classes × 5 clips = 200 clips
+  - Each class has: 3s hint (72 frames) + 5×2s clips (5×48 frames)
+  - GT_LABEL[block, order] gives true class ID (0–39) for slot
+  - Extract exact 2s (48 frames) per clip
+  - Save as MP4 with classYY_clipZZ.mp4 naming
 
 Output:
   processed/Video_mp4/BlockY/classYY_clipZZ.mp4
@@ -17,7 +18,6 @@ Output:
 
 import os
 import cv2
-import numpy as np
 from tqdm import tqdm
 import sys
 
@@ -26,15 +26,17 @@ repo_root = "/content/EEG2Video_my_version"
 in_dir = "/content/drive/MyDrive/EEG2Video_data/raw/Video/"
 out_dir = "/content/drive/MyDrive/EEG2Video_data/processed/Video_mp4/"
 
-# import GT_LABEL from Python module
+# import GT_LABEL
 sys.path.append(os.path.join(repo_root, "core_files"))
-from gt_label import GT_LABEL   # GT_LABEL defined in gt_label.py
+from gt_label import GT_LABEL   # shape (7,40), values 0–39
 
 os.makedirs(out_dir, exist_ok=True)
 
 # parameters
 fps = 24
 clip_len = 2 * fps   # 48 frames
+hint_len = 3 * fps   # 72 frames
+clips_per_class = 5
 
 # list all block videos
 all_files = [f for f in os.listdir(in_dir) if f.endswith(".mp4")]
@@ -59,27 +61,29 @@ for fname in selected_files:
 
     video_path = os.path.join(in_dir, fname)
     cap = cv2.VideoCapture(video_path)
-
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    for class_id in tqdm(range(40), desc=f"Processing {fname}"):
-        for clip_id in range(5):
-            start_idx = GT_LABEL[block_id, class_id, clip_id]
+    saved_count = 0
+
+    for order_idx in tqdm(range(40), desc=f"Processing {fname}"):
+        true_class = GT_LABEL[block_id, order_idx]  # 0–39
+        slot_start = order_idx * (hint_len + clips_per_class*clip_len)
+
+        for clip_id in range(clips_per_class):
+            start_idx = slot_start + hint_len + clip_id*clip_len
             end_idx = start_idx + clip_len
 
-            # safety check
             if end_idx > total_frames:
-                print(f"Warning: clip {class_id}_{clip_id} exceeds video length in {fname}")
+                print(f"Warning: Block{block_id+1} class{true_class} clip{clip_id+1} exceeds video length")
                 continue
 
             out_path = os.path.join(
                 block_out_dir,
-                f"class{class_id:02d}_clip{clip_id+1:02d}.mp4"
+                f"class{true_class:02d}_clip{clip_id+1:02d}.mp4"
             )
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             writer = cv2.VideoWriter(out_path, fourcc, fps, (512, 288))
 
-            # jump to start index
             cap.set(cv2.CAP_PROP_POS_FRAMES, start_idx)
 
             for fidx in range(clip_len):
@@ -90,6 +94,7 @@ for fname in selected_files:
                 writer.write(frame)
 
             writer.release()
+            saved_count += 1
 
     cap.release()
-    print(f"Finished splitting {fname} → {block_out_dir}")
+    print(f"Finished splitting {fname} → {block_out_dir}, saved {saved_count} clips")
