@@ -18,6 +18,9 @@ ckpt_path  = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor.pt
 pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 output_dir = "/content/drive/MyDrive/EEG2Video_outputs"
 save_dir   = os.path.join(output_dir, "semantic_only_one")
+
+# ensure dirs exist
+os.makedirs(output_dir, exist_ok=True)
 os.makedirs(save_dir, exist_ok=True)
 
 # === load file lists ===
@@ -63,7 +66,7 @@ gc.collect(); torch.cuda.empty_cache()
 pipe = TuneAVideoPipeline.from_pretrained(
     pretrained_model_path,
     unet=UNet3DConditionModel.from_pretrained_2d(pretrained_model_path, subfolder="unet"),
-    torch_dtype=torch.float32,   # <-- run everything in full precision
+    torch_dtype=torch.float32,   # run everything in full precision for safety
 ).to("cuda")
 pipe.enable_vae_slicing()
 
@@ -85,9 +88,16 @@ frames = (video_tensor[0] * 255).clamp(0,255).to(torch.uint8).permute(0,2,3,1).c
 if frames.shape[-1] > 3:
     frames = frames[...,:3]
 
+# === save video ===
 mp4_path = os.path.join(save_dir, base_name + ".mp4")
+
+# sanity check
+print("Saving to:", mp4_path)
+assert os.path.exists(save_dir), f"Save directory does not exist: {save_dir}"
+
 writer = imageio.get_writer(mp4_path, fps=8, codec="libx264")
-for f in frames: writer.append_data(f)
+for f in frames:
+    writer.append_data(f)
 writer.close()
 
 print(f"Saved video: {mp4_path}")
