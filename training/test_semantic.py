@@ -155,7 +155,7 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
 # === Repo imports ===
-from training.train_semantic import SemanticPredictor
+from train_semantic import SemanticPredictor
 
 
 # ==========================================
