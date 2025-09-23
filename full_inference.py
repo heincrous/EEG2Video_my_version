@@ -60,7 +60,8 @@ seq2seq_scaler = joblib.load(os.path.join(seq2seq_ckpt_dir, f"scaler_{seq2seq_ta
 # ==========================================
 # Load finetuned pipeline (needs UNet + scheduler too)
 # ==========================================
-from diffusers import AutoencoderKL, DDIMScheduler, CLIPTokenizer
+from diffusers import AutoencoderKL, DDIMScheduler
+from transformers import CLIPTokenizer
 
 vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae").to(device, dtype=torch.float16)
 scheduler = DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
