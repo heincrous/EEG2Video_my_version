@@ -313,7 +313,7 @@ if __name__ == "__main__":
         output_dir="/content/drive/MyDrive/EEG2Video_outputs",
         train_data=dict(video_path=None, prompt=None),
         validation_data=dict(prompts=None, num_inv_steps=20, use_inv_latent=False),
-        train_batch_size=2,
+        train_batch_size=1,
         learning_rate=3e-5,
         num_train_epochs=2,
         mixed_precision="fp16",
