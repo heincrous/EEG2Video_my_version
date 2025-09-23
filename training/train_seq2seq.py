@@ -7,7 +7,6 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from sklearn.preprocessing import StandardScaler
 import joblib
-from skimage.metrics import structural_similarity as ssim
 
 # ------------------------------------------------
 # Model components
@@ -195,11 +194,10 @@ if __name__ == "__main__":
                 scheduler.step()
                 batch_losses.append(l.item())
             train_mean = np.mean(batch_losses)
-            train_std = np.std(batch_losses)
 
             # ---- Validation ----
             model.eval()
-            val_losses, ssim_scores = [], []
+            val_losses = []
             with torch.no_grad():
                 for eeg, video in val_loader:
                     eeg, video = eeg.cuda(), video.cuda()
@@ -210,19 +208,11 @@ if __name__ == "__main__":
                     loss_val = loss_fn(video, out[:, :-1, :]).item()
                     val_losses.append(loss_val)
 
-                    out_np = out[:, :-1, :].cpu().numpy().reshape(b, f, c, h, w)
-                    vid_np = video.cpu().numpy()
-                    for i in range(b):
-                        for t in range(f):
-                            s = ssim(vid_np[i,t,0], out_np[i,t,0], data_range=1.0)
-                            ssim_scores.append(s)
-
             val_mean = np.mean(val_losses)
-            val_ssim = np.mean(ssim_scores)
 
             print(f"{subj} Epoch {epoch+1}/{num_epochs} "
-                  f"| Train loss mean={train_mean:.4f}, std={train_std:.4f} "
-                  f"| Val loss={val_mean:.4f}, SSIM={val_ssim:.4f}")
+                  f"| Train loss={train_mean:.4f} "
+                  f"| Val loss={val_mean:.4f}")
 
         ckpt_path = os.path.join(save_dir, f"seq2seqmodel_{subj}.pt")
         torch.save({'state_dict': model.state_dict()}, ckpt_path)
