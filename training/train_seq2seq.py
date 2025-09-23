@@ -188,7 +188,7 @@ if __name__ == "__main__":
     vid_train_list = os.path.join(drive_root, "Video_latents/train_list_dup.txt")
 
     dataset = EEGVideoDataset(eeg_train_list, vid_train_list, base_dir=drive_root, debug=True)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=2)
+    dataloader = DataLoader(dataset, batch_size=128, shuffle=True, num_workers=2)
 
     model = MyTransformer(d_model=512, pred_frames=24).cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
