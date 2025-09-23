@@ -18,8 +18,35 @@ text_test_list = os.path.join(caption_root, "test_list.txt")
 
 os.makedirs(output_dir, exist_ok=True)
 
-# === IMPORT YOUR MODEL (authors’ transformer) ===
-from train_seq2seq import MyTransformer  # must match your training script
+# === IMPORT MODEL (authors’ transformer) ===
+from train_seq2seq import MyTransformer
+
+# === PATCH FORWARD TO FIX DOUBLE EMBEDDING ===
+def forward_fixed(self, eeg, start_token):
+    b, n, c, t = eeg.shape
+    eeg = eeg.reshape(b*n, 1, c, t)
+    src = self.eeg_embedding(eeg).reshape(b, n, -1)  # [B,7,d_model]
+    src = self.positional_encoding(src)
+    enc_out = self.encoder(src)
+
+    # embed only the start token
+    new_tgt = start_token.reshape(b, 1, -1)
+    new_tgt = self.img_embedding(new_tgt)
+    new_tgt = self.positional_encoding(new_tgt)
+
+    # rollout in d_model space
+    for i in range(self.pred_frames):
+        tgt_mask = torch.nn.Transformer.generate_square_subsequent_mask(
+            new_tgt.size(1)
+        ).to(new_tgt.device)
+        dec_out = self.decoder(new_tgt, enc_out, tgt_mask=tgt_mask)
+        new_tgt = torch.cat((new_tgt, dec_out[:, -1:, :]), dim=1)
+
+    out = self.predictor(new_tgt[:, 1:])  # drop start token
+    out = out.reshape(b, self.pred_frames, 4, 36, 64)
+    return out
+
+MyTransformer.forward = forward_fixed
 
 # === LOAD MODEL ===
 checkpoint_path = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoint.pt"
@@ -43,12 +70,10 @@ with open(text_test_list) as f:
 idx = random.randint(0, len(eeg_files) - 1)
 eeg_path = os.path.join(drive_root, "EEG_windows", eeg_files[idx])
 vid_path = os.path.join(drive_root, "Video_latents", vid_files[idx])
-txt_path = txt_files[idx % len(txt_files)]  # simple alignment
+txt_path = txt_files[idx % len(txt_files)]
 
-# === LOAD DATA ===
 eeg = np.load(eeg_path)   # [7,62,100]
 video = np.load(vid_path) # [F,4,36,64]
-
 with open(txt_path, "r") as f:
     caption_text = f.read().strip()
 
@@ -61,13 +86,12 @@ print("Caption text:", caption_text)
 eeg   = torch.tensor(eeg, dtype=torch.float32).unsqueeze(0).cuda()    # [1,7,62,100]
 video = torch.tensor(video, dtype=torch.float32).unsqueeze(0).cuda()  # [1,F,4,36,64]
 
-# === PREDICTED VIDEO ===
+# prepend zero frame as start token
 b, f, c, h, w = video.shape
-zero_frame = torch.zeros((b, 1, c, h, w), device=video.device)
-full_video = torch.cat([zero_frame, video], dim=1)
+zero_frame = torch.zeros((b,1,c,h,w), device=video.device)
 
 with torch.no_grad():
-    pred = model(eeg, full_video)[:, :-1]  # [1,F,4,36,64]
+    pred = model(eeg, zero_frame)  # [1,F,4,36,64]
 
 # === RANDOM BASELINE ===
 rand_latent = torch.randn_like(video)
@@ -98,13 +122,12 @@ print("Shuffled vs GT:", mse_ssim(shuffle_latent, video))
 
 # === DECODE & SAVE MP4s ===
 def decode_and_save(latents, name):
-    # latents: [1,F,4,36,64]
     latents = latents.squeeze(0) / 0.18215  # scale back to VAE space
     frames = []
     with torch.no_grad():
         for i in range(latents.shape[0]):
             frame = vae.decode(latents[i:i+1]).sample
-            frame = (frame.clamp(-1,1) + 1) / 2  # to [0,1]
+            frame = (frame.clamp(-1,1) + 1) / 2
             frame = (frame * 255).cpu().numpy().astype(np.uint8)
             frame = rearrange(frame, "b c h w -> h w c b")[...,0]
             frames.append(frame)
