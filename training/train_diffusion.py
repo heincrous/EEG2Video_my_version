@@ -59,7 +59,7 @@ def main(
     resume_from_checkpoint: Optional[str] = None,
     mixed_precision: Optional[str] = "fp16",
     use_8bit_adam: bool = False,
-    enable_xformers_memory_efficient_attention: bool = True,
+    enable_xformers_memory_efficient_attention: bool = False,  # keep disabled
     seed: Optional[int] = None,
     num_train_epochs: int = 200,
 ):
@@ -138,24 +138,40 @@ def main(
         return_tensors="pt",
     ).input_ids
 
+    # ---- Dataloader ----
     train_dataloader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=train_batch_size, shuffle=True,
-        num_workers=2, pin_memory=True
+        train_dataset,
+        batch_size=train_batch_size,
+        shuffle=True,
+        num_workers=os.cpu_count(),
+        pin_memory=True,
+        persistent_workers=True,
     )
 
+    lr_scheduler = get_scheduler(
+        lr_scheduler,
+        optimizer=optimizer,
+        num_warmup_steps=lr_warmup_steps * gradient_accumulation_steps,
+        num_training_steps=num_train_epochs * len(train_dataloader) * gradient_accumulation_steps,
+    )
+
+    # prepare with accelerator
+    unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        unet, optimizer, train_dataloader, lr_scheduler
+    )
+
+    # sanity check first batch
     first_batch = next(iter(train_dataloader))
     if "latents" in first_batch:
         latents = first_batch["latents"]
         inferred_video_length = latents.shape[2]
-        print("Sanity check: latents shape =", latents.shape)
     elif "pixel_values" in first_batch:
         pixel_values = first_batch["pixel_values"]
         inferred_video_length = pixel_values.shape[1]
-        print("Sanity check: pixel_values shape =", pixel_values.shape)
     else:
         raise ValueError("Dataset did not return 'latents' or 'pixel_values'")
 
-    validation_data["video_length"] = min(8, inferred_video_length)
+    validation_data["video_length"] = min(24, inferred_video_length)
     print(f"[Validation] Using video_length={validation_data['video_length']}")
 
     # ---- Validation prompts ----
@@ -176,17 +192,6 @@ def main(
     )
     validation_pipeline.enable_vae_slicing()
 
-    lr_scheduler = get_scheduler(
-        lr_scheduler,
-        optimizer=optimizer,
-        num_warmup_steps=lr_warmup_steps * gradient_accumulation_steps,
-        num_training_steps=num_train_epochs * len(train_dataloader) * gradient_accumulation_steps,
-    )
-
-    unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        unet, optimizer, train_dataloader, lr_scheduler
-    )
-
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
         weight_dtype = torch.float16
@@ -202,39 +207,52 @@ def main(
     global_step = 0
     first_epoch = 1
 
-    for epoch in tqdm(range(first_epoch, num_train_epochs + 1), desc="Epochs"):
+    for epoch in range(first_epoch, num_train_epochs + 1):
         unet.train()
-        for step, batch in tqdm(enumerate(train_dataloader), total=len(train_dataloader), leave=False, desc=f"Epoch {epoch}"):
-            with accelerator.accumulate(unet):
-                if "latents" in batch:
-                    latents = batch["latents"].to(weight_dtype)
-                else:
-                    pixel_values = batch["pixel_values"].to(weight_dtype)
-                    video_length = pixel_values.shape[1]
-                    pixel_values = rearrange(pixel_values, "b f c h w -> (b f) c h w")
-                    latents = vae.encode(pixel_values).latent_dist.sample()
-                    latents = rearrange(latents, "(b f) c h w -> b c f h w", f=video_length)
-                    latents = latents * 0.18215
+        total_loss = 0.0
 
-                noise = torch.randn_like(latents)
-                timesteps = torch.randint(
-                    0, noise_scheduler.num_train_timesteps, (latents.size(0),), device=latents.device
-                ).long()
-                noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+        with tqdm(total=len(train_dataloader), desc=f"Epoch {epoch}/{num_train_epochs}", leave=True) as pbar:
+            for step, batch in enumerate(train_dataloader):
+                with accelerator.accumulate(unet):
+                    if "latents" in batch:
+                        latents = batch["latents"].to(weight_dtype)
+                    else:
+                        pixel_values = batch["pixel_values"].to(weight_dtype)
+                        video_length = pixel_values.shape[1]
+                        pixel_values = rearrange(pixel_values, "b f c h w -> (b f) c h w")
+                        latents = vae.encode(pixel_values).latent_dist.sample()
+                        latents = rearrange(latents, "(b f) c h w -> b c f h w", f=video_length)
+                        latents = latents * 0.18215
 
-                encoder_hidden_states = text_encoder(batch["prompt_ids"])[0]
-                target = noise if noise_scheduler.prediction_type == "epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
+                    noise = torch.randn_like(latents)
+                    timesteps = torch.randint(
+                        0, noise_scheduler.num_train_timesteps, (latents.size(0),), device=latents.device
+                    ).long()
+                    noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-                model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                    encoder_hidden_states = text_encoder(batch["prompt_ids"])[0]
+                    target = noise if noise_scheduler.prediction_type == "epsilon" else noise_scheduler.get_velocity(latents, noise, timesteps)
 
-                accelerator.backward(loss)
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
+                    model_pred = unet(noisy_latents, timesteps, encoder_hidden_states).sample
+                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
-            global_step += 1
+                    accelerator.backward(loss)
+                    accelerator.clip_grad_norm_(unet.parameters(), max_grad_norm)
 
+                    optimizer.step()
+                    lr_scheduler.step()
+                    optimizer.zero_grad()
+
+                total_loss += loss.item()
+                global_step += 1
+                pbar.update(1)
+                pbar.set_postfix({"loss": loss.item()})
+
+        # log after epoch
+        avg_loss = total_loss / len(train_dataloader)
+        print(f"[Epoch {epoch}] Average loss: {avg_loss:.6f}")
+
+        # run validation
         if epoch % 2 == 0 and accelerator.is_main_process:
             generator = torch.Generator(device=latents.device).manual_seed(seed)
             for prompt in config["validation_data"]["prompts"]:

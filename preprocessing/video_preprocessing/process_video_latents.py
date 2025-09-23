@@ -25,26 +25,6 @@ Output:
 # 4. Encode each frame using AutoencoderKL
 # 5. Save stacked latent array
 
-"""
-ENCODE MP4 CLIPS INTO VIDEO LATENTS (VAE)
-------------------------------------------
-Input:
-  processed/Video_mp4/BlockY/classYY_clipZZ.mp4
-    Each clip = 48 frames @ 24 fps, 512x512
-
-Process:
-  - Load clip frames
-  - Optionally downsample to 24 frames (to match TuneMultiVideoDataset)
-  - Encode each frame with Stable Diffusion VAE
-  - Latent per frame = [4,36,64]
-  - Stack into sequence [N,4,36,64]
-    N = 48 if full, or 24 if subsampled
-
-Output:
-  processed/Video_latents/BlockY/classYY_clipZZ.npy
-    Shape = [N,4,36,64]
-"""
-
 import os
 import cv2
 import numpy as np
@@ -57,15 +37,19 @@ in_dir = "/content/drive/MyDrive/EEG2Video_data/processed/Video_mp4/"
 out_dir = "/content/drive/MyDrive/EEG2Video_data/processed/Video_latents/"
 os.makedirs(out_dir, exist_ok=True)
 
-# load pretrained Stable Diffusion VAE
+# load pretrained Stable Diffusion VAE (v1-4 to match training)
 device = "cuda" if torch.cuda.is_available() else "cpu"
-vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="vae").to(device)
+vae = AutoencoderKL.from_pretrained(
+    "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4",
+    subfolder="vae"
+).to(device, dtype=torch.float16)
 vae.eval()
 
 # parameters
 target_size = (512, 512)
 fps = 24
 subsample = True   # set False if you want all 48 frames
+batch_size = 64     # number of frames per VAE forward pass
 
 # -------------------------------------------------
 # List available blocks to process
@@ -113,22 +97,23 @@ for block in selected_blocks:
 
         # convert to tensor [B,3,512,512]
         frames = np.stack(frames, axis=0).astype(np.float32) / 255.0
-        frames = torch.from_numpy(frames).permute(0,3,1,2).to(device)
+        frames = torch.from_numpy(frames).permute(0,3,1,2).to(device, dtype=torch.float16)
 
         # optional subsample to 24 frames
         if subsample and frames.shape[0] == 48:
             idxs = np.linspace(0, 47, 24, dtype=int)
             frames = frames[idxs]
 
-        # encode frames
+        # encode frames in batches
         with torch.no_grad():
             latents = []
-            for i in range(frames.shape[0]):
-                f = frames[i].unsqueeze(0) * 2 - 1   # scale to [-1,1]
-                latent = vae.encode(f).latent_dist.sample()
-                latent = latent * 0.18215            # SD scaling factor
+            frames = frames.to(memory_format=torch.channels_last)
+            for i in range(0, frames.shape[0], batch_size):
+                batch = frames[i:i+batch_size] * 2 - 1  # scale to [-1,1]
+                latent = vae.encode(batch).latent_dist.sample()
+                latent = latent * 0.18215
                 latents.append(latent)
-            latents = torch.cat(latents, dim=0)      # [N,4,64,64]
+            latents = torch.cat(latents, dim=0)  # [N,4,64,64]
 
         # resize spatial dimension to [36,64] (to match paper)
         latents = torch.nn.functional.interpolate(latents, size=(36,64), mode="bilinear")

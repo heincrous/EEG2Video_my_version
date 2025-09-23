@@ -104,7 +104,7 @@ class TuneAVideoDataset(Dataset):
             use_latents: bool = True,  # NEW FLAG
             width: int = 512,
             height: int = 288,
-            n_sample_frames: int = 8,
+            n_sample_frames: int = 24,
             sample_start_idx: int = 0,
             sample_frame_rate: int = 1,
     ):
