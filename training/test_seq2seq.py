@@ -240,6 +240,7 @@ from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import peak_signal_noise_ratio as psnr
 import torchmetrics
 
+# Import config + model (must match training definition)
 from train_seq2seq import CONFIG, myTransformer
 
 
@@ -288,7 +289,7 @@ if __name__ == "__main__":
     # === Load model ===
     model = myTransformer(CONFIG).cuda()
     state = torch.load(ckpt_path, map_location="cuda")
-    model.load_state_dict(state["state_dict"])
+    model.load_state_dict(state["state_dict"], strict=True)
     model.eval()
 
     # === Predict latents ===
