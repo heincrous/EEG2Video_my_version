@@ -188,41 +188,51 @@ if __name__ == "__main__":
     vid_train_list = os.path.join(drive_root, "Video_latents/train_list_dup.txt")
 
     dataset = EEGVideoDataset(eeg_train_list, vid_train_list, base_dir=drive_root, debug=True)
-    dataloader = DataLoader(dataset, batch_size=512, shuffle=True, num_workers=2)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=128,             # tuned for better balance of speed/memory
+        shuffle=True,
+        num_workers=4,              # more workers for parallel loading
+        pin_memory=True,            # faster host→GPU transfers
+        persistent_workers=True     # keep workers alive between epochs
+    )
 
     model = MyTransformer(d_model=512, pred_frames=24).cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200*len(dataloader))
     criterion = nn.MSELoss()
 
+    scaler = torch.cuda.amp.GradScaler()   # for AMP
+
     for epoch in range(80):
         model.train()
         epoch_loss = 0
         for eeg, video in tqdm(dataloader, desc=f"Epoch {epoch+1}"):
-            eeg, video = eeg.cuda(), video.cuda()
+            eeg, video = eeg.cuda(non_blocking=True), video.cuda(non_blocking=True)
 
             # prepend zero frame for teacher forcing
             b, f, c, h, w = video.shape
             zero_frame = torch.zeros((b,1,c,h,w), device=video.device)
-            input_frames = torch.cat([zero_frame, video[:, :-1]], dim=1)  # [B,24,4,36,64]
+            input_frames = torch.cat([zero_frame, video[:, :-1]], dim=1)
 
             optimizer.zero_grad()
-            out = model(eeg, input_frames)  # [B,24,4,36,64]
+            with torch.cuda.amp.autocast():   # mixed precision forward + loss
+                out = model(eeg, input_frames)
+                loss = criterion(out, video)
 
-            # FIX: use all frames for loss (no slicing)
-            loss = criterion(out, video)
-
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             scheduler.step()
+
             epoch_loss += loss.item()
 
         print(f"Epoch {epoch+1}, Loss={epoch_loss/len(dataloader):.6f}")
 
         # quick sanity check
-        with torch.no_grad():
+        with torch.no_grad(), torch.cuda.amp.autocast():
             eeg, video = next(iter(dataloader))
-            eeg, video = eeg.cuda(), video.cuda()
+            eeg, video = eeg.cuda(non_blocking=True), video.cuda(non_blocking=True)
             b, f, c, h, w = video.shape
             zero_frame = torch.zeros((b,1,c,h,w), device=video.device)
             pred = model.generate(eeg, zero_frame)
