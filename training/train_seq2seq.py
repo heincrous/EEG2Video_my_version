@@ -255,7 +255,7 @@
 #     print(f"Saved model and scaler with tag: {tag}")
 
 # ==========================================
-# Seq2Seq Training
+# Seq2Seq Training (with per-epoch progress bar)
 # ==========================================
 
 # === Standard libraries ===
@@ -310,15 +310,11 @@ class MyEEGNet_embedding(nn.Module):
     def __init__(self, d_model, C, T, F1, D, F2, cross_subject=False):
         super().__init__()
         self.drop_out = 0.25 if cross_subject else 0.5
-
-        # Block 1: temporal conv (kernel relative to T)
         self.block_1 = nn.Sequential(
             nn.ZeroPad2d((T // 2 - 1, T // 2, 0, 0)),
             nn.Conv2d(1, F1, (1, T // 2), bias=False),
             nn.BatchNorm2d(F1),
         )
-
-        # Block 2: depthwise conv across channels
         self.block_2 = nn.Sequential(
             nn.Conv2d(F1, F1 * D, (C, 1), groups=F1, bias=False),
             nn.BatchNorm2d(F1 * D),
@@ -326,8 +322,6 @@ class MyEEGNet_embedding(nn.Module):
             nn.AvgPool2d((1, 4)),
             nn.Dropout(self.drop_out),
         )
-
-        # Block 3: separable conv
         self.block_3 = nn.Sequential(
             nn.ZeroPad2d((7, 8, 0, 0)),
             nn.Conv2d(F1 * D, F1 * D, (1, 16), groups=F1 * D, bias=False),
@@ -337,8 +331,6 @@ class MyEEGNet_embedding(nn.Module):
             nn.AvgPool2d((1, 8)),
             nn.Dropout(self.drop_out),
         )
-
-        # Final embedding layer (built dynamically)
         self.embedding = None
         self.d_model = d_model
 
@@ -419,7 +411,6 @@ class myTransformer(nn.Module):
             pred = self.predictor(out[:, -1])
             outputs.append(pred)
             prev_tokens = torch.cat([prev_tokens, pred.unsqueeze(1)], dim=1)
-
         outputs = torch.stack(outputs, dim=1)
         return outputs.view(b, f, c, h, w)
 
@@ -509,7 +500,7 @@ if __name__ == "__main__":
     vid_train = np.concatenate(vid_train_all, axis=0)
 
     # ==========================================
-    # Training loop
+    # Training loop with progress bar
     # ==========================================
     batch_size = CONFIG["batch_size_all"] if len(selected_subjects) > 1 else CONFIG["batch_size_single"]
     train_loader = DataLoader(EEGVideoBundle(eeg_train, vid_train), batch_size=batch_size, shuffle=True)
@@ -523,15 +514,19 @@ if __name__ == "__main__":
         model.train()
         batch_losses = []
 
-        for eeg, video in train_loader:
-            eeg, video = eeg.cuda(), video.cuda()
-            optimizer.zero_grad()
-            out = model(eeg, video)
-            loss = loss_fn(video, out)
-            loss.backward()
-            optimizer.step()
-            scheduler.step()
-            batch_losses.append(loss.item())
+        with tqdm(total=len(train_loader), desc=f"Epoch {epoch}/{num_epochs}", unit="batch") as pbar:
+            for eeg, video in train_loader:
+                eeg, video = eeg.cuda(), video.cuda()
+                optimizer.zero_grad()
+                out = model(eeg, video)
+                loss = loss_fn(video, out)
+                loss.backward()
+                optimizer.step()
+                scheduler.step()
+                batch_losses.append(loss.item())
+
+                pbar.set_postfix({"loss": f"{loss.item():.6f}"})
+                pbar.update(1)
 
         avg_loss = np.mean(batch_losses)
         current_lr = scheduler.get_last_lr()[0]

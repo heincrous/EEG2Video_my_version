@@ -226,7 +226,7 @@
 #     print(f"Saved ground-truth video to {gt_path}")
 
 # ==========================================
-# Seq2Seq Inference + Evaluation
+# Seq2Seq Inference + Evaluation (per-clip .npy, using test_list)
 # ==========================================
 
 # === Standard libraries ===
@@ -273,16 +273,17 @@ if __name__ == "__main__":
     scaler_path = os.path.join(ckpt_dir, f"scaler_{tag}.pkl")
     scaler = joblib.load(scaler_path)
 
-    # === Pick a test sample from EEG_windows/test_list.txt ===
+    # === Pick a random test sample from test_list.txt ===
     with open(test_list, "r") as f:
         lines = [line.strip() for line in f if line.strip()]
     rel_path = random.choice(lines)
-    eeg_path = os.path.join(eeg_root, rel_path)
-    vid_path = os.path.join(latent_root, rel_path)
 
-    eeg = np.load(eeg_path)          # (7,62,100) or similar
-    gt_latents = np.load(vid_path)   # (F,4,36,64)
+    eeg_path = os.path.join(eeg_root, rel_path)   # EEG_windows/subX/BlockY/classZZ_clipWW.npy
+    vid_path = os.path.join(latent_root, rel_path) # Video_latents/BlockY/classZZ_clipWW.npy
+
     print(f"\nTesting sample: {rel_path}")
+    eeg = np.load(eeg_path)        # (7,62,100)
+    gt_latents = np.load(vid_path) # (F,4,36,64)
 
     # === Apply scaler ===
     eeg_flat = scaler.transform(eeg.reshape(-1, CONFIG["C"] * CONFIG["T"]))
