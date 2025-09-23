@@ -49,9 +49,9 @@ print("Caption text:", prompt_text)
 # === GENERATE VIDEO ===
 generator = torch.Generator(device="cuda").manual_seed(42)
 
-# match training setup → 24 frames
-video_length = 24
-fps = 12
+# Match training setup → 6 frames, save as 2 s video
+video_length = 6
+fps = 3
 
 result = pipe(
     prompt_text,
@@ -76,7 +76,7 @@ elif frames.shape[-1] == 1:
 
 print("Final frame shape:", frames.shape)
 
-base_name = os.path.splitext(os.path.basename(prompt_path))[0] + f"_{video_length}f.mp4"
+base_name = os.path.splitext(os.path.basename(prompt_path))[0] + f"_{video_length}f_{fps}fps.mp4"
 mp4_path = os.path.join(save_dir, base_name)
 
 writer = imageio.get_writer(mp4_path, fps=fps, codec="libx264")

@@ -1,122 +1,150 @@
 import os
-import torch
 import numpy as np
+import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from sklearn.preprocessing import StandardScaler
-import torch.nn.functional as F
 from tqdm import tqdm
 import pickle
 
 # -------------------------------------------------------------------------
-# Semantic Predictor
+# Semantic Predictor (MLP)
 # -------------------------------------------------------------------------
 class SemanticPredictor(nn.Module):
     def __init__(self):
         super(SemanticPredictor, self).__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(310, 1024),
+            nn.Linear(310, 10000),
             nn.ReLU(),
-            nn.Linear(1024, 2048),
+            nn.Linear(10000, 10000),
             nn.ReLU(),
-            nn.Linear(2048, 4096),
+            nn.Linear(10000, 10000),
             nn.ReLU(),
-            nn.Linear(4096, 77 * 768)
+            nn.Linear(10000, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, 77 * 768)
         )
+
     def forward(self, eeg):
         return self.mlp(eeg)
 
+
 # -------------------------------------------------------------------------
-# Dataset wrapper with optional max_samples
+# Dataset wrapper
 # -------------------------------------------------------------------------
 class EEGTextDataset(Dataset):
-    def __init__(self, eeg_list_path, text_list_path, max_samples=None):  
-        eeg_root = os.path.dirname(eeg_list_path)     # /.../EEG_features
-        text_root = os.path.dirname(text_list_path)   # /.../BLIP_embeddings
+    def __init__(self, npz_files, scaler=None, fit_scaler=False, max_samples=None):
+        eeg_all, text_all = [], []
 
-        with open(eeg_list_path, 'r') as f:
-            self.eeg_files = [os.path.join(eeg_root, line.strip()) for line in f.readlines()]
-        with open(text_list_path, 'r') as f:
-            self.text_files = [os.path.join(text_root, line.strip()) for line in f.readlines()]
+        for f in npz_files:
+            data = np.load(f, allow_pickle=True)
+            eeg = data["EEG_DE"]                 # (N, 62, 5)
+            text = data["BLIP_embeddings"]       # (N, 77, 768)
 
-        assert len(self.eeg_files) == len(self.text_files), "Mismatch between EEG and text file counts"
+            eeg = eeg.reshape(eeg.shape[0], -1)   # (N, 310)
+            text = text.reshape(text.shape[0], -1) # (N, 77*768)
 
-        if max_samples is not None:
-            self.eeg_files = self.eeg_files[:max_samples]
-            self.text_files = self.text_files[:max_samples]
+            eeg_all.append(eeg)
+            text_all.append(text)
 
-        print(f"Dataset initialized with {len(self.eeg_files)} samples")
+        self.eeg = np.vstack(eeg_all)
+        self.text = np.vstack(text_all)
 
-        # Fit scaler on training EEG data
-        eeg_all = []
-        for i, eeg_f in enumerate(self.eeg_files):
-            if i % 100 == 0:
-                print(f"Fitting scaler: loaded {i}/{len(self.eeg_files)} EEG files")
-            eeg_all.append(np.load(eeg_f).reshape(-1))
-        eeg_all = np.vstack(eeg_all)
-        self.scaler = StandardScaler().fit(eeg_all)
+        if max_samples:
+            self.eeg = self.eeg[:max_samples]
+            self.text = self.text[:max_samples]
+
+        if fit_scaler:
+            self.scaler = StandardScaler().fit(self.eeg)
+        else:
+            self.scaler = scaler
+
+        self.eeg = self.scaler.transform(self.eeg)
 
     def __len__(self):
-        return len(self.eeg_files)
+        return self.eeg.shape[0]
 
     def __getitem__(self, idx):
-        eeg = np.load(self.eeg_files[idx]).reshape(-1)
-        txt = np.load(self.text_files[idx]).reshape(-1)
-        eeg = self.scaler.transform([eeg])[0]
-        return torch.tensor(eeg, dtype=torch.float32), torch.tensor(txt, dtype=torch.float32)
+        return (
+            torch.tensor(self.eeg[idx], dtype=torch.float32),
+            torch.tensor(self.text[idx], dtype=torch.float32),
+        )
+
 
 # -------------------------------------------------------------------------
-# Training
+# Training Loop
 # -------------------------------------------------------------------------
 if __name__ == "__main__":
-    drive_root = "/content/drive/MyDrive/EEG2Video_data/processed"
+    bundle_dir = "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles"
+    save_root = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor"
+    os.makedirs(save_root, exist_ok=True)
 
-    eeg_train_list  = os.path.join(drive_root, "EEG_features/train_list.txt")
-    text_train_list = os.path.join(drive_root, "BLIP_embeddings/train_list_dup.txt")
+    all_bundles = sorted([f for f in os.listdir(bundle_dir) if f.endswith("_train.npz")])
+    subjects = [f.replace("_train.npz", "") for f in all_bundles]
 
-    # choose max_samples=None for all data, or set a number like 200 for quick runs
-    dataset = EEGTextDataset(eeg_train_list, text_train_list, max_samples=None)
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True,
-                            pin_memory=True, num_workers=2)
+    print("\nAvailable subjects:")
+    for idx, subj in enumerate(subjects):
+        print(f"{idx}: {subj}")
 
-    print("Sanity check:")
-    eeg, txt = dataset[0]
-    print("EEG sample shape:", eeg.shape)
-    print("Text sample shape:", txt.shape)
+    choice = input("\nEnter subject indices (comma separated), 'all', or 'check': ").strip()
+    num_epochs = int(input("\nEnter number of epochs: ") or 50)
 
+    # --- Dry run ---
+    if choice.lower() == "check":
+        test_file = os.path.join(bundle_dir, all_bundles[0])
+        dataset = EEGTextDataset([test_file], fit_scaler=True, max_samples=10)
+        eeg, txt = dataset[0]
+        print("Dry run OK")
+        print("EEG shape:", eeg.shape, "Text shape:", txt.shape)
+        exit()
+
+    # --- Select files ---
+    if choice.lower() == "all":
+        selected_files = [os.path.join(bundle_dir, f) for f in all_bundles]
+        tag = "all"
+    else:
+        selected_idx = [int(c.strip()) for c in choice.split(",") if c.strip().isdigit()]
+        selected_files = [os.path.join(bundle_dir, all_bundles[i]) for i in selected_idx]
+        tag = "_".join([subjects[i] for i in selected_idx])
+
+    # --- Build dataset ---
+    dataset = EEGTextDataset(selected_files, fit_scaler=True)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=2, pin_memory=True)
+
+    # --- Model ---
     model = SemanticPredictor().cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(dataloader))
 
-    for epoch in range(5):
+    # --- Training ---
+    for epoch in range(num_epochs):
         model.train()
-        epoch_loss = 0
-        for batch_idx, (eeg, text) in enumerate(dataloader):
-            eeg, text = eeg.cuda(non_blocking=True), text.cuda(non_blocking=True)
+        total_loss = 0
+        with tqdm(total=len(dataloader), desc=f"Epoch {epoch+1}/{num_epochs}") as pbar:
+            for eeg, text in dataloader:
+                eeg, text = eeg.cuda(non_blocking=True), text.cuda(non_blocking=True)
 
-            optimizer.zero_grad()
-            pred = model(eeg)
-            loss = F.mse_loss(pred, text)
-            loss.backward()
-            optimizer.step()
+                optimizer.zero_grad()
+                pred = model(eeg)
+                loss = F.mse_loss(pred, text)
+                loss.backward()
+                optimizer.step()
+                scheduler.step()
 
-            epoch_loss += loss.item()
+                total_loss += loss.item()
+                pbar.set_postfix({"loss": f"{loss.item():.6f}"})
+                pbar.update(1)
 
-            if batch_idx % 10 == 0:
-                print(f"[Epoch {epoch+1}] Batch {batch_idx}/{len(dataloader)} loss={loss.item():.6f}")
-        scheduler.step()
-        print(f"Epoch {epoch+1}: avg_loss={epoch_loss/len(dataloader):.6f}")
+        print(f"Epoch {epoch+1}: avg_loss={total_loss/len(dataloader):.6f}")
 
-    # ---------------------------------------------------------------------
-    # Save model + scaler
-    # ---------------------------------------------------------------------
-    save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints"
-    os.makedirs(save_dir, exist_ok=True)
+    # --- Save ---
+    ckpt_path = os.path.join(save_root, f"semantic_predictor_{tag}.pt")
+    scaler_path = os.path.join(save_root, f"scaler_{tag}.pkl")
 
-    torch.save({'state_dict': model.state_dict()},
-               os.path.join(save_dir, "semantic_predictor.pt"))
-
-    with open(os.path.join(save_dir, "semantic_eeg_scaler.pkl"), "wb") as f:
+    torch.save({"state_dict": model.state_dict()}, ckpt_path)
+    with open(scaler_path, "wb") as f:
         pickle.dump(dataset.scaler, f)
 
-    print("Model + scaler saved to:", save_dir)
+    print(f"Model saved to: {ckpt_path}")
+    print(f"Scaler saved to: {scaler_path}")

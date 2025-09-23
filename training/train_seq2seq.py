@@ -13,18 +13,18 @@ import joblib
 # ------------------------------------------------
 CONFIG = {
     # EEGNet params
-    "d_model": 512, # does not affect tensor shapes
-    "C": 62, # do not change
-    "T": 100, # do not change
-    "F1": 16, # do not change
-    "D": 4, # do not change
-    "F2": 16, # do not change
+    "d_model": 512,
+    "C": 62,
+    "T": 100,
+    "F1": 16,
+    "D": 4,
+    "F2": 16,
     "cross_subject": False,
 
     # Transformer params
     "nhead": 4,
-    "encoder_layers": 2, # does not affect tensor shapes
-    "decoder_layers": 4, # does not affect tensor shapes
+    "encoder_layers": 2,
+    "decoder_layers": 4,
 
     # Training params
     "batch_size_all": 256,
@@ -36,10 +36,6 @@ CONFIG = {
     # Paths
     "bundle_dir": "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles/",
     "save_root": "/content/drive/MyDrive/EEG2Video_checkpoints/",
-    "save_root_output": "/content/drive/MyDrive/EEG2Video_outputs/",
-
-    # Stable Diffusion VAE path
-    "vae_dir": "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4",
 }
 
 # ------------------------------------------------
@@ -118,13 +114,11 @@ class myTransformer(nn.Module):
         self.predictor = nn.Linear(cfg["d_model"], 4 * 36 * 64)
 
     def forward(self, src, tgt_frames):
-        # EEG embedding
         src = self.eeg_embedding(src.reshape(src.shape[0]*src.shape[1], 1, 62, 100))
         src = src.reshape(src.shape[0]//7, 7, -1)
         src = self.positional_encoding(src)
         memory = self.transformer_encoder(src)
 
-        # autoregressive decoding
         b, f, c, h, w = tgt_frames.shape
         outputs = []
         prev_tokens = torch.zeros((b,1,c*h*w), device=tgt_frames.device)
@@ -133,7 +127,7 @@ class myTransformer(nn.Module):
             tgt_emb = self.positional_encoding(tgt_emb)
             tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt_emb.size(1)).to(tgt_emb.device)
             out = self.transformer_decoder(tgt_emb, memory, tgt_mask=tgt_mask)
-            pred = self.predictor(out[:, -1])  # last step prediction
+            pred = self.predictor(out[:, -1])
             outputs.append(pred)
             prev_tokens = torch.cat([prev_tokens, pred.unsqueeze(1)], dim=1)
         outputs = torch.stack(outputs, dim=1)
@@ -149,25 +143,6 @@ class EEGVideoBundle(Dataset):
     def __len__(self): return len(self.eeg)
     def __getitem__(self, idx):
         return torch.from_numpy(self.eeg[idx]).float(), torch.from_numpy(self.vid[idx]).float()
-
-
-def scale_subject(train_path, test_path):
-    train_npz = np.load(train_path, allow_pickle=True)
-    test_npz  = np.load(test_path, allow_pickle=True)
-    eeg_train = train_npz["EEG_windows"]   # (N, 7, 62, 100)
-    eeg_test  = test_npz["EEG_windows"]    # (M, 7, 62, 100)
-    vid_train = train_npz["Video_latents"]
-    vid_test  = test_npz["Video_latents"]
-
-    # Flatten across windows and channels for scaling
-    scaler = StandardScaler()
-    eeg_flat = eeg_train.reshape(-1, 62*100)
-    scaler.fit(eeg_flat)
-
-    eeg_train = scaler.transform(eeg_train.reshape(-1, 62*100)).reshape(eeg_train.shape)
-    eeg_test  = scaler.transform(eeg_test.reshape(-1, 62*100)).reshape(eeg_test.shape)
-
-    return eeg_train, vid_train, eeg_test, vid_test, scaler
 
 # ------------------------------------------------
 # Main training
@@ -185,26 +160,17 @@ if __name__ == "__main__":
     for idx, subj in enumerate(subjects):
         print(f"{idx}: {subj}")
 
-    choice = input("\nEnter subject indices to process (comma separated) or 'all' or 'check': ").strip()
+    choice = input("\nEnter subject indices (comma separated), 'all', or 'check': ").strip()
     num_epochs = int(input("\nEnter number of epochs: ") or CONFIG["epochs"])
 
-    # ------------------------------------------------
-    # Quick dry-run check
-    # ------------------------------------------------
+    # Dry run
     if choice.lower() == "check":
         test_subj = subjects[0]
-        train_path = os.path.join(bundle_dir, f"{test_subj}_train.npz")
-        test_path  = os.path.join(bundle_dir, f"{test_subj}_test.npz")
-        eeg_train, vid_train, eeg_test, vid_test, scaler = scale_subject(train_path, test_path)
-
-        # Slice just a few samples
-        eeg_train, vid_train = eeg_train[:5], vid_train[:5]
-        train_loader = DataLoader(EEGVideoBundle(eeg_train, vid_train),
-                                batch_size=2, shuffle=True)
-
+        train_npz = np.load(os.path.join(bundle_dir, f"{test_subj}_train.npz"), allow_pickle=True)
+        eeg_train, vid_train = train_npz["EEG_windows"][:5], train_npz["Video_latents"][:5]
+        train_loader = DataLoader(EEGVideoBundle(eeg_train, vid_train), batch_size=2, shuffle=True)
         model = myTransformer(CONFIG).cuda()
         loss_fn = CONFIG["loss_fn"]()
-
         for eeg, video in train_loader:
             eeg, video = eeg.cuda(), video.cuda()
             out = model(eeg, video)
@@ -212,86 +178,78 @@ if __name__ == "__main__":
             print("Dry run success, sample loss =", loss.item())
         exit()
 
-    # ------------------------------------------------
-    # Full training
-    # ------------------------------------------------
-
+    # Select subjects
     if choice.lower() == "all":
-        print("\n=== Training on ALL subjects (per-subject normalization) ===")
-        eeg_train_all, vid_train_all, eeg_test_all, vid_test_all, scalers = [], [], [], [], {}
-        for subj in subjects:
-            train_path = os.path.join(bundle_dir, f"{subj}_train.npz")
-            test_path  = os.path.join(bundle_dir, f"{subj}_test.npz")
-            eeg_train, vid_train, eeg_test, vid_test, scaler = scale_subject(train_path, test_path)
-            eeg_train_all.append(eeg_train); vid_train_all.append(vid_train)
-            eeg_test_all.append(eeg_test); vid_test_all.append(vid_test)
-            scalers[subj] = scaler
-        eeg_train = np.concatenate(eeg_train_all, axis=0)
-        vid_train = np.concatenate(vid_train_all, axis=0)
-        eeg_test  = np.concatenate(eeg_test_all, axis=0)
-        vid_test  = np.concatenate(vid_test_all, axis=0)
-        train_loader = DataLoader(EEGVideoBundle(eeg_train, vid_train), batch_size=CONFIG["batch_size_all"], shuffle=True)
-        val_loader   = DataLoader(EEGVideoBundle(eeg_test, vid_test), batch_size=CONFIG["batch_size_all"], shuffle=False)
-        model = myTransformer(CONFIG).cuda()
-        optimizer = torch.optim.Adam(model.parameters(), lr=CONFIG["learning_rate"])
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(train_loader))
-        loss_fn = CONFIG["loss_fn"]()
-        for epoch in tqdm(range(num_epochs), desc="All-subject training"):
-            model.train(); batch_losses = []
-            for eeg, video in train_loader:
-                eeg, video = eeg.cuda(), video.cuda()
-                optimizer.zero_grad()
-                out = model(eeg, video)
-                loss = loss_fn(video, out)
-                loss.backward()
-                optimizer.step(); scheduler.step()
-                batch_losses.append(loss.item())
-            train_mean = np.mean(batch_losses)
-
-            model.eval(); val_losses = []
-            with torch.no_grad():
-                for eeg, video in val_loader:
-                    eeg, video = eeg.cuda(), video.cuda()
-                    out = model(eeg, video)
-                    val_losses.append(loss_fn(video, out).item())
-            val_mean = np.mean(val_losses)
-            print(f"All Epoch {epoch+1}/{num_epochs} | Train={train_mean:.4f} | Val={val_mean:.4f}")
-
-        torch.save({'state_dict': model.state_dict()}, os.path.join(save_dir, "seq2seqmodel_all.pt"))
-        joblib.dump(scalers, os.path.join(save_dir, "scalers_all.pkl"))
+        selected_subjects = subjects
+        tag = "all"
     else:
         selected_idx = [int(c.strip()) for c in choice.split(",") if c.strip().isdigit()]
         selected_subjects = [subjects[i] for i in selected_idx]
-        for subj in selected_subjects:
-            print(f"\n=== Training {subj} ===")
-            train_path = os.path.join(bundle_dir, f"{subj}_train.npz")
-            test_path  = os.path.join(bundle_dir, f"{subj}_test.npz")
-            eeg_train, vid_train, eeg_test, vid_test, scaler = scale_subject(train_path, test_path)
-            train_loader = DataLoader(EEGVideoBundle(eeg_train, vid_train), batch_size=CONFIG["batch_size_single"], shuffle=True)
-            val_loader   = DataLoader(EEGVideoBundle(eeg_test, vid_test), batch_size=CONFIG["batch_size_single"], shuffle=False)
-            model = myTransformer(CONFIG).cuda()
-            optimizer = torch.optim.Adam(model.parameters(), lr=CONFIG["learning_rate"])
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(train_loader))
-            loss_fn = CONFIG["loss_fn"]()
-            for epoch in tqdm(range(num_epochs), desc=f"{subj} training"):
-                model.train(); batch_losses = []
-                for eeg, video in train_loader:
-                    eeg, video = eeg.cuda(), video.cuda()
-                    optimizer.zero_grad()
-                    out = model(eeg, video)
-                    loss = loss_fn(video, out)
-                    loss.backward()
-                    optimizer.step(); scheduler.step()
-                    batch_losses.append(loss.item())
-                train_mean = np.mean(batch_losses)
+        tag = "_".join(selected_subjects)
 
-                model.eval(); val_losses = []
-                with torch.no_grad():
-                    for eeg, video in val_loader:
-                        eeg, video = eeg.cuda(), video.cuda()
-                        out = model(eeg, video)
-                        val_losses.append(loss_fn(video, out).item())
-                val_mean = np.mean(val_losses)
-                print(f"{subj} Epoch {epoch+1}/{num_epochs} | Train={train_mean:.4f} | Val={val_mean:.4f}")
-            torch.save({'state_dict': model.state_dict()}, os.path.join(save_dir, f"seq2seqmodel_{subj}.pt"))
-            joblib.dump(scaler, os.path.join(save_dir, f"scaler_{subj}.pkl"))
+    # Fit one global scaler on selected subjects
+    eeg_concat = []
+    for subj in selected_subjects:
+        train_path = os.path.join(bundle_dir, f"{subj}_train.npz")
+        eeg_train = np.load(train_path, allow_pickle=True)["EEG_windows"]
+        eeg_concat.append(eeg_train.reshape(-1, 62*100))
+    eeg_concat = np.vstack(eeg_concat)
+    scaler = StandardScaler().fit(eeg_concat)
+
+    # Apply scaler and load train/test
+    eeg_train_all, vid_train_all, eeg_test_all, vid_test_all = [], [], [], []
+    for subj in selected_subjects:
+        train_npz = np.load(os.path.join(bundle_dir, f"{subj}_train.npz"), allow_pickle=True)
+        test_npz  = np.load(os.path.join(bundle_dir, f"{subj}_test.npz"), allow_pickle=True)
+
+        eeg_train = train_npz["EEG_windows"]
+        eeg_test  = test_npz["EEG_windows"]
+        vid_train = train_npz["Video_latents"]
+        vid_test  = test_npz["Video_latents"]
+
+        eeg_train = scaler.transform(eeg_train.reshape(-1, 62*100)).reshape(eeg_train.shape)
+        eeg_test  = scaler.transform(eeg_test.reshape(-1, 62*100)).reshape(eeg_test.shape)
+
+        eeg_train_all.append(eeg_train); vid_train_all.append(vid_train)
+        eeg_test_all.append(eeg_test);   vid_test_all.append(vid_test)
+
+    eeg_train = np.concatenate(eeg_train_all, axis=0)
+    vid_train = np.concatenate(vid_train_all, axis=0)
+    eeg_test  = np.concatenate(eeg_test_all, axis=0)
+    vid_test  = np.concatenate(vid_test_all, axis=0)
+
+    batch_size = CONFIG["batch_size_all"] if len(selected_subjects) > 1 else CONFIG["batch_size_single"]
+    train_loader = DataLoader(EEGVideoBundle(eeg_train, vid_train), batch_size=batch_size, shuffle=True)
+    val_loader   = DataLoader(EEGVideoBundle(eeg_test, vid_test), batch_size=batch_size, shuffle=False)
+
+    # Train model
+    model = myTransformer(CONFIG).cuda()
+    optimizer = torch.optim.Adam(model.parameters(), lr=CONFIG["learning_rate"])
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(train_loader))
+    loss_fn = CONFIG["loss_fn"]()
+
+    for epoch in tqdm(range(num_epochs), desc=f"Training {tag}"):
+        model.train(); batch_losses = []
+        for eeg, video in train_loader:
+            eeg, video = eeg.cuda(), video.cuda()
+            optimizer.zero_grad()
+            out = model(eeg, video)
+            loss = loss_fn(video, out)
+            loss.backward()
+            optimizer.step(); scheduler.step()
+            batch_losses.append(loss.item())
+        train_mean = np.mean(batch_losses)
+
+        model.eval(); val_losses = []
+        with torch.no_grad():
+            for eeg, video in val_loader:
+                eeg, video = eeg.cuda(), video.cuda()
+                out = model(eeg, video)
+                val_losses.append(loss_fn(video, out).item())
+        val_mean = np.mean(val_losses)
+        print(f"{tag} Epoch {epoch+1}/{num_epochs} | Train={train_mean:.4f} | Val={val_mean:.4f}")
+
+    # Save
+    torch.save({'state_dict': model.state_dict()}, os.path.join(save_dir, f"seq2seqmodel_{tag}.pt"))
+    joblib.dump(scaler, os.path.join(save_dir, f"scaler_{tag}.pkl"))
+    print(f"Saved model and scaler with tag: {tag}")

@@ -93,13 +93,11 @@ class myTransformer(nn.Module):
         self.predictor = nn.Linear(cfg["d_model"], 4*36*64)
 
     def forward(self, src, num_frames):
-        # EEG embedding
         src = self.eeg_embedding(src.reshape(src.shape[0]*src.shape[1],1,62,100))
         src = src.reshape(src.shape[0]//7,7,-1)
         src = self.positional_encoding(src)
         memory = self.transformer_encoder(src)
 
-        # autoregressive decoding
         b = src.shape[0]
         outputs = []
         prev_tokens = torch.zeros((b,1,4*36*64), device=src.device)
@@ -108,7 +106,7 @@ class myTransformer(nn.Module):
             tgt_emb = self.positional_encoding(tgt_emb)
             tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt_emb.size(1)).to(tgt_emb.device)
             out = self.transformer_decoder(tgt_emb, memory, tgt_mask=tgt_mask)
-            pred = self.predictor(out[:, -1])  # last step
+            pred = self.predictor(out[:, -1])
             outputs.append(pred)
             prev_tokens = torch.cat([prev_tokens, pred.unsqueeze(1)], dim=1)
         outputs = torch.stack(outputs, dim=1)
@@ -135,18 +133,19 @@ if __name__ == "__main__":
     ckpt_path = os.path.join(ckpt_dir, ckpts[choice])
     ckname = ckpts[choice]
 
-    if "all" in ckname:
-        subj = "all"
-        scaler_path = os.path.join(ckpt_dir, "scalers_all.pkl")
-        test_paths = [os.path.join(bundle_dir,f) for f in os.listdir(bundle_dir) if f.endswith("_test.npz")]
-        scalers = joblib.load(scaler_path)
-    else:
-        subj = ckname.replace("seq2seqmodel_","").replace(".pt","")
-        scaler_path = os.path.join(ckpt_dir, f"scaler_{subj}.pkl")
-        test_paths = [os.path.join(bundle_dir, f"{subj}_test.npz")]
-        scalers = {subj: joblib.load(scaler_path)}
+    # Load global scaler for this checkpoint
+    tag = ckname.replace("seq2seqmodel_","").replace(".pt","")
+    scaler_path = os.path.join(ckpt_dir, f"scaler_{tag}.pkl")
+    scaler = joblib.load(scaler_path)
 
-    # load model
+    # Find matching test subjects
+    if tag == "all":
+        test_paths = [os.path.join(bundle_dir,f) for f in os.listdir(bundle_dir) if f.endswith("_test.npz")]
+    else:
+        subs = tag.split("_")
+        test_paths = [os.path.join(bundle_dir, f"{s}_test.npz") for s in subs]
+
+    # Load model
     model = myTransformer(CONFIG).cuda()
     state = torch.load(ckpt_path,map_location="cuda")
     model.load_state_dict(state['state_dict'])
@@ -174,7 +173,7 @@ if __name__ == "__main__":
     print(f"Testing sample {idx} from {subj_for_sample}")
     print(f"Caption: {caption}")
 
-    scaler = scalers[subj_for_sample]
+    # Apply global scaler
     eeg_flat = scaler.transform(eeg.reshape(-1,62*100))
     eeg = eeg_flat.reshape(eeg.shape)
     eeg = torch.from_numpy(eeg).unsqueeze(0).float().cuda()
@@ -225,4 +224,3 @@ if __name__ == "__main__":
     imageio.mimsave(gt_path, gt_frames, fps=3)
     print(f"Saved predicted video to {pred_path}")
     print(f"Saved ground-truth video to {gt_path}")
-
