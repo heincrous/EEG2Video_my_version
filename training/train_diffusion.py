@@ -206,22 +206,22 @@ def main(
     validation_data["video_length"] = min(24, inferred_video_length)
     print(f"[Validation] Using video_length={validation_data['video_length']}")
 
-    val_text_list_path = os.path.join(blip_text_root, "test_list.txt")
-    with open(val_text_list_path, "r") as f:
-        all_prompts = [os.path.join(blip_text_root, line.strip()) for line in f]
+    # val_text_list_path = os.path.join(blip_text_root, "test_list.txt")
+    # with open(val_text_list_path, "r") as f:
+    #     all_prompts = [os.path.join(blip_text_root, line.strip()) for line in f]
 
-    config["validation_data"]["prompts"] = [
-        open(random.choice(all_prompts)).read().strip()
-    ]
+    # config["validation_data"]["prompts"] = [
+    #     open(random.choice(all_prompts)).read().strip()
+    # ]
 
-    validation_pipeline = TuneAVideoPipeline(
-        vae=vae,
-        text_encoder=text_encoder,
-        tokenizer=tokenizer,
-        unet=unet,
-        scheduler=DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler"),
-    )
-    validation_pipeline.enable_vae_slicing()
+    # validation_pipeline = TuneAVideoPipeline(
+    #     vae=vae,
+    #     text_encoder=text_encoder,
+    #     tokenizer=tokenizer,
+    #     unet=unet,
+    #     scheduler=DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler"),
+    # )
+    # validation_pipeline.enable_vae_slicing()
 
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
@@ -283,15 +283,15 @@ def main(
         current_lr = lr_scheduler.get_last_lr()[0]
         print(f"[Epoch {epoch}] Avg loss: {avg_loss:.6f} | LR: {current_lr:.2e}")
 
-        if epoch % 2 == 0 and accelerator.is_main_process:
-            generator = torch.Generator(device=latents.device).manual_seed(seed)
-            for prompt in config["validation_data"]["prompts"]:
-                _ = validation_pipeline(
-                    prompt,
-                    video_length=validation_data["video_length"],
-                    num_inference_steps=20,
-                    generator=generator
-                )
+        # if epoch % 2 == 0 and accelerator.is_main_process:
+        #     generator = torch.Generator(device=latents.device).manual_seed(seed)
+        #     for prompt in config["validation_data"]["prompts"]:
+        #         _ = validation_pipeline(
+        #             prompt,
+        #             video_length=validation_data["video_length"],
+        #             num_inference_steps=20,
+        #             generator=generator
+        #         )
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:

@@ -51,7 +51,7 @@ generator = torch.Generator(device="cuda").manual_seed(42)
 
 # match training setup → 24 frames
 video_length = 24
-fps = 24
+fps = 12
 
 result = pipe(
     prompt_text,
