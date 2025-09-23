@@ -152,11 +152,15 @@ if __name__ == "__main__":
     model.load_state_dict(state['state_dict'])
     model.eval()
 
-    eeg_all, vids_all, subj_list = [], [], []
+    eeg_all, vids_all, caps_all, subj_list = [], [], [], []
     for p in test_paths:
         d = np.load(p, allow_pickle=True)
         eeg_all.append(d["EEG_windows"])
         vids_all.append(d["Video_latents"])
+        if "BLIP_text" in d:
+            caps_all.extend(d["BLIP_text"])
+        else:
+            caps_all.extend(["[NO CAPTION AVAILABLE]"] * len(d["EEG_windows"]))
         subj_name = os.path.basename(p).replace("_test.npz","")
         subj_list.extend([subj_name]*len(d["EEG_windows"]))
     eeg_all = np.concatenate(eeg_all, axis=0)
@@ -165,8 +169,10 @@ if __name__ == "__main__":
     idx = random.randint(0, len(eeg_all)-1)
     eeg = eeg_all[idx]
     gt_latents = vids_all[idx]
+    caption = caps_all[idx]
     subj_for_sample = subj_list[idx]
     print(f"Testing sample {idx} from {subj_for_sample}")
+    print(f"Caption: {caption}")
 
     scaler = scalers[subj_for_sample]
     eeg_flat = scaler.transform(eeg.reshape(-1,62*100))
@@ -184,7 +190,7 @@ if __name__ == "__main__":
     # Decode prediction
     latents_t = torch.from_numpy(pred_latents).float().cuda() / 0.18215
     with torch.no_grad():
-        frames = vae.decode(latents_t).sample  # shape (num_frames, 3, H, W)
+        frames = vae.decode(latents_t).sample
     frames = (frames.clamp(-1, 1) + 1) / 2
     frames = frames.permute(0, 2, 3, 1).cpu().numpy() * 255
     frames = frames.astype(np.uint8)
@@ -196,7 +202,6 @@ if __name__ == "__main__":
     gt_frames = (gt_frames.clamp(-1, 1) + 1) / 2
     gt_frames = gt_frames.permute(0, 2, 3, 1).cpu().numpy() * 255
     gt_frames = gt_frames.astype(np.uint8)
-
 
     # Metrics
     ssim_scores, psnr_scores = [], []
@@ -213,7 +218,11 @@ if __name__ == "__main__":
         lpips_score = lpips_metric(gen_t, gt_t)
     print(f"LPIPS: {lpips_score.item():.4f}")
 
-    # Save video
-    save_path = os.path.join(out_dir, f"{subj_for_sample}_sample{idx}.mp4")
-    imageio.mimsave(save_path, frames, fps=3)
-    print(f"Saved generated video to {save_path}")
+    # Save predicted and ground truth videos
+    pred_path = os.path.join(out_dir, f"{subj_for_sample}_sample{idx}_pred.mp4")
+    gt_path   = os.path.join(out_dir, f"{subj_for_sample}_sample{idx}_gt.mp4")
+    imageio.mimsave(pred_path, frames, fps=3)
+    imageio.mimsave(gt_path, gt_frames, fps=3)
+    print(f"Saved predicted video to {pred_path}")
+    print(f"Saved ground-truth video to {gt_path}")
+
