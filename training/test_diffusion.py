@@ -49,8 +49,8 @@ print("Caption text:", prompt_text)
 # === GENERATE VIDEO ===
 generator = torch.Generator(device="cuda").manual_seed(42)
 
-# must match training setup → capped to 8 frames
-video_length = 8
+# match training setup → 24 frames
+video_length = 24
 fps = 24
 
 result = pipe(
