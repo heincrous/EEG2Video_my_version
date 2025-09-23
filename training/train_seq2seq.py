@@ -119,10 +119,11 @@ class EEGVideoDataset(Dataset):
         self.scaler = scaler
         self.fit = fit
 
+        # build video map
         self.vid_map = {os.path.normpath(v): v for v in vid_files}
         self.pairs = []
         for e in eeg_files:
-            key = "/".join(e.split("/")[2:])  # drop subject prefix
+            key = "/".join(e.split("/")[1:])  # <-- strip subject only
             if key in self.vid_map:
                 self.pairs.append((e, self.vid_map[key]))
 
