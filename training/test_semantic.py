@@ -4,7 +4,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset
-from sklearn.preprocessing import StandardScaler
+import pickle
 
 # -------------------------------------------------------------------------
 # Semantic Predictor (must match training definition)
@@ -25,10 +25,10 @@ class SemanticPredictor(nn.Module):
         return self.mlp(eeg)
 
 # -------------------------------------------------------------------------
-# Dataset wrapper (for test set)
+# Dataset wrapper (for test set, uses saved scaler)
 # -------------------------------------------------------------------------
 class EEGTextDataset(Dataset):
-    def __init__(self, eeg_list_path, text_list_path, base_dir, max_samples=None):
+    def __init__(self, eeg_list_path, text_list_path, base_dir, scaler_path, max_samples=None):
         self.eeg_base = os.path.join(base_dir, "EEG_features")
         self.text_base = os.path.join(base_dir, "BLIP_embeddings")
 
@@ -43,13 +43,9 @@ class EEGTextDataset(Dataset):
             self.eeg_files = self.eeg_files[:max_samples]
             self.text_files = self.text_files[:max_samples]
 
-        # Fit scaler on EEG test data
-        eeg_all = []
-        for eeg_f in self.eeg_files:
-            abs_eeg_path = os.path.join(self.eeg_base, eeg_f)
-            eeg_all.append(np.load(abs_eeg_path).reshape(-1))
-        eeg_all = np.vstack(eeg_all)
-        self.scaler = StandardScaler().fit(eeg_all)
+        # Load the EEG scaler from training
+        with open(scaler_path, "rb") as f:
+            self.scaler = pickle.load(f)
 
     def __len__(self):
         return len(self.eeg_files)
@@ -78,12 +74,14 @@ def cosine_similarity(a, b):
 if __name__ == "__main__":
     drive_root = "/content/drive/MyDrive/EEG2Video_data/processed"
     ckpt_path = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor.pt"
+    scaler_path = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_eeg_scaler.pkl"
 
     eeg_test_list  = os.path.join(drive_root, "EEG_features/test_list.txt")
     text_test_list = os.path.join(drive_root, "BLIP_embeddings/test_list_dup.txt")
 
     # Load dataset (limit samples for speed)
-    test_dataset = EEGTextDataset(eeg_test_list, text_test_list, base_dir=drive_root, max_samples=50)
+    test_dataset = EEGTextDataset(eeg_test_list, text_test_list, base_dir=drive_root,
+                                  scaler_path=scaler_path, max_samples=50)
 
     # Load model + checkpoint
     model = SemanticPredictor().cuda()

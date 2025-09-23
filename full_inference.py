@@ -1,12 +1,10 @@
 """
-EEG2Video Inference (One EEG → One MP4)
-----------------------------------------
-1. Load semantic predictor checkpoint.
-2. Load Seq2Seq checkpoint.
-3. Take one EEG feature + EEG window file from test_list.txt.
-4. Predict semantic embedding + latents.
-5. Run pipeline_tuneeeg2video with correct arguments.
-6. Save as MP4.
+EEG2Video Inference (One EEG → One MP4, with modes)
+---------------------------------------------------
+Modes:
+  woSeq2Seq : Only semantic predictor, no Seq2Seq latents
+  woDANA    : Semantic predictor + Seq2Seq latents (no DANA)
+  full      : Semantic predictor + Seq2Seq latents + DANA
 """
 
 import os, sys, gc, imageio, torch
@@ -27,6 +25,7 @@ pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-dif
 finetuned_model_path  = "/content/drive/MyDrive/EEG2Video_outputs"
 semantic_ckpt         = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor.pt"
 seq2seq_ckpt          = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoint.pt"
+dana_latents_path     = "/content/drive/MyDrive/EEG2Video_checkpoints/dana_latents.npy"
 
 eeg_feat_list_path    = os.path.join(drive_root, "EEG_features/test_list.txt")
 eeg_win_list_path     = os.path.join(drive_root, "EEG_windows/test_list.txt")
@@ -53,7 +52,6 @@ pipe = TuneAVideoPipeline.from_pretrained(
     torch_dtype=torch.float16,
 ).to(device)
 
-# pipe.enable_xformers_memory_efficient_attention()
 pipe.enable_vae_slicing()
 
 # ==========================================
@@ -80,7 +78,7 @@ with open(eeg_feat_list_path, "r") as f:
 with open(eeg_win_list_path, "r") as f:
     eeg_win_files = [line.strip() for line in f]
 
-# align by index (first entry from both lists)
+# first sample
 eeg_feat_file = os.path.join(drive_root, "EEG_features", eeg_feat_files[0])
 eeg_win_file  = os.path.join(drive_root, "EEG_windows",  eeg_win_files[0])
 
@@ -111,45 +109,68 @@ negative = semantic_pred.mean(dim=0, keepdim=True)
 # ==========================================
 zero_frame = torch.zeros((1,1,4,36,64), device=device)
 with torch.no_grad():
-    latents_pred = seq2seq_model.generate(eeg_win_tensor, zero_frame)
-latents_pred = latents_pred.half().to(device)
-print("Seq2Seq latents shape:", latents_pred.shape)
+    seq2seq_latents = seq2seq_model.generate(eeg_win_tensor, zero_frame)
+seq2seq_latents = seq2seq_latents.half().to(device)
+print("Seq2Seq latents shape:", seq2seq_latents.shape)
 
 # ==========================================
-# Run pipeline (correct API)
+# DANA latents (precomputed, aligned to same sample)
 # ==========================================
-video_length = 24
-fps = 12
-
-video = pipe(
-    model=None,
-    eeg=semantic_pred,          # [1,77,768] embedding
-    negative_eeg=negative,      # unconditional embedding
-    latents=latents_pred,       # [1,24,4,36,64] latents
-    video_length=video_length,
-    height=288,
-    width=512,
-    num_inference_steps=50,
-    guidance_scale=12.5,
-).videos
-
-print("Generated video tensor shape:", video.shape)
+if os.path.exists(dana_latents_path):
+    dana_latents = np.load(dana_latents_path)
+    dana_latents = torch.from_numpy(dana_latents).unsqueeze(0).half().to(device)
+    print("Loaded DANA latents:", dana_latents.shape)
+else:
+    dana_latents = None
+    print("Warning: No DANA latents found, full mode unavailable")
 
 # ==========================================
-# Save as MP4
+# Modes
 # ==========================================
-frames = (video[0] * 255).clamp(0, 255).to(torch.uint8)  # [f,c,h,w]
-frames = frames.permute(0, 2, 3, 1).cpu().numpy()
+def run_inference(mode="full"):
+    if mode == "woSeq2Seq":
+        latents = None
+    elif mode == "woDANA":
+        latents = seq2seq_latents
+    elif mode == "full":
+        if dana_latents is None:
+            raise RuntimeError("DANA latents not available")
+        latents = dana_latents
+    else:
+        raise ValueError("Mode must be one of: woSeq2Seq, woDANA, full")
 
-if frames.shape[-1] > 3:
-    frames = frames[..., :3]
-elif frames.shape[-1] == 1:
-    frames = np.repeat(frames, 3, axis=-1)
+    video = pipe(
+        model=None,
+        eeg=semantic_pred,         
+        negative_eeg=negative,     
+        latents=latents,           
+        video_length=24,
+        height=288,
+        width=512,
+        num_inference_steps=100,   # updated to 100
+        guidance_scale=12.5,
+    ).videos
 
-mp4_path = os.path.join(output_dir, "sample_eeg2video.mp4")
-writer = imageio.get_writer(mp4_path, fps=fps, codec="libx264")
-for f in frames:
-    writer.append_data(f)
-writer.close()
+    print(f"[{mode}] Generated video tensor:", video.shape)
 
-print("Video saved to:", mp4_path)
+    # Save MP4
+    frames = (video[0] * 255).clamp(0, 255).to(torch.uint8)
+    frames = frames.permute(0, 2, 3, 1).cpu().numpy()
+    if frames.shape[-1] > 3:
+        frames = frames[..., :3]
+    elif frames.shape[-1] == 1:
+        frames = np.repeat(frames, 3, axis=-1)
+
+    mp4_path = os.path.join(output_dir, f"sample_eeg2video_{mode}.mp4")
+    writer = imageio.get_writer(mp4_path, fps=12, codec="libx264")
+    for f in frames:
+        writer.append_data(f)
+    writer.close()
+    print(f"[{mode}] Video saved to:", mp4_path)
+
+
+# === Run all three modes (one EEG only) ===
+run_inference("woSeq2Seq")
+run_inference("woDANA")
+if dana_latents is not None:
+    run_inference("full")

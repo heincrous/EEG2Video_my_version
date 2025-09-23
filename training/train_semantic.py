@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader, Dataset
 from sklearn.preprocessing import StandardScaler
 import torch.nn.functional as F
 from tqdm import tqdm
+import pickle
 
 # -------------------------------------------------------------------------
 # Semantic Predictor
@@ -29,7 +30,7 @@ class SemanticPredictor(nn.Module):
 # Dataset wrapper with optional max_samples
 # -------------------------------------------------------------------------
 class EEGTextDataset(Dataset):
-    def __init__(self, eeg_list_path, text_list_path, max_samples=200):  # set max_samples=None to use all data
+    def __init__(self, eeg_list_path, text_list_path, max_samples=None):  
         eeg_root = os.path.dirname(eeg_list_path)     # /.../EEG_features
         text_root = os.path.dirname(text_list_path)   # /.../BLIP_embeddings
 
@@ -46,7 +47,7 @@ class EEGTextDataset(Dataset):
 
         print(f"Dataset initialized with {len(self.eeg_files)} samples")
 
-        # fit scaler on EEG
+        # Fit scaler on training EEG data
         eeg_all = []
         for i, eeg_f in enumerate(self.eeg_files):
             if i % 100 == 0:
@@ -73,7 +74,7 @@ if __name__ == "__main__":
     eeg_train_list  = os.path.join(drive_root, "EEG_features/train_list.txt")
     text_train_list = os.path.join(drive_root, "BLIP_embeddings/train_list_dup.txt")
 
-    # choose max_samples=None for all data, or set a number like 200
+    # choose max_samples=None for all data, or set a number like 200 for quick runs
     dataset = EEGTextDataset(eeg_train_list, text_train_list, max_samples=None)
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True,
                             pin_memory=True, num_workers=2)
@@ -106,8 +107,16 @@ if __name__ == "__main__":
         scheduler.step()
         print(f"Epoch {epoch+1}: avg_loss={epoch_loss/len(dataloader):.6f}")
 
+    # ---------------------------------------------------------------------
+    # Save model + scaler
+    # ---------------------------------------------------------------------
     save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints"
     os.makedirs(save_dir, exist_ok=True)
+
     torch.save({'state_dict': model.state_dict()},
                os.path.join(save_dir, "semantic_predictor.pt"))
-    print("Model saved to:", os.path.join(save_dir, "semantic_predictor.pt"))
+
+    with open(os.path.join(save_dir, "semantic_eeg_scaler.pkl"), "wb") as f:
+        pickle.dump(dataset.scaler, f)
+
+    print("Model + scaler saved to:", save_dir)

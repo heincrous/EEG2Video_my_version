@@ -315,7 +315,7 @@ if __name__ == "__main__":
         validation_data=dict(prompts=None, num_inv_steps=20, use_inv_latent=False),
         train_batch_size=1,
         learning_rate=3e-5,
-        num_train_epochs=2,
+        num_train_epochs=1,
         mixed_precision="fp16",
         gradient_accumulation_steps=4,
         enable_xformers_memory_efficient_attention=False,
