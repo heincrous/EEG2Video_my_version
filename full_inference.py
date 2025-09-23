@@ -58,10 +58,21 @@ seq2seq_tag = os.path.basename(seq2seq_ckpt).replace("seq2seqmodel_", "").replac
 seq2seq_scaler = joblib.load(os.path.join(seq2seq_ckpt_dir, f"scaler_{seq2seq_tag}.pkl"))
 
 # ==========================================
-# Load pipeline
+# Load finetuned pipeline (needs UNet + scheduler too)
 # ==========================================
+from diffusers import AutoencoderKL, DDIMScheduler, CLIPTokenizer
+
+vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae").to(device, dtype=torch.float16)
+scheduler = DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
+tokenizer = CLIPTokenizer.from_pretrained(pretrained_model_path, subfolder="tokenizer")
+unet = UNet3DConditionModel.from_pretrained_2d(pretrained_model_path, subfolder="unet").to(device, dtype=torch.float16)
+
 pipe = TuneAVideoPipeline.from_pretrained(
     finetuned_model_path,
+    vae=vae,
+    unet=unet,
+    tokenizer=tokenizer,
+    scheduler=scheduler,
     torch_dtype=torch.float16,
 ).to(device)
 pipe.enable_vae_slicing()
@@ -96,7 +107,7 @@ with open(eeg_win_list_path, "r") as f:
     eeg_win_files = [line.strip() for line in f]
 
 # first sample
-eeg_feat_file = os.path.join(drive_root, "EEG_features", eeg_feat_files[0])
+eeg_feat_file = os.path.join(drive_root, "EEG_DE", eeg_feat_files[0])
 eeg_win_file  = os.path.join(drive_root, "EEG_windows",  eeg_win_files[0])
 
 print("Chosen EEG feature file:", eeg_feat_file)
@@ -116,7 +127,7 @@ eeg_win_scaled = seq2seq_scaler.transform(eeg_win_flat).reshape(eeg_win.shape)
 eeg_win_tensor = torch.tensor(eeg_win_scaled, dtype=torch.float32).unsqueeze(0).to(device)
 
 # ==========================================
-# Semantic Predictor → embedding [77,768]
+# Semantic Predictor → embedding [1,77,768]
 # ==========================================
 with torch.no_grad():
     semantic_pred = semantic_model(eeg_feat_tensor)
@@ -157,7 +168,6 @@ def run_inference(mode="full"):
         raise ValueError("Mode must be one of: woSeq2Seq, woDANA, full")
 
     video = pipe(
-        model=None,
         eeg=semantic_pred,
         negative_eeg=negative,
         latents=latents,
@@ -199,4 +209,3 @@ selected_mode = modes[choice]
 print(f"\nRunning mode: {selected_mode}\n")
 
 run_inference(selected_mode)
-
