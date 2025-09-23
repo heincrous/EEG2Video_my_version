@@ -226,14 +226,11 @@
 #     print(f"Saved ground-truth video to {gt_path}")
 
 # ==========================================
-# Seq2Seq Inference + Evaluation (per-clip .npy, using test_list)
+# Seq2Seq Inference + Evaluation
 # ==========================================
 
-# === Standard libraries ===
 import os
 import random
-
-# === Third-party libraries ===
 import numpy as np
 import torch
 import joblib
@@ -243,13 +240,9 @@ from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import peak_signal_noise_ratio as psnr
 import torchmetrics
 
-# === Repo imports ===
 from train_seq2seq import CONFIG, myTransformer
 
 
-# ==========================================
-# Inference and metrics
-# ==========================================
 if __name__ == "__main__":
     # === Paths ===
     eeg_root    = os.path.join(CONFIG["bundle_dir"], "..", "EEG_windows")
@@ -278,8 +271,10 @@ if __name__ == "__main__":
         lines = [line.strip() for line in f if line.strip()]
     rel_path = random.choice(lines)
 
-    eeg_path = os.path.join(eeg_root, rel_path)   # EEG_windows/subX/BlockY/classZZ_clipWW.npy
-    vid_path = os.path.join(latent_root, rel_path) # Video_latents/BlockY/classZZ_clipWW.npy
+    eeg_path = os.path.join(eeg_root, rel_path)
+    rel_parts = rel_path.split(os.sep)
+    vid_rel = os.path.join(*rel_parts[1:])  # drop subject folder
+    vid_path = os.path.join(latent_root, vid_rel)
 
     print(f"\nTesting sample: {rel_path}")
     eeg = np.load(eeg_path)        # (7,62,100)
