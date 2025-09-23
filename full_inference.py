@@ -1,5 +1,6 @@
 import os, sys, gc, glob, imageio, torch
 import numpy as np
+import joblib
 from einops import rearrange
 
 # === Repo imports ===
@@ -48,6 +49,15 @@ seq2seq_ckpt  = select_ckpt(seq2seq_ckpt_dir, "seq2seq")
 print("Using:", semantic_ckpt, seq2seq_ckpt)
 
 # ==========================================
+# Load scalers (paired with checkpoints)
+# ==========================================
+semantic_tag = os.path.basename(semantic_ckpt).replace("semantic_predictor_", "").replace(".pt", "")
+semantic_scaler = joblib.load(os.path.join(semantic_ckpt_dir, f"scaler_{semantic_tag}.pkl"))
+
+seq2seq_tag = os.path.basename(seq2seq_ckpt).replace("seq2seqmodel_", "").replace(".pt", "")
+seq2seq_scaler = joblib.load(os.path.join(seq2seq_ckpt_dir, f"scaler_{seq2seq_tag}.pkl"))
+
+# ==========================================
 # Load pipeline
 # ==========================================
 pipe = TuneAVideoPipeline.from_pretrained(
@@ -92,15 +102,18 @@ eeg_win_file  = os.path.join(drive_root, "EEG_windows",  eeg_win_files[0])
 print("Chosen EEG feature file:", eeg_feat_file)
 print("Chosen EEG window file:", eeg_win_file)
 
-# EEG feature for semantic predictor
+# === EEG feature for semantic predictor (apply scaler) ===
 eeg_feat = np.load(eeg_feat_file)   # (62,5)
 if eeg_feat.ndim == 2 and eeg_feat.shape == (62, 5):
     eeg_feat = eeg_feat.reshape(-1)   # (310,)
-eeg_feat_tensor = torch.tensor(eeg_feat, dtype=torch.float32).unsqueeze(0).to(device)
+eeg_feat_scaled = semantic_scaler.transform([eeg_feat])[0]
+eeg_feat_tensor = torch.tensor(eeg_feat_scaled, dtype=torch.float32).unsqueeze(0).to(device)
 
-# EEG window for seq2seq
+# === EEG window for seq2seq (apply scaler) ===
 eeg_win = np.load(eeg_win_file)  # [7,62,100]
-eeg_win_tensor = torch.tensor(eeg_win, dtype=torch.float32).unsqueeze(0).to(device)
+eeg_win_flat = eeg_win.reshape(-1, 62 * 100)
+eeg_win_scaled = seq2seq_scaler.transform(eeg_win_flat).reshape(eeg_win.shape)
+eeg_win_tensor = torch.tensor(eeg_win_scaled, dtype=torch.float32).unsqueeze(0).to(device)
 
 # ==========================================
 # Semantic Predictor → embedding [77,768]

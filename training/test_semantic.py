@@ -140,69 +140,21 @@
 #         print(f"Sample {idx}: MSE={mse:.6f}, Cosine={cos:.6f}")
 
 # ==========================================
-# Semantic Predictor Evaluation
+# Semantic Predictor Single-Sample Evaluation
 # ==========================================
 
 # === Standard libraries ===
 import os
 import pickle
+import random
 
 # === Third-party libraries ===
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
-from tqdm import tqdm
 
 # === Repo imports ===
 from train_semantic import SemanticPredictor
-
-
-# ==========================================
-# Dataset wrapper (EEG_DE + BLIP_embeddings via test list)
-# ==========================================
-class ListSemanticDataset(Dataset):
-    """
-    Loads EEG_DE (input) and BLIP_embeddings (target) based on EEG_DE/test_list.txt.
-
-    Each line in test_list.txt looks like:
-      subX/BlockY/classZZ_clipWW.npy
-
-    Input  → EEG_DE/subX/BlockY/classZZ_clipWW.npy, flattened to (310,)
-    Target → BLIP_embeddings/BlockY/classZZ_clipWW.npy, flattened to (77*768,)
-    """
-    def __init__(self, test_list_path, eeg_root, blip_root, scaler, max_samples=None):
-        self.samples = []
-        self.scaler  = scaler
-
-        with open(test_list_path, "r") as f:
-            lines = [line.strip() for line in f if line.strip()]
-
-        for rel_path in lines:
-            eeg_path = os.path.join(eeg_root, rel_path)
-
-            # Strip subject prefix for BLIP embeddings
-            blip_rel = "/".join(rel_path.split("/")[1:])
-            blip_path = os.path.join(blip_root, blip_rel)
-
-            eeg  = np.load(eeg_path)   # (62,5)
-            blip = np.load(blip_path)  # (77,768)
-
-            eeg_flat  = eeg.reshape(-1)   # (310,)
-            blip_flat = blip.reshape(-1)  # (77*768,)
-
-            self.samples.append((eeg_flat, blip_flat))
-
-        if max_samples:
-            self.samples = self.samples[:max_samples]
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, idx):
-        eeg, txt = self.samples[idx]
-        eeg = self.scaler.transform([eeg])[0]
-        return torch.tensor(eeg, dtype=torch.float32), torch.tensor(txt, dtype=torch.float32)
 
 
 # ==========================================
@@ -228,7 +180,7 @@ if __name__ == "__main__":
     ckpts = [f for f in os.listdir(ckpt_root) if f.startswith("semantic_predictor_") and f.endswith(".pt")]
     print("\nAvailable checkpoints:")
     for i, ck in enumerate(ckpts):
-        print(f"  [{i}] {ck}")
+        print(f"[{i}] {ck}")
 
     choice      = int(input("\nEnter checkpoint index: ").strip())
     ckpt_file   = ckpts[choice]
@@ -243,41 +195,38 @@ if __name__ == "__main__":
     with open(scaler_path, "rb") as f:
         scaler = pickle.load(f)
 
-    # === Build dataset from EEG_DE test list ===
-    dataset    = ListSemanticDataset(test_list_path, eeg_root, blip_root, scaler, max_samples=200)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=False, num_workers=2, pin_memory=True)
-
     # === Load model ===
     model = SemanticPredictor().cuda()
     checkpoint = torch.load(ckpt_path, map_location="cuda")
     model.load_state_dict(checkpoint["state_dict"])
     model.eval()
 
-    # === Evaluation ===
-    total_mse, total_cos, count = 0.0, 0.0, 0
+    # === Pick one random file from test list ===
+    with open(test_list_path, "r") as f:
+        lines = [line.strip() for line in f if line.strip()]
+    rel_path = random.choice(lines)
+    print(f"\nChosen random test file: {rel_path}")
+
+    eeg_path  = os.path.join(eeg_root, rel_path)
+    blip_rel  = "/".join(rel_path.split("/")[1:])
+    blip_path = os.path.join(blip_root, blip_rel)
+
+    eeg  = np.load(eeg_path).reshape(-1)   # (310,)
+    blip = np.load(blip_path).reshape(-1)  # (77*768,)
+
+    # Scale EEG
+    eeg_scaled = scaler.transform([eeg])[0]
+    eeg_tensor = torch.tensor(eeg_scaled, dtype=torch.float32).unsqueeze(0).cuda()
+    blip_tensor = torch.tensor(blip, dtype=torch.float32).cuda()
+
+    # === Forward pass ===
     with torch.no_grad():
-        for eeg, txt in tqdm(dataloader, desc="Evaluating"):
-            eeg, txt = eeg.cuda(non_blocking=True), txt.cuda(non_blocking=True)
-            pred = model(eeg)
-            mse = F.mse_loss(pred, txt, reduction="none").mean(dim=1)
-            cos = F.cosine_similarity(pred, txt, dim=1)
-            total_mse += mse.sum().item()
-            total_cos += cos.sum().item()
-            count += eeg.size(0)
+        pred = model(eeg_tensor).squeeze(0)
 
-    avg_mse = total_mse / count
-    avg_cos = total_cos / count
-    print("\n=== Semantic Predictor Evaluation ===")
+    mse = F.mse_loss(pred, blip_tensor).item()
+    cos = cosine_similarity(pred, blip_tensor)
+
+    print("\n=== Single-Sample Evaluation ===")
     print(f"Checkpoint used: {ckpt_file}")
-    print(f"Samples evaluated: {count}")
-    print(f"Average MSE: {avg_mse:.6f}")
-    print(f"Average Cosine similarity: {avg_cos:.6f}")
-
-    # === Inspect first few examples ===
-    for idx in range(min(3, len(dataset))):
-        eeg, txt = dataset[idx]
-        with torch.no_grad():
-            pred = model(eeg.unsqueeze(0).cuda()).squeeze(0)
-        mse = F.mse_loss(pred, txt.cuda()).item()
-        cos = cosine_similarity(pred, txt.cuda())
-        print(f"Sample {idx}: MSE={mse:.6f}, Cosine={cos:.6f}")
+    print(f"Sample path: {rel_path}")
+    print(f"MSE={mse:.6f}, Cosine={cos:.6f}")
