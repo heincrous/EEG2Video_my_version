@@ -66,7 +66,7 @@ with torch.no_grad():
 
 print("MSE between two predicted latents:", F.mse_loss(pred1, pred2).item())
 
-# === Continue as before with one EEG for decoding ===
+# === Continue with one EEG for decoding ===
 idx = idx1
 eeg_path = os.path.join(drive_root, "EEG_windows", eeg_files[idx])
 vid_path = os.path.join(drive_root, "Video_latents", vid_files[idx])
@@ -75,10 +75,45 @@ txt_path = txt_files[idx % len(txt_files)]
 video = np.load(vid_path) # [24,4,36,64]
 with open(txt_path, "r") as f:
     caption_text = f.read().strip()
-
 video = torch.tensor(video, dtype=torch.float32).unsqueeze(0).cuda()
 
 with torch.no_grad():
     pred = model(eeg1, torch.zeros((1,24,4,36,64), device="cuda"))
 
 print("\nFinal caption used:", caption_text)
+
+# === Decode & Save MP4s ===
+def decode_and_save(latents, name, vid_path):
+    latents = latents.squeeze(0).cpu().numpy()  # [24,4,36,64]
+    f, ch, h, w = latents.shape
+
+    # inverse normalize with latent scaler
+    latents = latents.reshape(f, -1)
+    latents = latent_scaler.inverse_transform(latents)
+    latents = latents.reshape(f, ch, h, w)
+
+    # convert to torch tensor, rescale for SD VAE
+    latents = torch.tensor(latents, dtype=torch.float32).unsqueeze(0).cuda() / 0.18215
+
+    frames = []
+    with torch.no_grad():
+        for i in range(latents.shape[1]):
+            frame = vae.decode(latents[:, i]).sample
+            frame = (frame.clamp(-1,1) + 1) / 2
+            frame = (frame * 255).cpu().numpy().astype(np.uint8)
+            frame = rearrange(frame, "b c h w -> h w c b")[...,0]
+            frames.append(frame)
+    frames = np.stack(frames)
+
+    # save as mp4 (2 seconds @ 12 fps)
+    mp4_name = os.path.splitext(os.path.basename(vid_path))[0] + f"_{frames.shape[0]}f_{name}.mp4"
+    mp4_path = os.path.join(output_dir, mp4_name)
+    writer = imageio.get_writer(mp4_path, fps=12, codec="libx264")
+    for f in frames:
+        writer.append_data(f)
+    writer.close()
+    print("Saved:", mp4_path)
+
+# Save ground truth & prediction
+decode_and_save(video, "groundtruth", vid_path)
+decode_and_save(pred, "predicted", vid_path)
