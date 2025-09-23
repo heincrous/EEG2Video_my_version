@@ -12,8 +12,8 @@ drive_root   = "/content/drive/MyDrive/EEG2Video_data/processed"
 output_dir   = "/content/drive/MyDrive/EEG2Video_outputs/test_seq2seq"
 vae_path     = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4/vae"
 caption_root = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text"
-latent_scaler_path = "/content/drive/MyDrive/EEG2Video_checkpoints/latent_scaler.pkl"
-eeg_scaler_path    = "/content/drive/MyDrive/EEG2Video_checkpoints/eeg_scaler.pkl"
+latent_scaler_path = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_latent_scaler.pkl"
+eeg_scaler_path    = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_eeg_scaler.pkl"
 
 eeg_test_list  = os.path.join(drive_root, "EEG_windows/test_list.txt")
 vid_test_list  = os.path.join(drive_root, "Video_latents/test_list_dup.txt")
