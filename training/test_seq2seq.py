@@ -184,18 +184,19 @@ if __name__ == "__main__":
     # Decode prediction
     latents_t = torch.from_numpy(pred_latents).float().cuda() / 0.18215
     with torch.no_grad():
-        frames = vae.decode(latents_t).sample
-    frames = (frames.clamp(-1,1)+1)/2
-    frames = frames.permute(0,2,3,1).cpu().numpy()*255
+        frames = vae.decode(latents_t).sample  # shape (num_frames, 3, H, W)
+    frames = (frames.clamp(-1, 1) + 1) / 2
+    frames = frames.permute(0, 2, 3, 1).cpu().numpy() * 255
     frames = frames.astype(np.uint8)
 
     # Decode ground truth
-    gt_latents_t = torch.from_numpy(gt_latents).unsqueeze(0).float().cuda() / 0.18215
+    gt_latents_t = torch.from_numpy(gt_latents).float().cuda() / 0.18215
     with torch.no_grad():
         gt_frames = vae.decode(gt_latents_t).sample
-    gt_frames = (gt_frames.clamp(-1,1)+1)/2
-    gt_frames = gt_frames.permute(0,2,3,1).cpu().numpy()*255
+    gt_frames = (gt_frames.clamp(-1, 1) + 1) / 2
+    gt_frames = gt_frames.permute(0, 2, 3, 1).cpu().numpy() * 255
     gt_frames = gt_frames.astype(np.uint8)
+
 
     # Metrics
     ssim_scores, psnr_scores = [], []

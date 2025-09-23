@@ -13,12 +13,12 @@ import joblib
 # ------------------------------------------------
 CONFIG = {
     # EEGNet params
-    "d_model": 512,
-    "C": 62,
-    "T": 100,
-    "F1": 16,
-    "D": 4,
-    "F2": 16,
+    "d_model": 512, # does not affect tensor shapes
+    "C": 62, # do not change
+    "T": 100, # do not change
+    "F1": 16, # do not change
+    "D": 4, # do not change
+    "F2": 16, # do not change
     "cross_subject": False,
 
     # Transformer params
