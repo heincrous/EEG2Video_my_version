@@ -2,6 +2,7 @@ import os, sys, random, torch, imageio, joblib
 import numpy as np
 from einops import rearrange
 from tqdm import tqdm
+import torch.nn.functional as F
 from sklearn.metrics import mean_squared_error
 from skimage.metrics import structural_similarity as ssim
 from diffusers import AutoencoderKL
@@ -11,7 +12,8 @@ drive_root   = "/content/drive/MyDrive/EEG2Video_data/processed"
 output_dir   = "/content/drive/MyDrive/EEG2Video_outputs/test_seq2seq"
 vae_path     = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4/vae"
 caption_root = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text"
-scaler_path  = "/content/drive/MyDrive/EEG2Video_checkpoints/latent_scaler.pkl"
+latent_scaler_path = "/content/drive/MyDrive/EEG2Video_checkpoints/latent_scaler.pkl"
+eeg_scaler_path    = "/content/drive/MyDrive/EEG2Video_checkpoints/eeg_scaler.pkl"
 
 eeg_test_list  = os.path.join(drive_root, "EEG_windows/test_list.txt")
 vid_test_list  = os.path.join(drive_root, "Video_latents/test_list_dup.txt")
@@ -21,7 +23,6 @@ os.makedirs(output_dir, exist_ok=True)
 
 # === IMPORT MODEL ===
 from train_seq2seq import MyTransformer
-
 checkpoint_path = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoint.pt"
 model = MyTransformer(pred_frames=24).cuda()
 ckpt = torch.load(checkpoint_path, map_location="cuda")
@@ -32,10 +33,11 @@ model.eval()
 vae = AutoencoderKL.from_pretrained(vae_path).cuda()
 vae.eval()
 
-# === LOAD SCALER ===
-latent_scaler = joblib.load(scaler_path)
+# === LOAD SCALERS ===
+latent_scaler = joblib.load(latent_scaler_path)
+eeg_scaler    = joblib.load(eeg_scaler_path)
 
-# === PICK RANDOM TEST SAMPLE ===
+# === LOAD TEST LISTS ===
 with open(eeg_test_list) as f:
     eeg_files = [l.strip() for l in f]
 with open(vid_test_list) as f:
@@ -43,90 +45,41 @@ with open(vid_test_list) as f:
 with open(text_test_list) as f:
     txt_files = [os.path.join(caption_root, l.strip()) for l in f]
 
-idx = random.randint(0, len(eeg_files) - 1)
+# === Pick 2 EEGs for collapse sanity check ===
+idx1, idx2 = random.sample(range(len(eeg_files)), 2)
+eeg1 = np.load(os.path.join(drive_root, "EEG_windows", eeg_files[idx1]))
+eeg2 = np.load(os.path.join(drive_root, "EEG_windows", eeg_files[idx2]))
+
+# Normalize with EEG scaler
+b, c, t = eeg1.shape
+eeg1 = eeg_scaler.transform(eeg1.reshape(-1, t)).reshape(b, c, t)
+b, c, t = eeg2.shape
+eeg2 = eeg_scaler.transform(eeg2.reshape(-1, t)).reshape(b, c, t)
+
+eeg1 = torch.tensor(eeg1, dtype=torch.float32).unsqueeze(0).cuda()
+eeg2 = torch.tensor(eeg2, dtype=torch.float32).unsqueeze(0).cuda()
+
+zero_frame = torch.zeros((1,1,4,36,64), device="cuda")
+
+with torch.no_grad():
+    pred1 = model.generate(eeg1, zero_frame)
+    pred2 = model.generate(eeg2, zero_frame)
+
+print("MSE between two predicted latents:", F.mse_loss(pred1, pred2).item())
+
+# === Continue as before with one EEG for decoding ===
+idx = idx1
 eeg_path = os.path.join(drive_root, "EEG_windows", eeg_files[idx])
 vid_path = os.path.join(drive_root, "Video_latents", vid_files[idx])
 txt_path = txt_files[idx % len(txt_files)]
 
-eeg = np.load(eeg_path)   # [7,62,100]
 video = np.load(vid_path) # [24,4,36,64]
 with open(txt_path, "r") as f:
     caption_text = f.read().strip()
 
-print("Chosen EEG:", eeg_path)
-print("Chosen video:", vid_path)
-print("Chosen caption file:", txt_path)
-print("Caption text:", caption_text)
-
-# === PREP TENSORS ===
-eeg   = torch.tensor(eeg, dtype=torch.float32).unsqueeze(0).cuda()
 video = torch.tensor(video, dtype=torch.float32).unsqueeze(0).cuda()
 
-# prepend zero frame as start token
-b, f, c, h, w = video.shape
-zero_frame = torch.zeros((b,1,c,h,w), device=video.device)
-
 with torch.no_grad():
-    pred = model.generate(eeg, zero_frame)  # should output [1,24,4,36,64]
-
-# === RANDOM BASELINE ===
-rand_latent = torch.randn_like(video)
-
-# === SHUFFLED BASELINE ===
-shuffle_idx = random.randint(0, len(vid_files) - 1)
-while shuffle_idx == idx:
-    shuffle_idx = random.randint(0, len(vid_files) - 1)
-shuffle_latent = np.load(os.path.join(drive_root, "Video_latents", vid_files[shuffle_idx]))
-shuffle_latent = torch.tensor(shuffle_latent, dtype=torch.float32).unsqueeze(0).cuda()
-
-# === METRICS ===
-def mse_ssim(pred, target):
-    pred_np = pred.detach().cpu().numpy().reshape(-1)
-    tgt_np  = target.detach().cpu().numpy().reshape(-1)
-    mse_val = mean_squared_error(tgt_np, pred_np)
-    ssim_val = ssim(
-        target.detach().cpu().numpy()[0,0].transpose(1,2,0),
-        pred.detach().cpu().numpy()[0,0].transpose(1,2,0),
-        channel_axis=-1, data_range=1.0
-    )
-    return mse_val, ssim_val
-
-print("\n--- METRICS ---")
-print("Model vs GT:", mse_ssim(pred, video))
-print("Random vs GT:", mse_ssim(rand_latent, video))
-print("Shuffled vs GT:", mse_ssim(shuffle_latent, video))
-
-# === DECODE & SAVE MP4s ===
-def decode_and_save(latents, name):
-    latents = latents.squeeze(0).cpu().numpy()  # [24,4,36,64]
-    f, ch, h, w = latents.shape
-    latents = latents.reshape(f, -1)
-    latents = latent_scaler.inverse_transform(latents)
-    latents = latents.reshape(f, ch, h, w)
-
-    latents = torch.tensor(latents, dtype=torch.float32).unsqueeze(0).cuda() / 0.18215
-
-    frames = []
-    with torch.no_grad():
-        for i in range(latents.shape[1]):
-            frame = vae.decode(latents[:, i]).sample
-            frame = (frame.clamp(-1,1) + 1) / 2
-            frame = (frame * 255).cpu().numpy().astype(np.uint8)
-            frame = rearrange(frame, "b c h w -> h w c b")[...,0]
-            frames.append(frame)
-    frames = np.stack(frames)
-
-    mp4_name = os.path.splitext(os.path.basename(vid_path))[0] + f"_{frames.shape[0]}f_{name}.mp4"
-    mp4_path = os.path.join(output_dir, mp4_name)
-    writer = imageio.get_writer(mp4_path, fps=12, codec="libx264")
-    for f in frames:
-        writer.append_data(f)
-    writer.close()
-    print("Saved:", mp4_path)
-
-decode_and_save(video, "groundtruth")
-decode_and_save(pred, "predicted")
-decode_and_save(rand_latent, "random")
-decode_and_save(shuffle_latent, "shuffled")
+    pred = model.generate(eeg1, zero_frame)  # use eeg1
 
 print("\nFinal caption used:", caption_text)
