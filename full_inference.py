@@ -230,10 +230,8 @@ drive_root            = "/content/drive/MyDrive/EEG2Video_data/processed"
 pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 finetuned_model_path  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final"
 semantic_ckpt_dir     = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor"
-# seq2seq_ckpt_dir      = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoints"
 
 eeg_feat_list_path    = os.path.join(drive_root, "EEG_DE/test_list.txt")
-# eeg_win_list_path     = os.path.join(drive_root, "EEG_windows/test_list.txt")
 
 output_dir            = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference"
 os.makedirs(output_dir, exist_ok=True)
@@ -258,33 +256,29 @@ def select_ckpt(ckpt_dir, name="checkpoint"):
     return ckpts[choice]
 
 semantic_ckpt = select_ckpt(semantic_ckpt_dir, "semantic")
-# seq2seq_ckpt  = select_ckpt(seq2seq_ckpt_dir, "seq2seq")
 print("Using semantic checkpoint:", semantic_ckpt)
 
 # ==========================================
-# Load scalers
+# Load scaler
 # ==========================================
 semantic_tag = os.path.basename(semantic_ckpt).replace("semantic_predictor_", "").replace(".pt", "")
 semantic_scaler = joblib.load(os.path.join(semantic_ckpt_dir, f"scaler_{semantic_tag}.pkl"))
-
-# seq2seq_tag = os.path.basename(seq2seq_ckpt).replace("seq2seqmodel_", "").replace(".pt", "")
-# seq2seq_scaler = joblib.load(os.path.join(seq2seq_ckpt_dir, f"scaler_{seq2seq_tag}.pkl"))
 
 # ==========================================
 # Load finetuned pipeline
 # ==========================================
 from diffusers import AutoencoderKL, DDIMScheduler
 
-vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae").to(device, dtype=torch.float16)
+vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae").to(device, dtype=torch.float32)
 scheduler = DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
-unet = UNet3DConditionModel.from_pretrained_2d(pretrained_model_path, subfolder="unet").to(device, dtype=torch.float16)
+unet = UNet3DConditionModel.from_pretrained_2d(pretrained_model_path, subfolder="unet").to(device, dtype=torch.float32)
 
 pipe = TuneAVideoPipeline.from_pretrained(
     finetuned_model_path,
     vae=vae,
     unet=unet,
     scheduler=scheduler,
-    torch_dtype=torch.float16,
+    torch_dtype=torch.float32,
 ).to(device)
 pipe.enable_vae_slicing()
 
@@ -297,7 +291,7 @@ semantic_model.load_state_dict(torch.load(semantic_ckpt)["state_dict"])
 semantic_model.eval()
 
 # ==========================================
-# Init DANA diffusion
+# Init DANA diffusion (not used now)
 # ==========================================
 dana_diffusion = Diffusion(time_steps=500)
 
@@ -322,11 +316,11 @@ eeg_feat_tensor = torch.tensor(eeg_feat_scaled, dtype=torch.float32).unsqueeze(0
 # ==========================================
 with torch.no_grad():
     semantic_pred = semantic_model(eeg_feat_tensor)
-semantic_pred = semantic_pred.view(1, 77, 768).half().to(device)
+semantic_pred = semantic_pred.view(1, 77, 768).float().to(device)
 print("Semantic embedding shape:", semantic_pred.shape)
 
 # Negative EEG embedding = mean vector
-negative = semantic_pred.mean(dim=0, keepdim=True)
+negative = semantic_pred.mean(dim=0, keepdim=True).float().to(device)
 
 # ==========================================
 # Run inference (semantic only, no seq2seq yet)
@@ -334,8 +328,8 @@ negative = semantic_pred.mean(dim=0, keepdim=True)
 def run_inference():
     video = pipe(
         model=None,
-        eeg=semantic_pred.to(torch.float16),
-        negative_eeg=negative.to(torch.float16),
+        eeg=semantic_pred,
+        negative_eeg=negative,
         latents=None,   # no seq2seq latents yet
         video_length=6,
         height=288,
@@ -365,4 +359,3 @@ def run_inference():
 # Run now
 # ==========================================
 run_inference()
-
