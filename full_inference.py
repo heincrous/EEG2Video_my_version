@@ -53,7 +53,7 @@ pipe = TuneAVideoPipeline.from_pretrained(
     torch_dtype=torch.float16,
 ).to(device)
 
-pipe.enable_xformers_memory_efficient_attention()
+# pipe.enable_xformers_memory_efficient_attention()
 pipe.enable_vae_slicing()
 
 # ==========================================
@@ -119,7 +119,7 @@ print("Seq2Seq latents shape:", latents_pred.shape)
 # Run pipeline (correct API)
 # ==========================================
 video_length = 24
-fps = 24
+fps = 12
 
 video = pipe(
     model=None,
