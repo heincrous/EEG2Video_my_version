@@ -5,6 +5,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
+import random
 
 # -------------------------
 # EEG Encoder
@@ -159,7 +160,8 @@ class EEGVideoDataset(Dataset):
         eeg = torch.tensor(eeg, dtype=torch.float32)
         video = torch.tensor(video, dtype=torch.float32)
 
-        if self.debug and idx < 2:
+        # random debug print (~1 in 1000 samples)
+        if self.debug and random.random() < 0.001:
             print(f"[DEBUG ALIGNMENT] eeg={self.eeg_files[idx]} | video={self.video_files[idx]}")
 
         return eeg, video
@@ -185,7 +187,7 @@ if __name__ == "__main__":
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200*len(dataloader))
     criterion = nn.MSELoss()
 
-    for epoch in range(20):
+    for epoch in range(10):
         model.train()
         epoch_loss = 0
         for eeg, video in tqdm(dataloader, desc=f"Epoch {epoch+1}"):
@@ -203,7 +205,9 @@ if __name__ == "__main__":
             scheduler.step()
             epoch_loss += loss.item()
 
+        # report coverage
         print(f"Epoch {epoch+1}, Loss={epoch_loss/len(dataloader):.6f}")
+        print(f"[COVERAGE] batches: {len(dataloader)}, samples this epoch: {len(dataset)}")
 
         with torch.no_grad():
             eeg, video = next(iter(dataloader))
