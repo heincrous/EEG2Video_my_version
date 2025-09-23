@@ -121,7 +121,7 @@ class myTransformer(nn.Module):
 if __name__ == "__main__":
     bundle_dir = CONFIG["bundle_dir"]
     ckpt_dir   = os.path.join(CONFIG["save_root"], "seq2seq_checkpoints")
-    out_dir    = os.path.join(CONFIG["save_root"], "test_outputs")
+    out_dir    = os.path.join(CONFIG["save_root"], "test_seq2seq")
     vae_dir    = CONFIG.get("vae_dir", None)
     os.makedirs(out_dir, exist_ok=True)
 
