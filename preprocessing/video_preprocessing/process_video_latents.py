@@ -7,23 +7,15 @@ Input:
 
 Process:
   - Load clip frames
-  - Optionally downsample to 24 frames (to match TuneMultiVideoDataset)
+  - Downsample to 6 frames (3 FPS, matches EEG2Video paper)
   - Encode each frame with Stable Diffusion VAE
   - Latent per frame = [4,36,64]
-  - Stack into sequence [N,4,36,64]
-    N = 48 if full, or 24 if subsampled
+  - Stack into sequence [6,4,36,64]
 
 Output:
   processed/Video_latents/BlockY/classYY_clipZZ.npy
-    Shape = [N,4,36,64]
+    Shape = [6,4,36,64]
 """
-
-# Pseudocode steps:
-# 1. Load 2s MP4 clip
-# 2. Resize to 512x512
-# 3. Extract frames
-# 4. Encode each frame using AutoencoderKL
-# 5. Save stacked latent array
 
 import os
 import cv2
@@ -48,7 +40,7 @@ vae.eval()
 # parameters
 target_size = (512, 512)
 fps = 24
-subsample = True   # set False if you want all 48 frames
+subsample = True   # always subsample to 6 frames
 batch_size = 64     # number of frames per VAE forward pass
 
 # -------------------------------------------------
@@ -99,9 +91,9 @@ for block in selected_blocks:
         frames = np.stack(frames, axis=0).astype(np.float32) / 255.0
         frames = torch.from_numpy(frames).permute(0,3,1,2).to(device, dtype=torch.float16)
 
-        # optional subsample to 24 frames
+        # subsample to 6 frames (3 FPS, 2s clip)
         if subsample and frames.shape[0] == 48:
-            idxs = np.linspace(0, 47, 24, dtype=int)
+            idxs = np.linspace(0, 47, 6, dtype=int)  # 6 evenly spaced frames
             frames = frames[idxs]
 
         # encode frames in batches
@@ -113,7 +105,7 @@ for block in selected_blocks:
                 latent = vae.encode(batch).latent_dist.sample()
                 latent = latent * 0.18215
                 latents.append(latent)
-            latents = torch.cat(latents, dim=0)  # [N,4,64,64]
+            latents = torch.cat(latents, dim=0)  # [6,4,64,64]
 
         # resize spatial dimension to [36,64] (to match paper)
         latents = torch.nn.functional.interpolate(latents, size=(36,64), mode="bilinear")
