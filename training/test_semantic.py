@@ -166,10 +166,10 @@ class ListSemanticDataset(Dataset):
     Loads EEG_DE (input) and BLIP_embeddings (target) based on EEG_DE/test_list.txt.
 
     Each line in test_list.txt looks like:
-      BlockX/classYY_clipZZ.npy
+      subX/BlockY/classZZ_clipWW.npy
 
-    Input  → EEG_DE/BlockX/classYY_clipZZ.npy, flattened to (310,)
-    Target → BLIP_embeddings/BlockX/classYY_clipZZ.npy, flattened to (77*768,)
+    Input  → EEG_DE/subX/BlockY/classZZ_clipWW.npy, flattened to (310,)
+    Target → BLIP_embeddings/BlockY/classZZ_clipWW.npy, flattened to (77*768,)
     """
     def __init__(self, test_list_path, eeg_root, blip_root, scaler, max_samples=None):
         self.samples = []
@@ -179,8 +179,11 @@ class ListSemanticDataset(Dataset):
             lines = [line.strip() for line in f if line.strip()]
 
         for rel_path in lines:
-            eeg_path  = os.path.join(eeg_root, rel_path)
-            blip_path = os.path.join(blip_root, rel_path)
+            eeg_path = os.path.join(eeg_root, rel_path)
+
+            # Strip subject prefix for BLIP embeddings
+            blip_rel = "/".join(rel_path.split("/")[1:])
+            blip_path = os.path.join(blip_root, blip_rel)
 
             eeg  = np.load(eeg_path)   # (62,5)
             blip = np.load(blip_path)  # (77,768)
