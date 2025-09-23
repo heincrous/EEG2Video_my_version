@@ -200,8 +200,8 @@ if __name__ == "__main__":
                                       os.path.join(base_dir,"Video_latents"),
                                       scaler=scaler, fit=False)
 
-        train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+        train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=128, shuffle=False)
 
         model = myTransformer().cuda()
         optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
