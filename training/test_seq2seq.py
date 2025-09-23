@@ -1,119 +1,140 @@
-import os, sys, random, torch, imageio, joblib
+import os
+import math
+import random
 import numpy as np
+import torch
+import torch.nn as nn
+import joblib
 from einops import rearrange
-from tqdm import tqdm
-import torch.nn.functional as F
-from sklearn.metrics import mean_squared_error
-from skimage.metrics import structural_similarity as ssim
-from diffusers import AutoencoderKL
+import imageio
+from diffusers.models import AutoencoderKL
 
-# === PATHS ===
-drive_root   = "/content/drive/MyDrive/EEG2Video_data/processed"
-output_dir   = "/content/drive/MyDrive/EEG2Video_outputs/test_seq2seq"
-vae_path     = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4/vae"
-caption_root = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text"
-latent_scaler_path = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_latent_scaler.pkl"
-eeg_scaler_path    = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_eeg_scaler.pkl"
+# ------------------------------------------------
+# Model components (same as training)
+# ------------------------------------------------
+class MyEEGNet_embedding(nn.Module):
+    def __init__(self, d_model=128, C=62, T=100, F1=16, D=4, F2=16, cross_subject=False):
+        super().__init__()
+        self.drop_out = 0.25 if cross_subject else 0.5
+        self.block_1 = nn.Sequential(nn.ZeroPad2d((31,32,0,0)), nn.Conv2d(1,F1,(1,64),bias=False), nn.BatchNorm2d(F1))
+        self.block_2 = nn.Sequential(nn.Conv2d(F1,F1*D,(C,1),groups=F1,bias=False), nn.BatchNorm2d(F1*D), nn.ELU(),
+                                     nn.AvgPool2d((1,4)), nn.Dropout(self.drop_out))
+        self.block_3 = nn.Sequential(nn.ZeroPad2d((7,8,0,0)),
+                                     nn.Conv2d(F1*D,F1*D,(1,16),groups=F1*D,bias=False),
+                                     nn.Conv2d(F1*D,F2,(1,1),bias=False), nn.BatchNorm2d(F2), nn.ELU(),
+                                     nn.AvgPool2d((1,8)), nn.Dropout(self.drop_out))
+        self.embedding = nn.Linear(48, d_model)
+    def forward(self, x):
+        x = self.block_1(x); x = self.block_2(x); x = self.block_3(x)
+        x = x.view(x.shape[0], -1)
+        return self.embedding(x)
 
-eeg_test_list  = os.path.join(drive_root, "EEG_windows/test_list.txt")
-vid_test_list  = os.path.join(drive_root, "Video_latents/test_list_dup.txt")
-text_test_list = os.path.join(caption_root, "test_list.txt")
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, dropout=0, max_len=5000):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0,d_model,2)*-(math.log(10000.0)/d_model))
+        pe[:,0::2] = torch.sin(position*div_term); pe[:,1::2] = torch.cos(position*div_term)
+        pe = pe.unsqueeze(0)
+        self.register_buffer("pe", pe)
+    def forward(self,x):
+        return self.dropout(x + self.pe[:,:x.size(1)].requires_grad_(False))
 
-os.makedirs(output_dir, exist_ok=True)
+class myTransformer(nn.Module):
+    def __init__(self, d_model=512):
+        super().__init__()
+        self.img_embedding = nn.Linear(4*36*64, d_model)
+        self.eeg_embedding = MyEEGNet_embedding(d_model=d_model,C=62,T=100)
+        self.transformer_encoder = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(d_model=d_model,nhead=4,batch_first=True), num_layers=2)
+        self.transformer_decoder = nn.TransformerDecoder(
+            nn.TransformerDecoderLayer(d_model=d_model,nhead=4,batch_first=True), num_layers=4)
+        self.positional_encoding = PositionalEncoding(d_model,dropout=0)
+        self.txtpredictor = nn.Linear(512,13)
+        self.predictor = nn.Linear(512,4*36*64)
+    def forward(self, src, tgt):
+        src = self.eeg_embedding(src.reshape(src.shape[0]*src.shape[1],1,62,100))
+        src = src.reshape(src.shape[0]//7,7,-1)
+        tgt = tgt.reshape(tgt.shape[0],tgt.shape[1],-1); tgt = self.img_embedding(tgt)
+        src = self.positional_encoding(src); tgt = self.positional_encoding(tgt)
+        enc = self.transformer_encoder(src)
+        new_tgt = torch.zeros((tgt.shape[0],1,tgt.shape[2])).to(tgt.device)
+        for i in range(6):
+            dec = self.transformer_decoder(new_tgt,enc)
+            new_tgt = torch.cat((new_tgt,dec[:,-1:,:]),dim=1)
+        enc = torch.mean(enc,dim=1)
+        return self.txtpredictor(enc), self.predictor(new_tgt).reshape(
+            new_tgt.shape[0],new_tgt.shape[1],4,36,64)
 
-# === IMPORT MODEL ===
-from train_seq2seq import MyTransformer
-checkpoint_path = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoint.pt"
-model = MyTransformer(pred_frames=24).cuda()
-ckpt = torch.load(checkpoint_path, map_location="cuda")
-model.load_state_dict(ckpt["state_dict"])
-model.eval()
+# ------------------------------------------------
+# Inference
+# ------------------------------------------------
+if __name__ == "__main__":
+    base_dir = "/content/drive/MyDrive/EEG2Video_data/processed/"
+    ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoints/"
+    out_dir = "/content/drive/MyDrive/EEG2Video_outputs/test_seq2seq/"
+    vae_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
+    os.makedirs(out_dir, exist_ok=True)
 
-# === LOAD VAE ===
-vae = AutoencoderKL.from_pretrained(vae_path).cuda()
-vae.eval()
+    # list checkpoints
+    ckpts = [f for f in os.listdir(ckpt_dir) if f.endswith(".pt")]
+    if not ckpts:
+        raise RuntimeError("No checkpoints found in seq2seq_checkpoints/")
+    print("\nAvailable checkpoints:")
+    for idx, ck in enumerate(ckpts):
+        print(f"{idx}: {ck}")
+    choice = int(input("\nSelect subject index: "))
+    ckpt_path = os.path.join(ckpt_dir, ckpts[choice])
+    subj = ckpts[choice].replace("seq2seqmodel_","").replace(".pt","")
+    print(f"Using checkpoint for subject: {subj}")
 
-# === LOAD SCALERS ===
-latent_scaler = joblib.load(latent_scaler_path)
-eeg_scaler    = joblib.load(eeg_scaler_path)
+    scaler_path = os.path.join(ckpt_dir, f"scaler_{subj}.pkl")
+    scaler = joblib.load(scaler_path)
 
-# === LOAD TEST LISTS ===
-with open(eeg_test_list) as f:
-    eeg_files = [l.strip() for l in f]
-with open(vid_test_list) as f:
-    vid_files = [l.strip() for l in f]
-with open(text_test_list) as f:
-    txt_files = [os.path.join(caption_root, l.strip()) for l in f]
+    # load model
+    model = myTransformer().cuda()
+    state = torch.load(ckpt_path,map_location="cuda")
+    model.load_state_dict(state['state_dict'])
+    model.eval()
 
-# === Pick 2 EEGs for collapse sanity check ===
-idx1, idx2 = random.sample(range(len(eeg_files)), 2)
-eeg1 = np.load(os.path.join(drive_root, "EEG_windows", eeg_files[idx1]))
-eeg2 = np.load(os.path.join(drive_root, "EEG_windows", eeg_files[idx2]))
+    # pick a test EEG file
+    with open(os.path.join(base_dir,"EEG_windows/test_list.txt")) as f:
+        eeg_test_all = [l.strip() for l in f]
+    eeg_files = [e for e in eeg_test_all if e.startswith(subj)]
+    eeg_file = random.choice(eeg_files)
+    print(f"Testing with {eeg_file}")
 
-# Normalize with EEG scaler
-b, c, t = eeg1.shape
-eeg1 = eeg_scaler.transform(eeg1.reshape(-1, t)).reshape(b, c, t)
-b, c, t = eeg2.shape
-eeg2 = eeg_scaler.transform(eeg2.reshape(-1, t)).reshape(b, c, t)
+    eeg = np.load(os.path.join(base_dir,"EEG_windows",eeg_file))
+    eeg_flat = scaler.transform(eeg.reshape(-1,62*100))
+    eeg = eeg_flat.reshape(eeg.shape)
+    eeg = torch.from_numpy(eeg).unsqueeze(0).float().cuda()  # [1,7,62,100]
 
-eeg1 = torch.tensor(eeg1, dtype=torch.float32).unsqueeze(0).cuda()
-eeg2 = torch.tensor(eeg2, dtype=torch.float32).unsqueeze(0).cuda()
+    # dummy tgt of zeros for autoregressive decoding
+    b = 1
+    padded_video = torch.zeros((b,1,4,36,64)).cuda()
+    _, pred_latents = model(eeg, padded_video)
+    pred_latents = pred_latents[:,1:,:,:,:].squeeze(0).cpu().detach().numpy()  # [6,4,36,64]
 
-# === Inference (autoregressive forward) ===
-with torch.no_grad():
-    pred1 = model(eeg1, torch.zeros((1,24,4,36,64), device="cuda"))
-    pred2 = model(eeg2, torch.zeros((1,24,4,36,64), device="cuda"))
-
-print("MSE between two predicted latents:", F.mse_loss(pred1, pred2).item())
-
-# === Continue with one EEG for decoding ===
-idx = idx1
-eeg_path = os.path.join(drive_root, "EEG_windows", eeg_files[idx])
-vid_path = os.path.join(drive_root, "Video_latents", vid_files[idx])
-txt_path = txt_files[idx % len(txt_files)]
-
-video = np.load(vid_path) # [24,4,36,64]
-with open(txt_path, "r") as f:
-    caption_text = f.read().strip()
-video = torch.tensor(video, dtype=torch.float32).unsqueeze(0).cuda()
-
-with torch.no_grad():
-    pred = model(eeg1, torch.zeros((1,24,4,36,64), device="cuda"))
-
-print("\nFinal caption used:", caption_text)
-
-# === Decode & Save MP4s ===
-def decode_and_save(latents, name, vid_path):
-    latents = latents.squeeze(0).cpu().numpy()  # [24,4,36,64]
-    f, ch, h, w = latents.shape
-
-    # inverse normalize with latent scaler
-    latents = latents.reshape(f, -1)
-    latents = latent_scaler.inverse_transform(latents)
-    latents = latents.reshape(f, ch, h, w)
-
-    # convert to torch tensor, rescale for SD VAE
-    latents = torch.tensor(latents, dtype=torch.float32).unsqueeze(0).cuda() / 0.18215
-
-    frames = []
+    # decode latents with VAE (local version from Drive)
+    vae = AutoencoderKL.from_pretrained(vae_dir, subfolder="vae").cuda()
+    latents_t = torch.from_numpy(pred_latents).float().cuda()
+    latents_t = latents_t / 0.18215
     with torch.no_grad():
-        for i in range(latents.shape[1]):
-            frame = vae.decode(latents[:, i]).sample
-            frame = (frame.clamp(-1,1) + 1) / 2
-            frame = (frame * 255).cpu().numpy().astype(np.uint8)
-            frame = rearrange(frame, "b c h w -> h w c b")[...,0]
-            frames.append(frame)
-    frames = np.stack(frames)
+        frames = vae.decode(latents_t).sample  # [6,3,H,W]
+    frames = (frames.clamp(-1,1)+1)/2
+    frames = frames.permute(0,2,3,1).cpu().numpy()*255
+    frames = frames.astype(np.uint8)
 
-    # save as mp4 (2 seconds @ 12 fps)
-    mp4_name = os.path.splitext(os.path.basename(vid_path))[0] + f"_{frames.shape[0]}f_{name}.mp4"
-    mp4_path = os.path.join(output_dir, mp4_name)
-    writer = imageio.get_writer(mp4_path, fps=12, codec="libx264")
-    for f in frames:
-        writer.append_data(f)
-    writer.close()
-    print("Saved:", mp4_path)
+    # save mp4
+    class_clip = os.path.basename(eeg_file).replace(".npy",".mp4")
+    save_path = os.path.join(out_dir,class_clip)
+    imageio.mimsave(save_path,frames,fps=3)
+    print(f"Saved generated video to {save_path}")
 
-# Save ground truth & prediction
-decode_and_save(video, "groundtruth", vid_path)
-decode_and_save(pred, "predicted", vid_path)
+    # show caption
+    blip_text_path = os.path.join(base_dir,"BLIP_text", "/".join(eeg_file.split("/")[1:]).replace(".npy",".txt"))
+    with open(blip_text_path,"r") as f:
+        caption = f.readline().strip()
+    print(f"Ground-truth caption: {caption}")
