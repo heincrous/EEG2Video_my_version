@@ -31,6 +31,33 @@ from dataset import TuneMultiVideoDataset
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
+
+# ------------------------------
+# Helper: Batched VAE encoding
+# ------------------------------
+def encode_frames_in_batches(vae, pixel_values, video_length, batch_size=4):
+    """
+    Encode frames through VAE in batches to save VRAM.
+    Args:
+        vae: AutoencoderKL
+        pixel_values: [B*F, 3, H, W] tensor
+        video_length: number of frames per video
+        batch_size: number of frames per VAE forward
+    Returns:
+        latents: [B, C, F, H', W']
+    """
+    all_latents = []
+    for i in range(0, pixel_values.shape[0], batch_size):
+        batch = pixel_values[i:i+batch_size]
+        with torch.no_grad():
+            latent = vae.encode(batch).latent_dist.sample()
+            latent = latent * 0.18215
+        all_latents.append(latent)
+    latents = torch.cat(all_latents, dim=0)
+    latents = rearrange(latents, "(b f) c h w -> b c f h w", f=video_length)
+    return latents
+
+
 def main(
     pretrained_model_path: str,
     output_dir: str,
@@ -59,7 +86,7 @@ def main(
     resume_from_checkpoint: Optional[str] = None,
     mixed_precision: Optional[str] = "fp16",
     use_8bit_adam: bool = False,
-    enable_xformers_memory_efficient_attention: bool = False,  # keep disabled
+    enable_xformers_memory_efficient_attention: bool = False,
     seed: Optional[int] = None,
     num_train_epochs: int = 200,
 ):
@@ -79,12 +106,14 @@ def main(
     if accelerator.is_main_process:
         os.makedirs(output_dir, exist_ok=True)
 
+    # ---- Load pretrained components ----
     noise_scheduler = DDPMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
     tokenizer = CLIPTokenizer.from_pretrained(pretrained_model_path, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(pretrained_model_path, subfolder="text_encoder")
     vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae")
     unet = UNet3DConditionModel.from_pretrained_2d(pretrained_model_path, subfolder="unet")
 
+    # Freeze non-trainable parts
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
     unet.requires_grad_(False)
@@ -96,6 +125,12 @@ def main(
 
     if gradient_checkpointing:
         unet.enable_gradient_checkpointing()
+
+    if accelerator.is_main_process:
+        print("Trainable modules:")
+        for name, module in unet.named_modules():
+            if any(name.endswith(tm) for tm in trainable_modules):
+                print(" -", name)
 
     if scale_lr:
         learning_rate = (
@@ -110,13 +145,12 @@ def main(
         eps=adam_epsilon,
     )
 
+    # ---- Dataset ----
     train_dataset = TuneMultiVideoDataset(**train_data)
 
-    # ---- Root directories for modalities ----
     video_latents_root = "/content/drive/MyDrive/EEG2Video_data/processed/Video_latents"
     blip_text_root     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text"
 
-    # ---- Load train lists ----
     latent_list_path = os.path.join(video_latents_root, "train_list.txt")
     text_list_path   = os.path.join(blip_text_root, "train_list.txt")
 
@@ -129,7 +163,6 @@ def main(
     print("video_path_length:", len(train_dataset.video_path))
     print("prompt_length:", len(train_dataset.prompt))
 
-    # ---- Tokenize prompts ----
     train_dataset.prompt_ids = tokenizer(
         [open(p).read().strip() for p in train_dataset.prompt],
         max_length=tokenizer.model_max_length,
@@ -138,7 +171,6 @@ def main(
         return_tensors="pt",
     ).input_ids
 
-    # ---- Dataloader ----
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=train_batch_size,
@@ -160,7 +192,7 @@ def main(
         unet, optimizer, train_dataloader, lr_scheduler
     )
 
-    # sanity check first batch
+    # Sanity check
     first_batch = next(iter(train_dataloader))
     if "latents" in first_batch:
         latents = first_batch["latents"]
@@ -174,7 +206,6 @@ def main(
     validation_data["video_length"] = min(24, inferred_video_length)
     print(f"[Validation] Using video_length={validation_data['video_length']}")
 
-    # ---- Validation prompts ----
     val_text_list_path = os.path.join(blip_text_root, "test_list.txt")
     with open(val_text_list_path, "r") as f:
         all_prompts = [os.path.join(blip_text_root, line.strip()) for line in f]
@@ -220,9 +251,7 @@ def main(
                         pixel_values = batch["pixel_values"].to(weight_dtype)
                         video_length = pixel_values.shape[1]
                         pixel_values = rearrange(pixel_values, "b f c h w -> (b f) c h w")
-                        latents = vae.encode(pixel_values).latent_dist.sample()
-                        latents = rearrange(latents, "(b f) c h w -> b c f h w", f=video_length)
-                        latents = latents * 0.18215
+                        latents = encode_frames_in_batches(vae, pixel_values, video_length, batch_size=4)
 
                     noise = torch.randn_like(latents)
                     timesteps = torch.randint(
@@ -237,7 +266,10 @@ def main(
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
                     accelerator.backward(loss)
-                    accelerator.clip_grad_norm_(unet.parameters(), max_grad_norm)
+
+                    # ✅ Only clip when gradients are being synced
+                    if accelerator.sync_gradients:
+                        accelerator.clip_grad_norm_(unet.parameters(), max_grad_norm)
 
                     optimizer.step()
                     lr_scheduler.step()
@@ -246,13 +278,11 @@ def main(
                 total_loss += loss.item()
                 global_step += 1
                 pbar.update(1)
-                pbar.set_postfix({"loss": loss.item()})
 
-        # log after epoch
         avg_loss = total_loss / len(train_dataloader)
-        print(f"[Epoch {epoch}] Average loss: {avg_loss:.6f}")
+        current_lr = lr_scheduler.get_last_lr()[0]
+        print(f"[Epoch {epoch}] Avg loss: {avg_loss:.6f} | LR: {current_lr:.2e}")
 
-        # run validation
         if epoch % 2 == 0 and accelerator.is_main_process:
             generator = torch.Generator(device=latents.device).manual_seed(seed)
             for prompt in config["validation_data"]["prompts"]:
@@ -276,13 +306,14 @@ def main(
 
     accelerator.end_training()
 
+
 if __name__ == "__main__":
     config = dict(
         pretrained_model_path="/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4",
         output_dir="/content/drive/MyDrive/EEG2Video_outputs",
         train_data=dict(video_path=None, prompt=None),
         validation_data=dict(prompts=None, num_inv_steps=20, use_inv_latent=False),
-        train_batch_size=1,
+        train_batch_size=2,
         learning_rate=3e-5,
         num_train_epochs=2,
         mixed_precision="fp16",
