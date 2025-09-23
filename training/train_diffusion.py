@@ -36,16 +36,20 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 # ------------------------------
 class NPZVideoDataset(torch.utils.data.Dataset):
     def __init__(self, file_list, tokenizer):
-        self.files = file_list
+        self.samples = []
         self.tokenizer = tokenizer
+        for f in file_list:
+            data = np.load(f, allow_pickle=True)
+            vids = data["Video_latents"]    # (N,F,C,H,W)
+            texts = data["BLIP_text"]       # (N,) list of captions
+            for i in range(len(vids)):
+                self.samples.append((vids[i], str(texts[i])))
 
     def __len__(self):
-        return len(self.files)
+        return len(self.samples)
 
     def __getitem__(self, idx):
-        data = np.load(self.files[idx], allow_pickle=True)
-        latents = data["Video_latents"]  # (F,C,H,W)
-        text = str(data["BLIP_text"])
+        latents, text = self.samples[idx]
         prompt_ids = self.tokenizer(
             text,
             max_length=self.tokenizer.model_max_length,
@@ -53,8 +57,10 @@ class NPZVideoDataset(torch.utils.data.Dataset):
             truncation=True,
             return_tensors="pt",
         ).input_ids[0]
-        return {"latents": torch.from_numpy(latents).float(),
-                "prompt_ids": prompt_ids}
+        return {
+            "latents": torch.from_numpy(latents).float(),  # (F,C,H,W)
+            "prompt_ids": prompt_ids,
+        }
 
 
 def get_subject_files(bundle_root, subjects, split="train"):
@@ -181,7 +187,7 @@ def main(
     if choice.lower() == "check":
         test_subj = all_subjects[0]
         files = get_subject_files(bundle_root, [test_subj], split="train")
-        dataset = NPZVideoDataset(files[:2], tokenizer)
+        dataset = NPZVideoDataset(files, tokenizer)
         sample = dataset[0]
         print("Dry run OK | Latents:", sample["latents"].shape, "| Prompt length:", sample["prompt_ids"].shape)
         sys.exit()
@@ -222,7 +228,7 @@ def main(
     # ---- Sanity check ----
     first_batch = next(iter(train_dataloader))
     latents = first_batch["latents"]
-    inferred_video_length = latents.shape[0]
+    inferred_video_length = latents.shape[1]  # F dimension
     validation_data["video_length"] = min(24, inferred_video_length)
     print(f"[Validation] Using video_length={validation_data['video_length']}")
 
@@ -252,7 +258,8 @@ def main(
             for step, batch in enumerate(train_dataloader):
                 with accelerator.accumulate(unet):
                     latents = batch["latents"].to(accelerator.device, dtype=weight_dtype)
-                    latents = rearrange(latents, "f c h w -> 1 c f h w")  # add batch dim
+                    # (B,F,C,H,W) -> (B,C,F,H,W)
+                    latents = rearrange(latents, "b f c h w -> b c f h w")
                     noise = torch.randn_like(latents)
                     timesteps = torch.randint(
                         0, noise_scheduler.num_train_timesteps, (latents.size(0),), device=latents.device
