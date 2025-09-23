@@ -53,7 +53,7 @@ for idx in choices:
         for class_id in tqdm(range(40)):
             de_class_data = np.empty((0, 62, 5))
             psd_class_data = np.empty((0, 62, 5))
-            for i in range(5):
+            for i in range(1, 6):
                 seg = np.load(class_map[class_id][i])
                 # [400,62] → reshape to (62, 400)
                 seg = seg.T
