@@ -18,35 +18,8 @@ text_test_list = os.path.join(caption_root, "test_list.txt")
 
 os.makedirs(output_dir, exist_ok=True)
 
-# === IMPORT MODEL (authors’ transformer) ===
+# === IMPORT MODEL (our updated transformer) ===
 from train_seq2seq import MyTransformer
-
-# === PATCH FORWARD TO FIX DOUBLE EMBEDDING ===
-def forward_fixed(self, eeg, start_token):
-    b, n, c, t = eeg.shape
-    eeg = eeg.reshape(b*n, 1, c, t)
-    src = self.eeg_embedding(eeg).reshape(b, n, -1)  # [B,7,d_model]
-    src = self.positional_encoding(src)
-    enc_out = self.encoder(src)
-
-    # embed only the start token
-    new_tgt = start_token.reshape(b, 1, -1)
-    new_tgt = self.img_embedding(new_tgt)
-    new_tgt = self.positional_encoding(new_tgt)
-
-    # rollout in d_model space
-    for i in range(self.pred_frames):
-        tgt_mask = torch.nn.Transformer.generate_square_subsequent_mask(
-            new_tgt.size(1)
-        ).to(new_tgt.device)
-        dec_out = self.decoder(new_tgt, enc_out, tgt_mask=tgt_mask)
-        new_tgt = torch.cat((new_tgt, dec_out[:, -1:, :]), dim=1)
-
-    out = self.predictor(new_tgt[:, 1:])  # drop start token
-    out = out.reshape(b, self.pred_frames, 4, 36, 64)
-    return out
-
-MyTransformer.forward = forward_fixed
 
 # === LOAD MODEL ===
 checkpoint_path = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoint.pt"
@@ -91,7 +64,7 @@ b, f, c, h, w = video.shape
 zero_frame = torch.zeros((b,1,c,h,w), device=video.device)
 
 with torch.no_grad():
-    pred = model(eeg, zero_frame)  # [1,F,4,36,64]
+    pred = model.generate(eeg, zero_frame)  # autoregressive rollout [1,F,4,36,64]
 
 # === RANDOM BASELINE ===
 rand_latent = torch.randn_like(video)
