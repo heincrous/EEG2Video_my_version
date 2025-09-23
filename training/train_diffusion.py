@@ -60,10 +60,11 @@ class NPZVideoDataset(torch.utils.data.Dataset):
 def get_subject_files(bundle_root, subjects, split="train"):
     files = []
     for subj in subjects:
-        subj_dir = os.path.join(bundle_root, subj, split)
-        if os.path.isdir(subj_dir):
-            files.extend([os.path.join(subj_dir, f) for f in os.listdir(subj_dir) if f.endswith(".npz")])
-    return sorted(files)
+        fname = f"{subj}_{split}.npz"
+        fpath = os.path.join(bundle_root, fname)
+        if os.path.isfile(fpath):
+            files.append(fpath)
+    return files
 
 
 # ------------------------------
@@ -111,6 +112,7 @@ def main(
     use_8bit_adam: bool = False,
     enable_xformers_memory_efficient_attention: bool = False,
     seed: Optional[int] = None,
+    num_train_epochs: int = 200,
 ):
     *_, config = inspect.getargvalues(inspect.currentframe())
 
@@ -166,14 +168,15 @@ def main(
 
     # ---- Subject selection ----
     bundle_root = "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles"
-    all_subjects = sorted([d for d in os.listdir(bundle_root) if os.path.isdir(os.path.join(bundle_root, d))])
+    all_bundles = sorted([f for f in os.listdir(bundle_root) if f.endswith("_train.npz")])
+    all_subjects = [f.replace("_train.npz", "") for f in all_bundles]
 
     print("\nAvailable subjects:")
     for idx, subj in enumerate(all_subjects):
         print(f"{idx}: {subj}")
 
     choice = input("\nEnter subject indices (comma separated), 'all', or 'check': ").strip()
-    num_epochs = int(input("\nEnter number of epochs: "))
+    num_epochs = int(input("\nEnter number of epochs: ") or num_train_epochs)
 
     if choice.lower() == "check":
         test_subj = all_subjects[0]
