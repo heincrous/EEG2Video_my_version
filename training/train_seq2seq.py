@@ -153,17 +153,20 @@ class EEGVideoBundle(Dataset):
 def scale_subject(train_path, test_path):
     train_npz = np.load(train_path, allow_pickle=True)
     test_npz  = np.load(test_path, allow_pickle=True)
-    eeg_train = train_npz["EEG_windows"]
-    eeg_test  = test_npz["EEG_windows"]
+    eeg_train = train_npz["EEG_windows"]   # (N, 7, 62, 100)
+    eeg_test  = test_npz["EEG_windows"]    # (M, 7, 62, 100)
     vid_train = train_npz["Video_latents"]
     vid_test  = test_npz["Video_latents"]
+
+    # Flatten across windows and channels for scaling
     scaler = StandardScaler()
     eeg_flat = eeg_train.reshape(-1, 62*100)
     scaler.fit(eeg_flat)
-    eeg_train = scaler.transform(eeg_flat).reshape(eeg_train.shape)
-    eeg_test  = scaler.transform(eeg_test.reshape(-1, 62*100)).reshape(eeg_test.shape)
-    return eeg_train, vid_train, eeg_test, vid_test, scaler
 
+    eeg_train = scaler.transform(eeg_train.reshape(-1, 62*100)).reshape(eeg_train.shape)
+    eeg_test  = scaler.transform(eeg_test.reshape(-1, 62*100)).reshape(eeg_test.shape)
+
+    return eeg_train, vid_train, eeg_test, vid_test, scaler
 
 # ------------------------------------------------
 # Main training
@@ -183,6 +186,34 @@ if __name__ == "__main__":
 
     choice = input("\nEnter subject indices to process (comma separated) or 'all': ").strip()
     num_epochs = int(input("\nEnter number of epochs: ") or CONFIG["epochs"])
+
+    # ------------------------------------------------
+    # Quick dry-run check
+    # ------------------------------------------------
+    if choice.lower() == "check":
+        test_subj = subjects[0]
+        train_path = os.path.join(bundle_dir, f"{test_subj}_train.npz")
+        test_path  = os.path.join(bundle_dir, f"{test_subj}_test.npz")
+        eeg_train, vid_train, eeg_test, vid_test, scaler = scale_subject(train_path, test_path)
+
+        # Slice just a few samples
+        eeg_train, vid_train = eeg_train[:5], vid_train[:5]
+        train_loader = DataLoader(EEGVideoBundle(eeg_train, vid_train),
+                                batch_size=2, shuffle=True)
+
+        model = myTransformer(CONFIG).cuda()
+        loss_fn = CONFIG["loss_fn"]()
+
+        for eeg, video in train_loader:
+            eeg, video = eeg.cuda(), video.cuda()
+            out = model(eeg, video)
+            loss = loss_fn(video, out)
+            print("Dry run success, sample loss =", loss.item())
+        exit()
+
+    # ------------------------------------------------
+    # Full training
+    # ------------------------------------------------
 
     if choice.lower() == "all":
         print("\n=== Training on ALL subjects (per-subject normalization) ===")
