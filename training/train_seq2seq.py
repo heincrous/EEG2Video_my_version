@@ -36,6 +36,9 @@ CONFIG = {
     # Paths
     "bundle_dir": "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles/",
     "save_root": "/content/drive/MyDrive/EEG2Video_checkpoints/",
+
+    # Stable Diffusion VAE path
+    "vae_dir": "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4",
 }
 
 # ------------------------------------------------
