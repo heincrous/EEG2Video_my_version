@@ -333,6 +333,7 @@ negative = semantic_pred.mean(dim=0, keepdim=True)
 # ==========================================
 def run_inference():
     video = pipe(
+        model=None,
         eeg=semantic_pred,
         negative_eeg=negative,
         latents=None,   # no seq2seq latents yet
