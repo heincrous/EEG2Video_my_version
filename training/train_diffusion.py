@@ -35,15 +35,14 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 # NPZ Dataset
 # ------------------------------
 class NPZVideoDataset(torch.utils.data.Dataset):
-    def __init__(self, file_list, tokenizer):
+    def __init__(self, file_path, tokenizer):
         self.samples = []
         self.tokenizer = tokenizer
-        for f in file_list:
-            data = np.load(f, allow_pickle=True)
-            vids = data["Video_latents"]    # (N,F,C,H,W)
-            texts = data["BLIP_text"]       # (N,) list of captions
-            for i in range(len(vids)):
-                self.samples.append((vids[i], str(texts[i])))
+        data = np.load(file_path, allow_pickle=True)
+        vids = data["Video_latents"]    # (N,F,C,H,W)
+        texts = data["BLIP_text"]       # (N,) list of captions
+        for i in range(len(vids)):
+            self.samples.append((vids[i], str(texts[i])))
 
     def __len__(self):
         return len(self.samples)
@@ -61,16 +60,6 @@ class NPZVideoDataset(torch.utils.data.Dataset):
             "latents": torch.from_numpy(latents).float(),  # (F,C,H,W)
             "prompt_ids": prompt_ids,
         }
-
-
-def get_subject_files(bundle_root, subjects, split="train"):
-    files = []
-    for subj in subjects:
-        fname = f"{subj}_{split}.npz"
-        fpath = os.path.join(bundle_root, fname)
-        if os.path.isfile(fpath):
-            files.append(fpath)
-    return files
 
 
 # ------------------------------
@@ -118,7 +107,6 @@ def main(
     use_8bit_adam: bool = False,
     enable_xformers_memory_efficient_attention: bool = False,
     seed: Optional[int] = None,
-    num_train_epochs: int = 200,
 ):
     *_, config = inspect.getargvalues(inspect.currentframe())
 
@@ -172,40 +160,27 @@ def main(
         eps=adam_epsilon,
     )
 
-    # ---- Subject selection ----
+    # ---- Dataset ----
     bundle_root = "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles"
     all_bundles = sorted([f for f in os.listdir(bundle_root) if f.endswith("_train.npz")])
-    all_subjects = [f.replace("_train.npz", "") for f in all_bundles]
+    if not all_bundles:
+        raise FileNotFoundError("No *_train.npz found in SubjectBundles.")
+    first_file = os.path.join(bundle_root, all_bundles[0])
 
-    print("\nAvailable subjects:")
-    for idx, subj in enumerate(all_subjects):
-        print(f"{idx}: {subj}")
+    print(f"\nUsing dataset file: {first_file}")
+    mode = input("\nEnter 'check' for dry run or 'train' for full training: ").strip().lower()
+    num_epochs = int(input("\nEnter number of epochs: "))
 
-    choice = input("\nEnter subject indices (comma separated), 'all', or 'check': ").strip()
-    num_epochs = int(input("\nEnter number of epochs: ") or num_train_epochs)
+    dataset = NPZVideoDataset(first_file, tokenizer)
+    print(f"Loaded {len(dataset)} samples.")
 
-    if choice.lower() == "check":
-        test_subj = all_subjects[0]
-        files = get_subject_files(bundle_root, [test_subj], split="train")
-        dataset = NPZVideoDataset(files, tokenizer)
+    if mode == "check":
         sample = dataset[0]
         print("Dry run OK | Latents:", sample["latents"].shape, "| Prompt length:", sample["prompt_ids"].shape)
         sys.exit()
 
-    if choice.lower() == "all":
-        selected_subjects = all_subjects
-        save_tag = "all"
-    else:
-        selected_idx = [int(c.strip()) for c in choice.split(",") if c.strip().isdigit()]
-        selected_subjects = [all_subjects[i] for i in selected_idx]
-        save_tag = "_".join(selected_subjects)
-
-    train_files = get_subject_files(bundle_root, selected_subjects, split="train")
-    train_dataset = NPZVideoDataset(train_files, tokenizer)
-    print(f"Loaded {len(train_dataset)} samples from {len(selected_subjects)} subject(s)")
-
     train_dataloader = torch.utils.data.DataLoader(
-        train_dataset,
+        dataset,
         batch_size=train_batch_size,
         shuffle=True,
         num_workers=os.cpu_count(),
@@ -228,7 +203,7 @@ def main(
     # ---- Sanity check ----
     first_batch = next(iter(train_dataloader))
     latents = first_batch["latents"]
-    inferred_video_length = latents.shape[1]  # F dimension
+    inferred_video_length = latents.shape[1]
     validation_data["video_length"] = min(24, inferred_video_length)
     print(f"[Validation] Using video_length={validation_data['video_length']}")
 
@@ -258,7 +233,6 @@ def main(
             for step, batch in enumerate(train_dataloader):
                 with accelerator.accumulate(unet):
                     latents = batch["latents"].to(accelerator.device, dtype=weight_dtype)
-                    # (B,F,C,H,W) -> (B,C,F,H,W)
                     latents = rearrange(latents, "b f c h w -> b c f h w")
                     noise = torch.randn_like(latents)
                     timesteps = torch.randint(
@@ -288,10 +262,13 @@ def main(
         print(f"[Epoch {epoch}] Avg loss: {avg_loss:.6f} | LR: {current_lr:.2e}")
 
         if accelerator.is_main_process:
-            ckpt_path = os.path.join(save_root, f"diffusion_{save_tag}_epoch{epoch}.pt")
-            torch.save({"epoch": epoch,
-                        "state_dict": accelerator.unwrap_model(unet).state_dict()},
-                       ckpt_path)
+            ckpt_path = os.path.join(save_root, f"diffusion_epoch{epoch}.pt")
+            torch.save({
+                "epoch": epoch,
+                "unet": accelerator.unwrap_model(unet).state_dict(),
+                "vae": vae.state_dict(),
+                "text_encoder": text_encoder.state_dict(),
+            }, ckpt_path)
             print(f"Saved checkpoint: {ckpt_path}")
 
     accelerator.wait_for_everyone()
@@ -303,7 +280,7 @@ def main(
             vae=vae,
             unet=unet,
         )
-        pipeline.save_pretrained(os.path.join(save_root, f"pipeline_{save_tag}"))
+        pipeline.save_pretrained(os.path.join(save_root, "pipeline_final"))
 
     accelerator.end_training()
 
