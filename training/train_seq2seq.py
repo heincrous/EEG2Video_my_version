@@ -175,7 +175,7 @@ if __name__ == "__main__":
     criterion = nn.MSELoss()
     scaler = torch.cuda.amp.GradScaler()
 
-    for epoch in range(80):
+    for epoch in range(10):
         model.train()
         epoch_loss = 0
         for eeg, video in tqdm(dataloader, desc=f"Epoch {epoch+1}"):
