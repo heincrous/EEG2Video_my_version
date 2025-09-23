@@ -16,7 +16,7 @@ from add_noise import Diffusion
 drive_root            = "/content/drive/MyDrive/EEG2Video_data/processed"
 pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 finetuned_model_path  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final"
-semantic_ckpt_dir     = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
+semantic_ckpt_dir     = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor"
 seq2seq_ckpt_dir      = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoints"
 
 eeg_feat_list_path    = os.path.join(drive_root, "EEG_DE/test_list.txt")
@@ -199,3 +199,4 @@ selected_mode = modes[choice]
 print(f"\nRunning mode: {selected_mode}\n")
 
 run_inference(selected_mode)
+
