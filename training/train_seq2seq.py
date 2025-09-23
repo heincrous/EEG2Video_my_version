@@ -23,8 +23,8 @@ CONFIG = {
 
     # Transformer params
     "nhead": 4,
-    "encoder_layers": 2,
-    "decoder_layers": 4,
+    "encoder_layers": 2, # does not affect tensor shapes
+    "decoder_layers": 4, # does not affect tensor shapes
 
     # Training params
     "batch_size_all": 256,
