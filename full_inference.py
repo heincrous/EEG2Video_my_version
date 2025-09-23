@@ -232,6 +232,7 @@ finetuned_model_path  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_
 semantic_ckpt_dir     = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor"
 
 eeg_feat_list_path    = os.path.join(drive_root, "EEG_DE/test_list.txt")
+blip_text_root        = os.path.join(drive_root, "BLIP_text")
 
 output_dir            = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference"
 os.makedirs(output_dir, exist_ok=True)
@@ -304,6 +305,19 @@ with open(eeg_feat_list_path, "r") as f:
 eeg_feat_file = os.path.join(drive_root, "EEG_DE", eeg_feat_files[0])
 print("Chosen EEG feature file:", eeg_feat_file)
 
+# === Derive BLIP caption path ===
+parts = eeg_feat_files[0].split("/")  # e.g., sub1/Block1/class00_clip05.npy
+subj, block, fname = parts[0], parts[1], parts[2]
+blip_caption_path = os.path.join(blip_text_root, block, fname.replace(".npy", ".txt"))
+
+if os.path.exists(blip_caption_path):
+    with open(blip_caption_path, "r") as f:
+        blip_prompt = f.read().strip()
+else:
+    blip_prompt = "[Prompt not found]"
+print("Associated BLIP caption:", blip_prompt)
+print("BLIP caption file:", blip_caption_path)
+
 # === EEG feature for semantic predictor (apply scaler) ===
 eeg_feat = np.load(eeg_feat_file)   # (62,5)
 if eeg_feat.ndim == 2 and eeg_feat.shape == (62, 5):
@@ -330,8 +344,8 @@ def run_inference():
         model=None,
         eeg=semantic_pred,
         negative_eeg=negative,
-        latents=None,   # no seq2seq latents yet
-        video_length=6,
+        latents=None,
+        video_length=6,       # exactly 6 frames
         height=288,
         width=512,
         num_inference_steps=100,
@@ -340,7 +354,7 @@ def run_inference():
 
     print("Generated video tensor:", video.shape)
 
-    # Save MP4
+    # Save MP4 (3 fps → 2 sec total for 6 frames)
     frames = (video[0] * 255).clamp(0, 255).to(torch.uint8)
     frames = frames.permute(0, 2, 3, 1).cpu().numpy()
     if frames.shape[-1] > 3:
@@ -348,12 +362,15 @@ def run_inference():
     elif frames.shape[-1] == 1:
         frames = np.repeat(frames, 3, axis=-1)
 
-    mp4_path = os.path.join(output_dir, f"sample_eeg2video_semantic_only.mp4")
+    mp4_path = os.path.join(output_dir, "sample_eeg2video_semantic_only.mp4")
     writer = imageio.get_writer(mp4_path, fps=3, codec="libx264")
     for f in frames:
         writer.append_data(f)
     writer.close()
+
     print("Video saved to:", mp4_path)
+    print("EEG file:", eeg_feat_file)
+    print("Prompt:", blip_prompt)
 
 # ==========================================
 # Run now
