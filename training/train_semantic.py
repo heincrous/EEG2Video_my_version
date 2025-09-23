@@ -244,7 +244,7 @@ class EEGTextDataset(Dataset):
 if __name__ == "__main__":
     # === Paths ===
     bundle_dir = "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles"
-    save_root  = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor"
+    save_root  = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
     os.makedirs(save_root, exist_ok=True)
 
     # === Subject selection ===
