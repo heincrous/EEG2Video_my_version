@@ -65,7 +65,7 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x + self.pe[:, :x.size(1)])
 
 # -------------------------
-# Transformer
+# Transformer (teacher forcing during training)
 # -------------------------
 class MyTransformer(nn.Module):
     def __init__(self, d_model=512, pred_frames=24):
@@ -86,26 +86,44 @@ class MyTransformer(nn.Module):
         self.positional_encoding = PositionalEncoding(d_model, dropout=0.0)
         self.predictor = nn.Linear(d_model, 4 * 36 * 64)
 
-    def forward(self, eeg, start_token):
+    def forward(self, eeg, tgt):
         # eeg: [B,7,62,100]
+        # tgt: [B,F-1,4,36,64] (teacher forcing input)
         b, n, c, t = eeg.shape
         eeg = eeg.reshape(b*n, 1, c, t)
-        src = self.eeg_embedding(eeg).reshape(b, n, -1)  # [B,7,d_model]
+        src = self.eeg_embedding(eeg).reshape(b, n, -1)
         src = self.positional_encoding(src)
         enc_out = self.encoder(src)
 
-        # start_token: [B,1,4,36,64] (usually zero frame)
-        new_tgt = start_token.reshape(b, 1, -1)  # flatten
+        tgt = tgt.reshape(b, tgt.shape[1], -1)  # flatten frames
+        tgt = self.img_embedding(tgt)
+        tgt = self.positional_encoding(tgt)
+
+        tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt.size(1)).to(tgt.device)
+        dec_out = self.decoder(tgt, enc_out, tgt_mask=tgt_mask)
+
+        out = self.predictor(dec_out)
+        out = out.reshape(b, tgt.shape[1], 4, 36, 64)
+        return out
+
+    def generate(self, eeg, start_token):
+        """Autoregressive rollout for inference"""
+        b, n, c, t = eeg.shape
+        eeg = eeg.reshape(b*n, 1, c, t)
+        src = self.eeg_embedding(eeg).reshape(b, n, -1)
+        src = self.positional_encoding(src)
+        enc_out = self.encoder(src)
+
+        new_tgt = start_token.reshape(b, 1, -1)
         new_tgt = self.img_embedding(new_tgt)
         new_tgt = self.positional_encoding(new_tgt)
 
-        # rollout exactly F frames
         for i in range(self.pred_frames):
             tgt_mask = nn.Transformer.generate_square_subsequent_mask(new_tgt.size(1)).to(new_tgt.device)
             dec_out = self.decoder(new_tgt, enc_out, tgt_mask=tgt_mask)
             new_tgt = torch.cat((new_tgt, dec_out[:, -1:, :]), dim=1)
 
-        out = self.predictor(new_tgt[:, 1:])  # drop the start token
+        out = self.predictor(new_tgt[:, 1:])
         out = out.reshape(b, self.pred_frames, 4, 36, 64)
         return out
 
@@ -122,7 +140,7 @@ class EEGVideoDataset(Dataset):
         eeg_all = []
         for rel_path in self.eeg_files:
             abs_path = os.path.join(self.base_dir, "EEG_windows", rel_path)
-            eeg = np.load(abs_path)  # [7,62,100]
+            eeg = np.load(abs_path)
             eeg_all.append(eeg.reshape(-1, 100))
         eeg_all = np.vstack(eeg_all)
         self.scaler = StandardScaler().fit(eeg_all)
@@ -130,7 +148,7 @@ class EEGVideoDataset(Dataset):
         vid_all = []
         for rel_path in self.video_files:
             abs_path = os.path.join(self.base_dir, "Video_latents", rel_path)
-            vid = np.load(abs_path)  # [F,4,36,64]
+            vid = np.load(abs_path)
             vid_all.append(vid.reshape(-1, 4*36*64))
         vid_all = np.vstack(vid_all)
         self.latent_scaler = StandardScaler().fit(vid_all)
@@ -160,7 +178,6 @@ class EEGVideoDataset(Dataset):
         eeg = torch.tensor(eeg, dtype=torch.float32)
         video = torch.tensor(video, dtype=torch.float32)
 
-        # random debug print (~1 in 1000 samples)
         if self.debug and random.random() < 0.001:
             print(f"[DEBUG ALIGNMENT] eeg={self.eeg_files[idx]} | video={self.video_files[idx]}")
 
@@ -176,9 +193,8 @@ if __name__ == "__main__":
     vid_train_list = os.path.join(drive_root, "Video_latents/train_list_dup.txt")
 
     dataset = EEGVideoDataset(eeg_train_list, vid_train_list, debug=True)
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=2)
+    dataloader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=2)
 
-    # assume all videos have same length F (e.g., 24)
     sample_vid = np.load(os.path.join(drive_root, "Video_latents", dataset.video_files[0]))
     pred_frames = sample_vid.shape[0]
 
@@ -193,27 +209,26 @@ if __name__ == "__main__":
         for eeg, video in tqdm(dataloader, desc=f"Epoch {epoch+1}"):
             eeg, video = eeg.cuda(), video.cuda()
 
-            # create start token (zero frame)
-            b, f, c, h, w = video.shape
-            zero_frame = torch.zeros((b,1,c,h,w), device=video.device)
+            # teacher forcing: input all but last frame, predict next frames
+            input_frames = video[:, :-1]
+            target_frames = video[:, 1:]
 
             optimizer.zero_grad()
-            out = model(eeg, zero_frame)
-            loss = criterion(out, video)
+            out = model(eeg, input_frames)  # [B,F-1,4,36,64]
+            loss = criterion(out, target_frames)
             loss.backward()
             optimizer.step()
             scheduler.step()
             epoch_loss += loss.item()
 
-        # report coverage
         print(f"Epoch {epoch+1}, Loss={epoch_loss/len(dataloader):.6f}")
-        print(f"[COVERAGE] batches: {len(dataloader)}, samples this epoch: {len(dataset)}")
 
         with torch.no_grad():
             eeg, video = next(iter(dataloader))
             eeg, video = eeg.cuda(), video.cuda()
-            zero_frame = torch.zeros((video.size(0),1,video.size(2),video.size(3),video.size(4)), device=video.device)
-            pred = model(eeg, zero_frame)
+            b, f, c, h, w = video.shape
+            zero_frame = torch.zeros((b,1,c,h,w), device=video.device)
+            pred = model.generate(eeg, zero_frame)
 
             print("[DEBUG] GT latents: mean {:.4f}, std {:.4f}".format(video.mean().item(), video.std().item()))
             print("[DEBUG] Predicted : mean {:.4f}, std {:.4f}".format(pred.mean().item(), pred.std().item()))
