@@ -22,9 +22,9 @@ CONFIG = {
     "cross_subject": False,
 
     # Transformer params
-    "nhead": 8,
-    "encoder_layers": 3,
-    "decoder_layers": 6,
+    "nhead": 4,
+    "encoder_layers": 2,
+    "decoder_layers": 4,
 
     # Training params
     "batch_size_all": 256,
