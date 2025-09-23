@@ -184,7 +184,7 @@ if __name__ == "__main__":
     for idx, subj in enumerate(subjects):
         print(f"{idx}: {subj}")
 
-    choice = input("\nEnter subject indices to process (comma separated) or 'all': ").strip()
+    choice = input("\nEnter subject indices to process (comma separated) or 'all' or 'check': ").strip()
     num_epochs = int(input("\nEnter number of epochs: ") or CONFIG["epochs"])
 
     # ------------------------------------------------
