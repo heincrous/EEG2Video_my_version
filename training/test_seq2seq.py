@@ -11,7 +11,7 @@ drive_root   = "/content/drive/MyDrive/EEG2Video_data/processed"
 output_dir   = "/content/drive/MyDrive/EEG2Video_outputs/test_seq2seq"
 vae_path     = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4/vae"
 caption_root = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text"
-scaler_path  = "/content/drive/MyDrive/EEG2Video_checkpoints/latent_scaler.pkl"  # <-- saved during training
+scaler_path  = "/content/drive/MyDrive/EEG2Video_checkpoints/latent_scaler.pkl"
 
 eeg_test_list  = os.path.join(drive_root, "EEG_windows/test_list.txt")
 vid_test_list  = os.path.join(drive_root, "Video_latents/test_list_dup.txt")
@@ -19,10 +19,9 @@ text_test_list = os.path.join(caption_root, "test_list.txt")
 
 os.makedirs(output_dir, exist_ok=True)
 
-# === IMPORT MODEL (our updated transformer) ===
+# === IMPORT MODEL ===
 from train_seq2seq import MyTransformer
 
-# === LOAD MODEL ===
 checkpoint_path = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoint.pt"
 model = MyTransformer(pred_frames=24).cuda()
 ckpt = torch.load(checkpoint_path, map_location="cuda")
@@ -33,7 +32,7 @@ model.eval()
 vae = AutoencoderKL.from_pretrained(vae_path).cuda()
 vae.eval()
 
-# === LOAD SCALER (for denormalization) ===
+# === LOAD SCALER ===
 latent_scaler = joblib.load(scaler_path)
 
 # === PICK RANDOM TEST SAMPLE ===
@@ -50,7 +49,7 @@ vid_path = os.path.join(drive_root, "Video_latents", vid_files[idx])
 txt_path = txt_files[idx % len(txt_files)]
 
 eeg = np.load(eeg_path)   # [7,62,100]
-video = np.load(vid_path) # [F,4,36,64]
+video = np.load(vid_path) # [24,4,36,64]
 with open(txt_path, "r") as f:
     caption_text = f.read().strip()
 
@@ -60,15 +59,15 @@ print("Chosen caption file:", txt_path)
 print("Caption text:", caption_text)
 
 # === PREP TENSORS ===
-eeg   = torch.tensor(eeg, dtype=torch.float32).unsqueeze(0).cuda()    # [1,7,62,100]
-video = torch.tensor(video, dtype=torch.float32).unsqueeze(0).cuda()  # [1,F,4,36,64]
+eeg   = torch.tensor(eeg, dtype=torch.float32).unsqueeze(0).cuda()
+video = torch.tensor(video, dtype=torch.float32).unsqueeze(0).cuda()
 
 # prepend zero frame as start token
 b, f, c, h, w = video.shape
 zero_frame = torch.zeros((b,1,c,h,w), device=video.device)
 
 with torch.no_grad():
-    pred = model.generate(eeg, zero_frame)  # autoregressive rollout [1,F,4,36,64]
+    pred = model.generate(eeg, zero_frame)  # should output [1,24,4,36,64]
 
 # === RANDOM BASELINE ===
 rand_latent = torch.randn_like(video)
@@ -97,11 +96,9 @@ print("Model vs GT:", mse_ssim(pred, video))
 print("Random vs GT:", mse_ssim(rand_latent, video))
 print("Shuffled vs GT:", mse_ssim(shuffle_latent, video))
 
-# === DECODE & SAVE MP4s (with denormalization) ===
+# === DECODE & SAVE MP4s ===
 def decode_and_save(latents, name):
-    latents = latents.squeeze(0).cpu().numpy()  # [F,4,36,64]
-
-    # --- DENORMALIZE ---
+    latents = latents.squeeze(0).cpu().numpy()  # [24,4,36,64]
     f, ch, h, w = latents.shape
     latents = latents.reshape(f, -1)
     latents = latent_scaler.inverse_transform(latents)
@@ -121,7 +118,7 @@ def decode_and_save(latents, name):
 
     mp4_name = os.path.splitext(os.path.basename(vid_path))[0] + f"_{frames.shape[0]}f_{name}.mp4"
     mp4_path = os.path.join(output_dir, mp4_name)
-    writer = imageio.get_writer(mp4_path, fps=24, codec="libx264")
+    writer = imageio.get_writer(mp4_path, fps=12, codec="libx264")
     for f in frames:
         writer.append_data(f)
     writer.close()
