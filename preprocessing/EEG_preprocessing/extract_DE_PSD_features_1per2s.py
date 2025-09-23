@@ -44,8 +44,8 @@ for idx in choices:
         class_map = {}
         for f in classes:
             parts = f.replace(".npy", "").split("_")
-            class_id = int(parts[1].replace("class", ""))
-            clip_id = int(parts[2].replace("clip", ""))
+            class_id = int(parts[0].replace("class", ""))
+            clip_id = int(parts[1].replace("clip", ""))
             if class_id not in class_map:
                 class_map[class_id] = {}
             class_map[class_id][clip_id] = os.path.join(block_path, f)
