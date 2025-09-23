@@ -15,7 +15,6 @@ test_text_list        = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_te
 blip_text_root        = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text"
 save_dir              = os.path.join(trained_output_dir, "test_diffusion")
 
-# ensure dirs exist
 os.makedirs(trained_output_dir, exist_ok=True)
 os.makedirs(save_dir, exist_ok=True)
 
@@ -50,9 +49,9 @@ print("Caption text:", prompt_text)
 # === GENERATE VIDEO ===
 generator = torch.Generator(device="cuda").manual_seed(42)
 
-# target 48 frames (2 seconds @ 24fps); fallback = 24 frames if VRAM is low
-video_length = 48   # set to 24 if out of memory
-fps = 24            # match dataset timing
+# must match training setup → capped to 8 frames
+video_length = 8
+fps = 24
 
 result = pipe(
     prompt_text,
