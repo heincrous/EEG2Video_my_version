@@ -208,7 +208,10 @@ if __name__ == "__main__":
 
             optimizer.zero_grad()
             out = model(eeg, input_frames)  # [B,24,4,36,64]
-            loss = criterion(out[:, 1:], video)  # predict frames 1..24
+
+            # FIX: use all frames for loss (no slicing)
+            loss = criterion(out, video)
+
             loss.backward()
             optimizer.step()
             scheduler.step()
