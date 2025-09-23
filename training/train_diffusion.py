@@ -65,7 +65,7 @@ class NPZVideoDataset(torch.utils.data.Dataset):
 # ------------------------------
 # Helper: Batched VAE encoding
 # ------------------------------
-def encode_frames_in_batches(vae, pixel_values, video_length, batch_size=4):
+def encode_frames_in_batches(vae, pixel_values, video_length, batch_size=64):
     all_latents = []
     for i in range(0, pixel_values.shape[0], batch_size):
         batch = pixel_values[i:i+batch_size]
@@ -88,7 +88,7 @@ def main(
         "attn2.to_q",
         "attn_temp",
     ),
-    train_batch_size: int = 1,
+    train_batch_size: int = 64,
     max_train_steps: int = 1200000,
     learning_rate: float = 3e-5,
     scale_lr: bool = False,
@@ -290,7 +290,7 @@ if __name__ == "__main__":
         pretrained_model_path="/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4",
         output_dir="/content/drive/MyDrive/EEG2Video_outputs",
         validation_data=dict(prompts=None, num_inv_steps=20, use_inv_latent=False),
-        train_batch_size=1,
+        train_batch_size=64,
         learning_rate=3e-5,
         mixed_precision="fp16",
         gradient_accumulation_steps=4,

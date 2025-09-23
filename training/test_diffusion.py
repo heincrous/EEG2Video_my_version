@@ -27,11 +27,11 @@ torch.cuda.empty_cache()
 
 # === LOAD TRAINED PIPELINE WITH FP16 ===
 pipe = TuneAVideoPipeline(
-    vae=AutoencoderKL.from_pretrained(trained_output_dir, subfolder="vae", torch_dtype=torch.float16),
-    text_encoder=CLIPTextModel.from_pretrained(trained_output_dir, subfolder="text_encoder", torch_dtype=torch.float16),
-    tokenizer=CLIPTokenizer.from_pretrained(trained_output_dir, subfolder="tokenizer"),
+    vae=AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae", torch_dtype=torch.float16),
+    text_encoder=CLIPTextModel.from_pretrained(pretrained_model_path, subfolder="text_encoder", torch_dtype=torch.float16),
+    tokenizer=CLIPTokenizer.from_pretrained(pretrained_model_path, subfolder="tokenizer"),
     unet=UNet3DConditionModel.from_pretrained_2d(trained_output_dir, subfolder="unet"),
-    scheduler=DDIMScheduler.from_pretrained(trained_output_dir, subfolder="scheduler"),
+    scheduler=DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler"),
 )
 pipe.unet.to(torch.float16)
 pipe.enable_vae_slicing()
@@ -46,7 +46,6 @@ with open(prompt_path, "r") as pf:
     prompt_text = pf.read().strip()
 
 print("Chosen prompt file:", prompt_path)
-print("Caption text:", prompt_text)
 
 # === GENERATE VIDEO ===
 generator = torch.Generator(device="cuda").manual_seed(42)
@@ -68,8 +67,8 @@ video_tensor = result.videos
 print("Result.videos shape:", video_tensor.shape)
 
 # === SAVE MP4 ===
-frames = (video_tensor[0] * 255).clamp(0, 255).to(torch.uint8)  # [f, c, h, w]
-frames = frames.permute(0, 2, 3, 1).cpu().numpy()               # [f, h, w, c]
+frames = (video_tensor[0] * 255).clamp(0, 255).to(torch.uint8)
+frames = rearrange(frames, 'c f h w -> f h w c').cpu().numpy()
 
 if frames.shape[-1] > 3:
     frames = frames[..., :3]
