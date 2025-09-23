@@ -13,26 +13,6 @@ modalities = {
     "BLIP_text": ".txt"
 }
 
-# ------------------------------------------------
-# Helpers
-# ------------------------------------------------
-def ensure_dir(path):
-    if not os.path.exists(path):
-        os.makedirs(path)
-
-def get_split(clip_id):
-    # clip_id is 1–5
-    return "train" if clip_id < 5 else "test"
-
-def parse_clip(relpath):
-    """Return (block, class, clip_id) from a relative path"""
-    parts = relpath.split("/")
-    fname = parts[-1]
-    block = [p for p in parts if p.startswith("Block")][0]
-    class_id = int(fname.split("_")[0].replace("class", ""))
-    clip_id = int(fname.split("_")[1].replace("clip", "").split(".")[0])
-    return block, class_id, clip_id
-
 def collect_files(in_dir, ext):
     files = []
     for root, _, fnames in os.walk(in_dir):
@@ -42,21 +22,24 @@ def collect_files(in_dir, ext):
                 files.append(rel)
     return sorted(files)
 
+def get_split_from_name(fname):
+    """Decide train/test by clip id in filename (classXX_clipYY.*)"""
+    parts = fname.split("_")
+    clip_id = int(parts[1].replace("clip", "").split(".")[0])
+    return "train" if clip_id < 5 else "test"
+
 def write_list(path, items):
     with open(path, "w") as f:
         f.write("\n".join(items))
 
-# ------------------------------------------------
-# Main split per modality
-# ------------------------------------------------
 for mod, ext in modalities.items():
     in_dir = os.path.join(base_dir, mod)
     files = collect_files(in_dir, ext)
 
     train_list, test_list = [], []
     for rel in tqdm(files, desc=mod):
-        block, class_id, clip_id = parse_clip(rel)
-        split = get_split(clip_id)
+        fname = os.path.basename(rel)
+        split = get_split_from_name(fname)
         if split == "train":
             train_list.append(rel)
         else:
@@ -67,4 +50,4 @@ for mod, ext in modalities.items():
 
     print(f"[{mod}] train={len(train_list)} test={len(test_list)}")
 
-print("\nSplitting complete. All modalities aligned by Block/Class/Clip.")
+print("\nSplitting complete. Train/test lists created for all modalities.")
