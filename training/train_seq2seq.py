@@ -203,7 +203,7 @@ if __name__ == "__main__":
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200*len(dataloader))
     criterion = nn.MSELoss()
 
-    for epoch in range(10):
+    for epoch in range(40):
         model.train()
         epoch_loss = 0
         for eeg, video in tqdm(dataloader, desc=f"Epoch {epoch+1}"):
