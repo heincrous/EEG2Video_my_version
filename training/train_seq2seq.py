@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader, Dataset
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 import random
+import pickle
 
 # -------------------------
 # EEG Encoder
@@ -14,7 +15,6 @@ class MyEEGNet_embedding(nn.Module):
     def __init__(self, d_model=128, C=62, T=100, F1=16, D=4, F2=16, cross_subject=False):
         super(MyEEGNet_embedding, self).__init__()
         self.drop_out = 0.25 if cross_subject else 0.5
-
         self.block_1 = nn.Sequential(
             nn.ZeroPad2d((31, 32, 0, 0)),
             nn.Conv2d(1, F1, (1, 64), bias=False),
@@ -60,12 +60,11 @@ class PositionalEncoding(nn.Module):
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(0)
         self.register_buffer("pe", pe)
-
     def forward(self, x):
         return self.dropout(x + self.pe[:, :x.size(1)])
 
 # -------------------------
-# Transformer (teacher forcing during training)
+# Transformer
 # -------------------------
 class MyTransformer(nn.Module):
     def __init__(self, d_model=512, pred_frames=24):
@@ -87,15 +86,13 @@ class MyTransformer(nn.Module):
         self.predictor = nn.Linear(d_model, 4 * 36 * 64)
 
     def forward(self, eeg, tgt):
-        # eeg: [B,7,62,100]
-        # tgt: [B,F-1,4,36,64] (teacher forcing input)
         b, n, c, t = eeg.shape
         eeg = eeg.reshape(b*n, 1, c, t)
         src = self.eeg_embedding(eeg).reshape(b, n, -1)
         src = self.positional_encoding(src)
         enc_out = self.encoder(src)
 
-        tgt = tgt.reshape(b, tgt.shape[1], -1)  # flatten frames
+        tgt = tgt.reshape(b, tgt.shape[1], -1)
         tgt = self.img_embedding(tgt)
         tgt = self.positional_encoding(tgt)
 
@@ -107,7 +104,6 @@ class MyTransformer(nn.Module):
         return out
 
     def generate(self, eeg, start_token):
-        """Autoregressive rollout for inference"""
         b, n, c, t = eeg.shape
         eeg = eeg.reshape(b*n, 1, c, t)
         src = self.eeg_embedding(eeg).reshape(b, n, -1)
@@ -118,7 +114,7 @@ class MyTransformer(nn.Module):
         new_tgt = self.img_embedding(new_tgt)
         new_tgt = self.positional_encoding(new_tgt)
 
-        for i in range(self.pred_frames):
+        for _ in range(self.pred_frames):
             tgt_mask = nn.Transformer.generate_square_subsequent_mask(new_tgt.size(1)).to(new_tgt.device)
             dec_out = self.decoder(new_tgt, enc_out, tgt_mask=tgt_mask)
             new_tgt = torch.cat((new_tgt, dec_out[:, -1:, :]), dim=1)
@@ -128,10 +124,10 @@ class MyTransformer(nn.Module):
         return out
 
 # -------------------------
-# Dataset
+# Dataset with normalization
 # -------------------------
 class EEGVideoDataset(Dataset):
-    def __init__(self, eeg_list, video_list, base_dir="/content/drive/MyDrive/EEG2Video_data/processed", debug=False):
+    def __init__(self, eeg_list, video_list, base_dir, debug=False):
         self.base_dir = base_dir
         self.eeg_files = [l.strip() for l in open(eeg_list).readlines()]
         self.video_files = [l.strip() for l in open(video_list).readlines()]
@@ -163,13 +159,15 @@ class EEGVideoDataset(Dataset):
         vid_path = os.path.join(self.base_dir, "Video_latents", self.video_files[idx])
 
         eeg = np.load(eeg_path)      # [7,62,100]
-        video = np.load(vid_path)    # [F,4,36,64]
+        video = np.load(vid_path)    # [24,4,36,64]
 
+        # normalize EEG
         b, c, t = eeg.shape
         eeg = eeg.reshape(-1, t)
         eeg = self.scaler.transform(eeg)
         eeg = eeg.reshape(b, c, t)
 
+        # normalize video latents
         f, ch, h, w = video.shape
         video = video.reshape(-1, ch*h*w)
         video = self.latent_scaler.transform(video)
@@ -177,9 +175,6 @@ class EEGVideoDataset(Dataset):
 
         eeg = torch.tensor(eeg, dtype=torch.float32)
         video = torch.tensor(video, dtype=torch.float32)
-
-        if self.debug and random.random() < 0.001:
-            print(f"[DEBUG ALIGNMENT] eeg={self.eeg_files[idx]} | video={self.video_files[idx]}")
 
         return eeg, video
 
@@ -192,13 +187,10 @@ if __name__ == "__main__":
     eeg_train_list = os.path.join(drive_root, "EEG_windows/train_list.txt")
     vid_train_list = os.path.join(drive_root, "Video_latents/train_list_dup.txt")
 
-    dataset = EEGVideoDataset(eeg_train_list, vid_train_list, debug=True)
+    dataset = EEGVideoDataset(eeg_train_list, vid_train_list, base_dir=drive_root, debug=True)
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=2)
 
-    sample_vid = np.load(os.path.join(drive_root, "Video_latents", dataset.video_files[0]))
-    pred_frames = sample_vid.shape[0]
-
-    model = MyTransformer(d_model=512, pred_frames=pred_frames).cuda()
+    model = MyTransformer(d_model=512, pred_frames=24).cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200*len(dataloader))
     criterion = nn.MSELoss()
@@ -209,13 +201,14 @@ if __name__ == "__main__":
         for eeg, video in tqdm(dataloader, desc=f"Epoch {epoch+1}"):
             eeg, video = eeg.cuda(), video.cuda()
 
-            # teacher forcing: input all but last frame, predict next frames
-            input_frames = video[:, :-1]
-            target_frames = video[:, 1:]
+            # prepend zero frame for teacher forcing
+            b, f, c, h, w = video.shape
+            zero_frame = torch.zeros((b,1,c,h,w), device=video.device)
+            input_frames = torch.cat([zero_frame, video[:, :-1]], dim=1)  # [B,24,4,36,64]
 
             optimizer.zero_grad()
-            out = model(eeg, input_frames)  # [B,F-1,4,36,64]
-            loss = criterion(out, target_frames)
+            out = model(eeg, input_frames)  # [B,24,4,36,64]
+            loss = criterion(out[:, 1:], video)  # predict frames 1..24
             loss.backward()
             optimizer.step()
             scheduler.step()
@@ -223,16 +216,27 @@ if __name__ == "__main__":
 
         print(f"Epoch {epoch+1}, Loss={epoch_loss/len(dataloader):.6f}")
 
+        # quick sanity check
         with torch.no_grad():
             eeg, video = next(iter(dataloader))
             eeg, video = eeg.cuda(), video.cuda()
             b, f, c, h, w = video.shape
             zero_frame = torch.zeros((b,1,c,h,w), device=video.device)
             pred = model.generate(eeg, zero_frame)
-
             print("[DEBUG] GT latents: mean {:.4f}, std {:.4f}".format(video.mean().item(), video.std().item()))
             print("[DEBUG] Predicted : mean {:.4f}, std {:.4f}".format(pred.mean().item(), pred.std().item()))
 
-    save_path = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoint.pt"
-    torch.save({"state_dict": model.state_dict()}, save_path)
-    print("Model saved to:", save_path)
+    # -------------------------
+    # Save model + scalers
+    # -------------------------
+    save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints"
+    os.makedirs(save_dir, exist_ok=True)
+
+    torch.save({"state_dict": model.state_dict()}, os.path.join(save_dir, "seq2seq_checkpoint.pt"))
+
+    with open(os.path.join(save_dir, "eeg_scaler.pkl"), "wb") as f:
+        pickle.dump(dataset.scaler, f)
+    with open(os.path.join(save_dir, "latent_scaler.pkl"), "wb") as f:
+        pickle.dump(dataset.latent_scaler, f)
+
+    print("Model + scalers saved to:", save_dir)

@@ -1,4 +1,4 @@
-import os, sys, random, torch, imageio
+import os, sys, random, torch, imageio, joblib
 import numpy as np
 from einops import rearrange
 from tqdm import tqdm
@@ -11,6 +11,7 @@ drive_root   = "/content/drive/MyDrive/EEG2Video_data/processed"
 output_dir   = "/content/drive/MyDrive/EEG2Video_outputs/test_seq2seq"
 vae_path     = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4/vae"
 caption_root = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text"
+scaler_path  = "/content/drive/MyDrive/EEG2Video_checkpoints/latent_scaler.pkl"  # <-- saved during training
 
 eeg_test_list  = os.path.join(drive_root, "EEG_windows/test_list.txt")
 vid_test_list  = os.path.join(drive_root, "Video_latents/test_list_dup.txt")
@@ -23,7 +24,7 @@ from train_seq2seq import MyTransformer
 
 # === LOAD MODEL ===
 checkpoint_path = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoint.pt"
-model = MyTransformer().cuda()
+model = MyTransformer(pred_frames=24).cuda()
 ckpt = torch.load(checkpoint_path, map_location="cuda")
 model.load_state_dict(ckpt["state_dict"])
 model.eval()
@@ -31,6 +32,9 @@ model.eval()
 # === LOAD VAE ===
 vae = AutoencoderKL.from_pretrained(vae_path).cuda()
 vae.eval()
+
+# === LOAD SCALER (for denormalization) ===
+latent_scaler = joblib.load(scaler_path)
 
 # === PICK RANDOM TEST SAMPLE ===
 with open(eeg_test_list) as f:
@@ -93,18 +97,28 @@ print("Model vs GT:", mse_ssim(pred, video))
 print("Random vs GT:", mse_ssim(rand_latent, video))
 print("Shuffled vs GT:", mse_ssim(shuffle_latent, video))
 
-# === DECODE & SAVE MP4s ===
+# === DECODE & SAVE MP4s (with denormalization) ===
 def decode_and_save(latents, name):
-    latents = latents.squeeze(0) / 0.18215  # scale back to VAE space
+    latents = latents.squeeze(0).cpu().numpy()  # [F,4,36,64]
+
+    # --- DENORMALIZE ---
+    f, ch, h, w = latents.shape
+    latents = latents.reshape(f, -1)
+    latents = latent_scaler.inverse_transform(latents)
+    latents = latents.reshape(f, ch, h, w)
+
+    latents = torch.tensor(latents, dtype=torch.float32).unsqueeze(0).cuda() / 0.18215
+
     frames = []
     with torch.no_grad():
-        for i in range(latents.shape[0]):
-            frame = vae.decode(latents[i:i+1]).sample
+        for i in range(latents.shape[1]):
+            frame = vae.decode(latents[:, i]).sample
             frame = (frame.clamp(-1,1) + 1) / 2
             frame = (frame * 255).cpu().numpy().astype(np.uint8)
             frame = rearrange(frame, "b c h w -> h w c b")[...,0]
             frames.append(frame)
     frames = np.stack(frames)
+
     mp4_name = os.path.splitext(os.path.basename(vid_path))[0] + f"_{frames.shape[0]}f_{name}.mp4"
     mp4_path = os.path.join(output_dir, mp4_name)
     writer = imageio.get_writer(mp4_path, fps=24, codec="libx264")
