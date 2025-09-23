@@ -173,7 +173,7 @@ def main(
         print(f"{idx}: {subj}")
 
     choice = input("\nEnter subject indices (comma separated), 'all', or 'check': ").strip()
-    num_epochs = int(input("\nEnter number of epochs: ") or num_train_epochs)
+    num_epochs = int(input("\nEnter number of epochs: "))
 
     if choice.lower() == "check":
         test_subj = all_subjects[0]
