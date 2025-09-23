@@ -6,14 +6,16 @@ from transformers import CLIPTextModel, CLIPTokenizer
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(os.path.join(repo_root, "pipelines"))
 from pipeline_tuneavideo import TuneAVideoPipeline
+
+sys.path.append(os.path.join(repo_root, "core_files"))
 from unet import UNet3DConditionModel
 
 # === DIRECTORIES ===
 pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
-trained_output_dir    = "/content/drive/MyDrive/EEG2Video_outputs"
+trained_output_dir    = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final"
 test_text_list        = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/test_list.txt"
 blip_text_root        = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text"
-save_dir              = os.path.join(trained_output_dir, "test_diffusion")
+save_dir              = "/content/drive/MyDrive/EEG2Video_outputs/test_diffusion"
 
 os.makedirs(trained_output_dir, exist_ok=True)
 os.makedirs(save_dir, exist_ok=True)
@@ -58,7 +60,7 @@ result = pipe(
     video_length=video_length,
     width=512,
     height=288,
-    num_inference_steps=20,
+    num_inference_steps=100,
     generator=generator,
 )
 
