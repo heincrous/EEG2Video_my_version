@@ -5,7 +5,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import joblib
-from einops import rearrange
 import imageio
 from diffusers.models import AutoencoderKL
 
@@ -69,13 +68,13 @@ class myTransformer(nn.Module):
             new_tgt.shape[0],new_tgt.shape[1],4,36,64)
 
 # ------------------------------------------------
-# Inference
+# Inference using bundled .npz
 # ------------------------------------------------
 if __name__ == "__main__":
-    base_dir = "/content/drive/MyDrive/EEG2Video_data/processed/"
-    ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoints/"
-    out_dir = "/content/drive/MyDrive/EEG2Video_outputs/test_seq2seq/"
-    vae_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
+    bundle_dir = "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles/"
+    ckpt_dir   = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoints/"
+    out_dir    = "/content/drive/MyDrive/EEG2Video_outputs/test_seq2seq/"
+    vae_dir    = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
     os.makedirs(out_dir, exist_ok=True)
 
     # list checkpoints
@@ -99,25 +98,30 @@ if __name__ == "__main__":
     model.load_state_dict(state['state_dict'])
     model.eval()
 
-    # pick a test EEG file
-    with open(os.path.join(base_dir,"EEG_windows/test_list.txt")) as f:
-        eeg_test_all = [l.strip() for l in f]
-    eeg_files = [e for e in eeg_test_all if e.startswith(subj)]
-    eeg_file = random.choice(eeg_files)
-    print(f"Testing with {eeg_file}")
+    # load subject test bundle
+    test_path = os.path.join(bundle_dir, f"{subj}_test.npz")
+    data = np.load(test_path, allow_pickle=True)
+    eeg_all = data["EEG_windows"]     # [N,7,62,100]
+    blip_text = data["BLIP_text"]     # [N]
 
-    eeg = np.load(os.path.join(base_dir,"EEG_windows",eeg_file))
+    # pick random sample
+    idx = random.randint(0, len(eeg_all)-1)
+    eeg = eeg_all[idx]
+    caption = blip_text[idx]
+    print(f"Testing sample {idx} from {subj}")
+    print(f"Ground-truth caption: {caption}")
+
+    # scale EEG
     eeg_flat = scaler.transform(eeg.reshape(-1,62*100))
     eeg = eeg_flat.reshape(eeg.shape)
     eeg = torch.from_numpy(eeg).unsqueeze(0).float().cuda()  # [1,7,62,100]
 
     # dummy tgt of zeros for autoregressive decoding
-    b = 1
-    padded_video = torch.zeros((b,1,4,36,64)).cuda()
+    padded_video = torch.zeros((1,1,4,36,64)).cuda()
     _, pred_latents = model(eeg, padded_video)
     pred_latents = pred_latents[:,1:,:,:,:].squeeze(0).cpu().detach().numpy()  # [6,4,36,64]
 
-    # decode latents with VAE (local version from Drive)
+    # decode latents with VAE
     vae = AutoencoderKL.from_pretrained(vae_dir, subfolder="vae").cuda()
     latents_t = torch.from_numpy(pred_latents).float().cuda()
     latents_t = latents_t / 0.18215
@@ -128,13 +132,6 @@ if __name__ == "__main__":
     frames = frames.astype(np.uint8)
 
     # save mp4
-    class_clip = os.path.basename(eeg_file).replace(".npy",".mp4")
-    save_path = os.path.join(out_dir,class_clip)
-    imageio.mimsave(save_path,frames,fps=3)
+    save_path = os.path.join(out_dir, f"{subj}_sample{idx}.mp4")
+    imageio.mimsave(save_path, frames, fps=3)
     print(f"Saved generated video to {save_path}")
-
-    # show caption
-    blip_text_path = os.path.join(base_dir,"BLIP_text", "/".join(eeg_file.split("/")[1:]).replace(".npy",".txt"))
-    with open(blip_text_path,"r") as f:
-        caption = f.readline().strip()
-    print(f"Ground-truth caption: {caption}")

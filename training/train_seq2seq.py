@@ -4,10 +4,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-from einops import rearrange
 from tqdm import tqdm
 from sklearn.preprocessing import StandardScaler
-import joblib  # for saving scaler
+import joblib
 from skimage.metrics import structural_similarity as ssim
 
 # ------------------------------------------------
@@ -110,40 +109,27 @@ class myTransformer(nn.Module):
 
 
 # ------------------------------------------------
-# Dataset (subject-specific)
+# Dataset using bundled .npz
 # ------------------------------------------------
-class EEGVideoDataset(Dataset):
-    def __init__(self, eeg_files, vid_files, eeg_dir, vid_dir, scaler=None, fit=False):
-        self.eeg_dir = eeg_dir
-        self.vid_dir = vid_dir
-        self.scaler = scaler
-        self.fit = fit
+class EEGVideoBundle(Dataset):
+    def __init__(self, bundle_path, scaler=None, fit=False):
+        data = np.load(bundle_path, allow_pickle=True)
+        self.eeg = data["EEG_windows"]   # [N,7,62,100]
+        self.vid = data["Video_latents"] # [N,6,4,36,64]
 
-        # build video map
-        self.vid_map = {os.path.normpath(v): v for v in vid_files}
-        self.pairs = []
-        for e in eeg_files:
-            key = "/".join(e.split("/")[1:])  # <-- strip subject only
-            if key in self.vid_map:
-                self.pairs.append((e, self.vid_map[key]))
+        self.scaler = scaler
+        if scaler is not None:
+            eeg_flat = self.eeg.reshape(-1, 62*100)
+            if fit:
+                scaler.partial_fit(eeg_flat)
+            self.eeg = scaler.transform(eeg_flat).reshape(self.eeg.shape)
 
     def __len__(self):
-        return len(self.pairs)
+        return len(self.eeg)
 
     def __getitem__(self, idx):
-        eeg_file, vid_file = self.pairs[idx]
-        eeg = np.load(os.path.join(self.eeg_dir, eeg_file))   # [7,62,100]
-        vid = np.load(os.path.join(self.vid_dir, vid_file))   # [6,4,36,64]
-
-        eeg_flat = eeg.reshape(-1, 62*100)
-        if self.scaler is not None:
-            if self.fit:
-                self.scaler.partial_fit(eeg_flat)
-            eeg_flat = self.scaler.transform(eeg_flat)
-        eeg = eeg_flat.reshape(eeg.shape)
-
-        eeg = torch.from_numpy(eeg).float()
-        vid = torch.from_numpy(vid).float()
+        eeg = torch.from_numpy(self.eeg[idx]).float()
+        vid = torch.from_numpy(self.vid[idx]).float()
         return eeg, vid
 
 
@@ -151,12 +137,14 @@ class EEGVideoDataset(Dataset):
 # Main training per subject
 # ------------------------------------------------
 if __name__ == "__main__":
-    base_dir = "/content/drive/MyDrive/EEG2Video_data/processed/"
+    bundle_dir = "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles/"
     save_root = "/content/drive/MyDrive/EEG2Video_checkpoints/"
     save_dir = os.path.join(save_root, "seq2seq_checkpoints")
     os.makedirs(save_dir, exist_ok=True)
 
-    subjects = [s for s in sorted(os.listdir(os.path.join(base_dir,"EEG_windows"))) if s.startswith("sub")]
+    # Find available bundles
+    all_bundles = sorted([f for f in os.listdir(bundle_dir) if f.endswith("_train.npz")])
+    subjects = [f.replace("_train.npz","") for f in all_bundles]
 
     print("\nAvailable subjects:")
     for idx, subj in enumerate(subjects):
@@ -168,40 +156,20 @@ if __name__ == "__main__":
 
     num_epochs = int(input("\nEnter number of epochs: "))
 
-    with open(os.path.join(base_dir,"EEG_windows/train_list.txt")) as f:
-        eeg_train_all = [line.strip() for line in f]
-    with open(os.path.join(base_dir,"Video_latents/train_list.txt")) as f:
-        vid_train_all = [line.strip() for line in f]
-    with open(os.path.join(base_dir,"EEG_windows/test_list.txt")) as f:
-        eeg_test_all = [line.strip() for line in f]
-    with open(os.path.join(base_dir,"Video_latents/test_list.txt")) as f:
-        vid_test_all = [line.strip() for line in f]
-
     for subj in selected_subjects:
         print(f"\n=== Training {subj} ===")
 
-        eeg_train = [e for e in eeg_train_all if e.startswith(subj)]
-        eeg_test = [e for e in eeg_test_all if e.startswith(subj)]
+        train_path = os.path.join(bundle_dir, f"{subj}_train.npz")
+        test_path  = os.path.join(bundle_dir, f"{subj}_test.npz")
 
         scaler = StandardScaler()
-        tmp_dataset = EEGVideoDataset(eeg_train, vid_train_all,
-                                      os.path.join(base_dir,"EEG_windows"),
-                                      os.path.join(base_dir,"Video_latents"),
-                                      scaler=scaler, fit=True)
-        for i in range(len(tmp_dataset)):
-            _ = tmp_dataset[i]
+        _ = EEGVideoBundle(train_path, scaler=scaler, fit=True)
 
-        train_dataset = EEGVideoDataset(eeg_train, vid_train_all,
-                                        os.path.join(base_dir,"EEG_windows"),
-                                        os.path.join(base_dir,"Video_latents"),
-                                        scaler=scaler, fit=False)
-        val_dataset = EEGVideoDataset(eeg_test, vid_test_all,
-                                      os.path.join(base_dir,"EEG_windows"),
-                                      os.path.join(base_dir,"Video_latents"),
-                                      scaler=scaler, fit=False)
+        train_dataset = EEGVideoBundle(train_path, scaler=scaler, fit=False)
+        val_dataset   = EEGVideoBundle(test_path, scaler=scaler, fit=False)
 
         train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=128, shuffle=False)
+        val_loader   = DataLoader(val_dataset, batch_size=128, shuffle=False)
 
         model = myTransformer().cuda()
         optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
