@@ -16,9 +16,9 @@ CONFIG = {
     "d_model": 512,
     "C": 62,
     "T": 100,
-    "F1": 32,
+    "F1": 16,
     "D": 4,
-    "F2": 32,
+    "F2": 16,
     "cross_subject": False,
 
     # Transformer params
