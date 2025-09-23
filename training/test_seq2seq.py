@@ -59,11 +59,10 @@ eeg2 = eeg_scaler.transform(eeg2.reshape(-1, t)).reshape(b, c, t)
 eeg1 = torch.tensor(eeg1, dtype=torch.float32).unsqueeze(0).cuda()
 eeg2 = torch.tensor(eeg2, dtype=torch.float32).unsqueeze(0).cuda()
 
-zero_frame = torch.zeros((1,1,4,36,64), device="cuda")
-
+# === Inference (autoregressive forward) ===
 with torch.no_grad():
-    pred1 = model.generate(eeg1, zero_frame)
-    pred2 = model.generate(eeg2, zero_frame)
+    pred1 = model(eeg1, torch.zeros((1,24,4,36,64), device="cuda"))
+    pred2 = model(eeg2, torch.zeros((1,24,4,36,64), device="cuda"))
 
 print("MSE between two predicted latents:", F.mse_loss(pred1, pred2).item())
 
@@ -80,6 +79,6 @@ with open(txt_path, "r") as f:
 video = torch.tensor(video, dtype=torch.float32).unsqueeze(0).cuda()
 
 with torch.no_grad():
-    pred = model.generate(eeg1, zero_frame)  # use eeg1
+    pred = model(eeg1, torch.zeros((1,24,4,36,64), device="cuda"))
 
 print("\nFinal caption used:", caption_text)
