@@ -89,8 +89,8 @@ semantic_model.eval()
 # ==========================================
 # Load Seq2Seq Transformer
 # ==========================================
-from training.train_seq2seq import MyTransformer
-seq2seq_model = MyTransformer(d_model=512, pred_frames=6).to(device)
+from training.train_seq2seq import myTransformer
+seq2seq_model = myTransformer(d_model=512, pred_frames=6).to(device)
 seq2seq_model.load_state_dict(torch.load(seq2seq_ckpt)["state_dict"])
 seq2seq_model.eval()
 
