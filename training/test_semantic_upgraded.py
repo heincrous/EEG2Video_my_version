@@ -4,6 +4,7 @@
 # ==========================================
 
 import os
+import sys
 import pickle
 import random
 import numpy as np
@@ -12,7 +13,11 @@ import torch.nn.functional as F
 from datetime import datetime
 from collections import defaultdict
 
-# === Repo imports ===
+# Add repo root so we can import core_files
+repo_root = "/content/EEG2Video_my_version"
+sys.path.append(repo_root)
+
+# Import encoders from core_files
 from core_files.models import eegnet, shallownet, deepnet, tsconv, conformer, mlpnet
 
 # === Wrapper for windowed encoders ===
