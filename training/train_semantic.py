@@ -66,14 +66,6 @@ class EEGTextDataset(Dataset):
     def __getitem__(self, idx):
         eeg = self.eeg[idx]
         txt = self.text[idx]
-
-        if eeg.ndim == 3:  # windows (7,62,100)
-            eeg = eeg
-        elif eeg.ndim == 2:  # DE/PSD (62,5)
-            eeg = eeg
-        else:
-            raise ValueError(f"Unexpected EEG shape: {eeg.shape}")
-
         return torch.tensor(eeg, dtype=torch.float32), torch.tensor(txt, dtype=torch.float32)
 
 
@@ -106,7 +98,6 @@ def cosine_loss(pred, target):
 # Training loop
 # ==========================================
 if __name__ == "__main__":
-    # Use Google Drive paths
     bundle_dir = "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles"
     save_root  = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
     os.makedirs(save_root, exist_ok=True)
@@ -129,9 +120,39 @@ if __name__ == "__main__":
     if choice.lower() == "check":
         test_file = os.path.join(bundle_dir, all_bundles[0])
         dataset   = EEGTextDataset([test_file], feature_type=feature_type, fit_scaler=True, max_samples=10)
-        eeg, txt  = dataset[0]
-        print("Dry run OK")
-        print("EEG shape:", eeg.shape, "Text shape:", txt.shape)
+        dataloader = DataLoader(dataset, batch_size=2, shuffle=False)
+        eeg, txt = next(iter(dataloader))
+        output_dim = txt.shape[1]
+
+        print("\nDry run shapes:")
+        print("EEG batch:", eeg.shape, "Text batch:", txt.shape)
+
+        if feature_type in ["DE", "PSD"]:
+            input_dim = dataset.eeg.shape[1] * dataset.eeg.shape[2]
+            model = mlpnet(out_dim=output_dim, input_dim=input_dim)
+        elif feature_type == "windows":
+            if encoder_type == "mlp":
+                input_dim = dataset.eeg.shape[1] * dataset.eeg.shape[2] * dataset.eeg.shape[3]
+                model = mlpnet(out_dim=output_dim, input_dim=input_dim)
+            elif encoder_type == "eegnet":
+                model = WindowEncoderWrapper(eegnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
+            elif encoder_type == "shallownet":
+                model = WindowEncoderWrapper(shallownet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
+            elif encoder_type == "deepnet":
+                model = WindowEncoderWrapper(deepnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
+            elif encoder_type == "tsconv":
+                model = WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
+            elif encoder_type == "conformer":
+                model = WindowEncoderWrapper(conformer(out_dim=output_dim), out_dim=output_dim)
+            else:
+                raise ValueError("Unknown encoder type")
+        else:
+            raise ValueError("Invalid feature type")
+
+        with torch.no_grad():
+            out = model(eeg)
+        print("Forward pass OK — model output:", out.shape)
+        print("\nDry run successful. Exiting.")
         exit()
 
     # === Select files ===
@@ -147,13 +168,11 @@ if __name__ == "__main__":
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=2, pin_memory=True)
 
     output_dim = 77*768
-
     print(f"\nTraining Semantic Predictor ({encoder_type}) on {feature_type} features with {loss_type} loss")
     print(f"Samples: {len(dataset)}")
 
     # === Model selection ===
     if feature_type in ["DE", "PSD"]:
-        # Always use MLP for DE/PSD
         input_dim = dataset.eeg.shape[1] * dataset.eeg.shape[2]
         model = mlpnet(out_dim=output_dim, input_dim=input_dim).cuda()
     elif feature_type == "windows":
@@ -181,7 +200,6 @@ if __name__ == "__main__":
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0.0
-
         with tqdm(total=len(dataloader), desc=f"Epoch {epoch+1}/{num_epochs}") as pbar:
             for eeg, text in dataloader:
                 eeg, text = eeg.cuda(non_blocking=True), text.cuda(non_blocking=True)
@@ -194,7 +212,6 @@ if __name__ == "__main__":
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
-
                 total_loss += loss.item()
                 pbar.set_postfix({"loss": f"{loss.item():.6f}"})
                 pbar.update(1)
@@ -204,7 +221,6 @@ if __name__ == "__main__":
 
     ckpt_path   = os.path.join(save_root, f"semantic_predictor_{tag}.pt")
     scaler_path = os.path.join(save_root, f"scaler_{tag}.pkl")
-
     torch.save({"state_dict": model.state_dict()}, ckpt_path)
     with open(scaler_path, "wb") as f:
         pickle.dump(dataset.scaler, f)
