@@ -4,7 +4,6 @@ import torch.nn.functional as F
 from torch import Tensor
 from einops import rearrange
 
-
 # ================================
 # Helper to dynamically compute flatten size
 # ================================
@@ -13,7 +12,6 @@ def _get_flattened_size(net, C, T):
         x = torch.zeros(1, 1, C, T)
         y = net(x)
         return y.view(1, -1).shape[1]
-
 
 # ================================
 # ShallowNet
@@ -32,14 +30,13 @@ class shallownet(nn.Module):
         flat_dim = _get_flattened_size(self.net, C, T)
         self.out = nn.Linear(flat_dim, out_dim)
 
-    def forward(self, x):  # (B,7,62,100)
+    def forward(self, x):
         B, W, C, T = x.shape
         x = x.view(B*W, 1, C, T)
         x = self.net(x)
         x = x.view(x.size(0), -1)
         x = self.out(x)
         return x.view(B, W, -1)
-
 
 # ================================
 # DeepNet
@@ -76,14 +73,13 @@ class deepnet(nn.Module):
         flat_dim = _get_flattened_size(self.net, C, T)
         self.out = nn.Linear(flat_dim, out_dim)
 
-    def forward(self, x):  # (B,7,62,100)
+    def forward(self, x):
         B, W, C, T = x.shape
         x = x.view(B*W, 1, C, T)
         x = self.net(x)
         x = x.view(x.size(0), -1)
         x = self.out(x)
         return x.view(B, W, -1)
-
 
 # ================================
 # EEGNet
@@ -108,14 +104,13 @@ class eegnet(nn.Module):
         flat_dim = _get_flattened_size(self.net, C, T)
         self.out = nn.Linear(flat_dim, out_dim)
 
-    def forward(self, x):  # (B,7,62,100)
+    def forward(self, x):
         B, W, C, T = x.shape
         x = x.view(B*W, 1, C, T)
         x = self.net(x)
         x = x.view(x.size(0), -1)
         x = self.out(x)
         return x.view(B, W, -1)
-
 
 # ================================
 # TsConv
@@ -136,14 +131,13 @@ class tsconv(nn.Module):
         flat_dim = _get_flattened_size(self.net, C, T)
         self.out = nn.Linear(flat_dim, out_dim)
 
-    def forward(self, x):  # (B,7,62,100)
+    def forward(self, x):
         B, W, C, T = x.shape
         x = x.view(B*W, 1, C, T)
         x = self.net(x)
         x = x.view(x.size(0), -1)
         x = self.out(x)
         return x.view(B, W, -1)
-
 
 # ================================
 # MLPNet (for DE/PSD features)
@@ -152,7 +146,7 @@ class mlpnet(nn.Module):
     def __init__(self, out_dim, input_dim=310):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Flatten(),  # (B,62,5) -> (B,310)
+            nn.Flatten(),
             nn.Linear(input_dim, 10000),
             nn.ReLU(),
             nn.Linear(10000, 10000),
@@ -164,12 +158,11 @@ class mlpnet(nn.Module):
             nn.Linear(10000, out_dim)
         )
 
-    def forward(self, x):  # x already flattened to (B,310) in your script
+    def forward(self, x):
         return self.net(x)
 
-
 # ================================
-# Conformer (simplified encoder + transformer)
+# Conformer
 # ================================
 class PatchEmbedding(nn.Module):
     def __init__(self, emb_size=40, C=62, T=100):
@@ -183,12 +176,11 @@ class PatchEmbedding(nn.Module):
             nn.Linear(40, emb_size),
         )
 
-    def forward(self, x):  # (B,7,62,100)
+    def forward(self, x):
         B, W, C, T = x.shape
         x = x.view(B*W, 1, C, T)
-        out = self.net(x)            # (B*W, emb_size)
-        return out.view(B, W, -1)    # (B,7,emb_size)
-
+        out = self.net(x)           # (B*W,emb_size)
+        return out.view(B, W, -1)   # (B,7,emb_size)
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, emb_size, num_heads, dropout):
@@ -216,14 +208,12 @@ class MultiHeadAttention(nn.Module):
         out = rearrange(out, "b h n d -> b n (h d)")
         return self.projection(out)
 
-
 class ResidualAdd(nn.Module):
     def __init__(self, fn):
         super().__init__()
         self.fn = fn
     def forward(self, x, **kwargs):
         return x + self.fn(x, **kwargs)
-
 
 class FeedForwardBlock(nn.Sequential):
     def __init__(self, emb_size, expansion, drop_p):
@@ -233,7 +223,6 @@ class FeedForwardBlock(nn.Sequential):
             nn.Dropout(drop_p),
             nn.Linear(expansion * emb_size, emb_size),
         )
-
 
 class TransformerEncoderBlock(nn.Sequential):
     def __init__(self, emb_size, num_heads=10, drop_p=0.5,
@@ -252,26 +241,19 @@ class TransformerEncoderBlock(nn.Sequential):
             ))
         )
 
-
 class TransformerEncoder(nn.Sequential):
     def __init__(self, depth, emb_size):
         super().__init__(*[TransformerEncoderBlock(emb_size) for _ in range(depth)])
 
-
-class ClassificationHead(nn.Module):
-    def __init__(self, emb_size, out_dim):
+class conformer(nn.Module):
+    def __init__(self, out_dim, emb_size=40, depth=3, C=62, T=100):
         super().__init__()
-        self.fc = nn.Linear(emb_size * 7, out_dim)  # always 7 tokens
+        self.embed = PatchEmbedding(emb_size, C=C, T=T)
+        self.encoder = TransformerEncoder(depth, emb_size)
+        self.fc = nn.Linear(emb_size, out_dim // 7)  # map each of 7 tokens
 
     def forward(self, x):
-        x = x.contiguous().view(x.size(0), -1)
-        return self.fc(x)
-
-
-class conformer(nn.Sequential):
-    def __init__(self, out_dim, emb_size=40, depth=3, C=62, T=100):
-        super().__init__(
-            PatchEmbedding(emb_size, C=C, T=T),
-            TransformerEncoder(depth, emb_size),
-            ClassificationHead(emb_size, out_dim),
-        )
+        feats = self.embed(x)        # (B,7,emb_size)
+        feats = self.encoder(feats)  # (B,7,emb_size)
+        feats = self.fc(feats)       # (B,7,out_dim//7)
+        return feats                 # ReshapeWrapper makes (B,77,768)
