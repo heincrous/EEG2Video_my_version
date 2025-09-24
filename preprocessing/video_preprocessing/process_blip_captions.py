@@ -74,7 +74,6 @@ for block_id in range(7):
 
         with torch.no_grad():
             # EXACTLY what diffusion training does:
-            # text_encoder(prompt_ids)[0] = last_hidden_state
             seq_emb = text_encoder(**tokens)[0]  # [B,77,768]
 
         emb = seq_emb.cpu().numpy()
@@ -99,6 +98,8 @@ for block_id in range(7):
                 embed_block_dir,
                 f"class{true_class:02d}_clip{clip_id+1:02d}.npy"
             )
+            # Ensure parent dir exists before saving
+            os.makedirs(os.path.dirname(embed_path), exist_ok=True)
             np.save(embed_path, emb[j])
 
     print(f"Finished Block {block_id+1}: saved {len(os.listdir(text_block_dir))} captions")
