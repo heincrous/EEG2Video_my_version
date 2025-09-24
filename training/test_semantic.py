@@ -207,9 +207,11 @@ if __name__ == "__main__":
             # EEG path uses subject/block/clip
             eeg_path = os.path.join(data_root, f"EEG_{feature_type}", sample + ".npy")
             # BLIP path strips subject, keeps block + clip
-            parts = sample.split("/")        # ["sub1", "Block1", "class00_clip01"]
-            blip_rel = "/".join(parts[1:])   # "Block1/class00_clip01"
-            blip_path = os.path.join(data_root, "BLIP_embeddings", blip_rel + ".npy")
+            parts = sample.split("/")
+            blip_rel = "/".join(parts[1:])  # "Block1/class00_clip01"
+            if not blip_rel.endswith(".npy"):
+                blip_rel = blip_rel + ".npy"
+            blip_path = os.path.join(data_root, "BLIP_embeddings", blip_rel)
 
             if not os.path.exists(eeg_path) or not os.path.exists(blip_path):
                 print(f"[WARNING] Missing files for {sample}")
