@@ -250,11 +250,13 @@ class conformer(nn.Module):
         super().__init__()
         self.embed = PatchEmbedding(emb_size, C=C, T=T)
         self.encoder = TransformerEncoder(depth, emb_size)
-        self.fc = nn.Linear(emb_size, out_dim // 7)  # <-- must be 8448 here
+        self.fc = nn.Linear(emb_size, out_dim // 7)  # 8448 if out_dim=77*768
+        self.out_dim = out_dim
 
     def forward(self, x):
         feats = self.embed(x)        # (B,7,emb_size)
         feats = self.encoder(feats)  # (B,7,emb_size)
-        feats = self.fc(feats)       # (B,7, out_dim//7)
-        return feats.view(x.size(0), -1)  # (B, out_dim)
+        feats = self.fc(feats)       # (B,7,out_dim//7)
+        return feats.view(x.size(0), self.out_dim)  # (B,59136)
+
 
