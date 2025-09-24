@@ -1,27 +1,21 @@
 # ==========================================
-# Full Inference
+# Full Inference (with Semantic Predictor auto-detection, cleaned)
 # ==========================================
 
-# === Libraries ===
 import os, sys, gc, glob, imageio, torch
 import numpy as np
 import joblib
-from einops import rearrange
-
-# === Repo imports ===
 from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 from core_files.unet import UNet3DConditionModel
 
-# === Import DANA (add_noise) ===
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(os.path.join(repo_root, "core_files"))
 from add_noise import Diffusion
 
-# === Paths ===
 drive_root            = "/content/drive/MyDrive/EEG2Video_data/processed"
 pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 finetuned_model_path  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final"
-semantic_ckpt_dir     = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor"
+semantic_ckpt_dir     = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
 
 eeg_feat_list_path    = os.path.join(drive_root, "EEG_DE/test_list.txt")
 blip_text_root        = os.path.join(drive_root, "BLIP_text")
@@ -29,15 +23,11 @@ blip_text_root        = os.path.join(drive_root, "BLIP_text")
 output_dir            = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference"
 os.makedirs(output_dir, exist_ok=True)
 
-# === Memory config ===
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 gc.collect()
 torch.cuda.empty_cache()
 device = "cuda"
 
-# ==========================================
-# Helper: checkpoint selection
-# ==========================================
 def select_ckpt(ckpt_dir, name="checkpoint"):
     ckpts = sorted(glob.glob(os.path.join(ckpt_dir, "*.pt")))
     if not ckpts:
@@ -49,19 +39,17 @@ def select_ckpt(ckpt_dir, name="checkpoint"):
     return ckpts[choice]
 
 semantic_ckpt = select_ckpt(semantic_ckpt_dir, "semantic")
+semantic_tag  = os.path.basename(semantic_ckpt).replace("semantic_predictor_", "").replace(".pt", "")
 print("Using semantic checkpoint:", semantic_ckpt)
+print("Semantic tag:", semantic_tag)
 
-# ==========================================
-# Load scaler
-# ==========================================
-semantic_tag = os.path.basename(semantic_ckpt).replace("semantic_predictor_", "").replace(".pt", "")
+parts = semantic_tag.split("_")
+feature_type, encoder_type, loss_type = parts[-3], parts[-2], parts[-1]
+print(f"Feature: {feature_type}, Encoder: {encoder_type}, Loss: {loss_type}")
+
 semantic_scaler = joblib.load(os.path.join(semantic_ckpt_dir, f"scaler_{semantic_tag}.pkl"))
 
-# ==========================================
-# Load finetuned pipeline
-# ==========================================
 from diffusers import AutoencoderKL, DDIMScheduler
-
 vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae").to(device, dtype=torch.float32)
 scheduler = DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
 unet = UNet3DConditionModel.from_pretrained_2d(pretrained_model_path, subfolder="unet").to(device, dtype=torch.float32)
@@ -75,30 +63,48 @@ pipe = TuneAVideoPipeline.from_pretrained(
 ).to(device)
 pipe.enable_vae_slicing()
 
-# ==========================================
-# Load Semantic Predictor
-# ==========================================
-from training.train_semantic import SemanticPredictor
-semantic_model = SemanticPredictor().to(device)
-semantic_model.load_state_dict(torch.load(semantic_ckpt)["state_dict"])
-semantic_model.eval()
+from core_files.models import eegnet, shallownet, deepnet, tsconv, conformer, mlpnet
+from training.train_semantic import WindowEncoderWrapper, ReshapeWrapper
 
-# ==========================================
-# Init DANA diffusion (not used now)
-# ==========================================
+output_dim = 77 * 768
+
+if feature_type in ["DE", "PSD"]:
+    input_dim = 62 * 5
+    model = mlpnet(out_dim=output_dim, input_dim=input_dim).to(device)
+elif feature_type == "windows":
+    if encoder_type == "mlp":
+        input_dim = 7 * 62 * 100
+        model = mlpnet(out_dim=output_dim, input_dim=input_dim).to(device)
+    elif encoder_type == "eegnet":
+        model = WindowEncoderWrapper(eegnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim).to(device)
+    elif encoder_type == "shallownet":
+        model = WindowEncoderWrapper(shallownet(out_dim=output_dim, C=62, T=100), out_dim=output_dim).to(device)
+    elif encoder_type == "deepnet":
+        model = WindowEncoderWrapper(deepnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim).to(device)
+    elif encoder_type == "tsconv":
+        model = WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim).to(device)
+    elif encoder_type == "conformer":
+        model = WindowEncoderWrapper(conformer(out_dim=output_dim), out_dim=output_dim).to(device)
+    else:
+        raise ValueError(f"Unknown encoder type {encoder_type}")
+else:
+    raise ValueError(f"Invalid feature type {feature_type}")
+
+model = ReshapeWrapper(model).to(device)
+ckpt = torch.load(semantic_ckpt, map_location=device)
+model.load_state_dict(ckpt["state_dict"])
+model.eval()
+print("Semantic predictor rebuilt and loaded.")
+
 dana_diffusion = Diffusion(time_steps=500)
 
-# ==========================================
-# Pick one EEG sample (features only)
-# ==========================================
 with open(eeg_feat_list_path, "r") as f:
     eeg_feat_files = [line.strip() for line in f]
 
 eeg_feat_file = os.path.join(drive_root, "EEG_DE", eeg_feat_files[0])
 print("Chosen EEG feature file:", eeg_feat_file)
 
-# === Derive BLIP caption path ===
-parts = eeg_feat_files[0].split("/")  # e.g., sub1/Block1/class00_clip05.npy
+parts = eeg_feat_files[0].split("/")
 subj, block, fname = parts[0], parts[1], parts[2]
 blip_caption_path = os.path.join(blip_text_root, block, fname.replace(".npy", ".txt"))
 
@@ -110,34 +116,25 @@ else:
 print("Associated BLIP caption:", blip_prompt)
 print("BLIP caption file:", blip_caption_path)
 
-# === EEG feature for semantic predictor (apply scaler) ===
-eeg_feat = np.load(eeg_feat_file)   # (62,5)
-if eeg_feat.ndim == 2 and eeg_feat.shape == (62, 5):
-    eeg_feat = eeg_feat.reshape(-1)   # (310,)
+eeg_feat = np.load(eeg_feat_file)
+if eeg_feat.ndim > 1:
+    eeg_feat = eeg_feat.reshape(-1)
 eeg_feat_scaled = semantic_scaler.transform([eeg_feat])[0]
 eeg_feat_tensor = torch.tensor(eeg_feat_scaled, dtype=torch.float32).unsqueeze(0).to(device)
 
-# ==========================================
-# Semantic Predictor → embedding [1,77,768]
-# ==========================================
 with torch.no_grad():
-    semantic_pred = semantic_model(eeg_feat_tensor)
-semantic_pred = semantic_pred.view(1, 77, 768).float().to(device)
+    semantic_pred = model(eeg_feat_tensor)
 print("Semantic embedding shape:", semantic_pred.shape)
 
-# Negative EEG embedding = mean vector
 negative = semantic_pred.mean(dim=0, keepdim=True).float().to(device)
 
-# ==========================================
-# Run inference (semantic only, no seq2seq yet)
-# ==========================================
 def run_inference():
     video = pipe(
         model=None,
         eeg=semantic_pred,
         negative_eeg=negative,
         latents=None,
-        video_length=6,       # exactly 6 frames
+        video_length=6,
         height=288,
         width=512,
         num_inference_steps=100,
@@ -146,7 +143,6 @@ def run_inference():
 
     print("Generated video tensor:", video.shape)
 
-    # Save MP4 (3 fps → 2 sec total for 6 frames)
     frames = (video[0] * 255).clamp(0, 255).to(torch.uint8)
     frames = frames.permute(0, 2, 3, 1).cpu().numpy()
     if frames.shape[-1] > 3:
@@ -164,7 +160,4 @@ def run_inference():
     print("EEG file:", eeg_feat_file)
     print("Prompt:", blip_prompt)
 
-# ==========================================
-# Run now
-# ==========================================
 run_inference()

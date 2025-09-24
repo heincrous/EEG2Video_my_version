@@ -139,15 +139,19 @@ class tsconv(nn.Module):
 # MLPNet (for DE/PSD features)
 # ================================
 class mlpnet(nn.Module):
-    def __init__(self, out_dim, input_dim):
+    def __init__(self, out_dim, input_dim=310):
         super().__init__()
         self.net = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(input_dim, 512),
-            nn.GELU(),
-            nn.Linear(512, 256),
-            nn.GELU(),
-            nn.Linear(256, out_dim),
+            nn.Linear(input_dim, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, out_dim)  # out_dim = 77*768 = 59136
         )
 
     def forward(self, x):

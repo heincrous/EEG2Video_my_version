@@ -1,5 +1,5 @@
 # ==========================================
-# Semantic Predictor Upgraded Evaluation (with conditional normalization + BLIP sanity check)
+# Semantic Predictor Evaluation (Row-aware, token-wise similarity)
 # ==========================================
 
 import os
@@ -9,13 +9,11 @@ import random
 import numpy as np
 import torch
 import torch.nn.functional as F
-from datetime import datetime
 from collections import defaultdict
 
-# Add repo root so we can import core_files
+# === Repo imports ===
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(repo_root)
-
 from core_files.models import eegnet, shallownet, deepnet, tsconv, conformer, mlpnet
 
 
@@ -25,15 +23,15 @@ class WindowEncoderWrapper(torch.nn.Module):
         super().__init__()
         self.base = base_encoder
 
-    def forward(self, x):  # x: (B,7,62,100)
+    def forward(self, x):  # (B,7,62,100)
         B, W, C, T = x.shape
-        x = x.view(B * W, 1, C, T)
+        x = x.view(B*W, 1, C, T)
         feats = self.base(x)
         feats = feats.view(B, W, -1)
-        return feats.mean(1)
+        return feats.mean(1)  # (B, out_dim)
 
 
-# === Build class prototypes ===
+# === Build class prototypes (token-aware) ===
 def build_class_prototypes(bundle_path, loss_type):
     data = np.load(bundle_path, allow_pickle=True)
     blip_embeddings = data["BLIP_embeddings"]  # (N,77,768)
@@ -44,25 +42,16 @@ def build_class_prototypes(bundle_path, loss_type):
         parts = key.split("/")
         class_token = next(p for p in parts if p.startswith("class"))
         class_id = int(class_token.replace("class", "").split("_")[0])
-        emb = blip_embeddings[i].reshape(-1)
+        class_groups[class_id].append(blip_embeddings[i])  # keep full (77,768)
 
-        # store for prototypes
-        class_groups[class_id].append(emb)
-
-    # print first few BLIP embeddings for sanity check
-    for cid in sorted(class_groups.keys())[:2]:  # first 2 classes
-        print(f"\nClass {cid} example BLIP embeddings (first 2, first 10 values):")
-        for emb in class_groups[cid][:2]:
-            print(emb[:10])
-
-    # average per class, normalize if cosine
     prototypes = {}
     for cid, embs in class_groups.items():
-        avg_emb = np.mean(np.stack(embs), axis=0)
+        avg_emb = np.mean(np.stack(embs), axis=0)  # (77,768)
         if loss_type == "cosine":
-            avg_emb = avg_emb / np.linalg.norm(avg_emb)
+            # normalize each row separately
+            norms = np.linalg.norm(avg_emb, axis=-1, keepdims=True) + 1e-8
+            avg_emb = avg_emb / norms
         prototypes[cid] = avg_emb
-
     return prototypes
 
 
@@ -89,19 +78,23 @@ def build_model(feature_type, encoder_type, output_dim, input_dim=None):
         raise ValueError(f"Invalid feature type: {feature_type}")
 
 
+# === Cosine similarity across tokens ===
+def tokenwise_cosine(a, b):
+    # a, b: (77,768)
+    a = a / (np.linalg.norm(a, axis=-1, keepdims=True) + 1e-8)
+    b = b / (np.linalg.norm(b, axis=-1, keepdims=True) + 1e-8)
+    return float((a * b).sum(-1).mean())  # average across 77 tokens
+
+
 # === Main ===
 if __name__ == "__main__":
     bundle_root = "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles"
     eeg_root    = "/content/drive/MyDrive/EEG2Video_data/processed"
     ckpt_root   = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
-    log_dir     = "/content/drive/MyDrive/EEG2Video_outputs/semantic_eval"
-    os.makedirs(log_dir, exist_ok=True)
 
     ckpts = [f for f in os.listdir(ckpt_root) if f.startswith("semantic_predictor_") and f.endswith(".pt")]
-    print("\nAvailable checkpoints:")
     for i, ck in enumerate(ckpts):
         print(f"[{i}] {ck}")
-
     choice    = int(input("\nEnter checkpoint index: ").strip())
     ckpt_file = ckpts[choice]
     tag       = ckpt_file.replace("semantic_predictor_", "").replace(".pt", "")
@@ -111,11 +104,7 @@ if __name__ == "__main__":
     parts = tag.split("_")
     feature_type = parts[-3]
     encoder_type = parts[-2]
-    loss_type    = parts[-1]  # cosine or mse
-
-    print(f"\nLoading checkpoint: {ckpt_file}")
-    print(f"Loading scaler: scaler_{tag}.pkl")
-    print(f"Detected feature type: {feature_type}, encoder: {encoder_type}, loss: {loss_type}")
+    loss_type    = parts[-1]
 
     with open(scaler_path, "rb") as f:
         scaler = pickle.load(f)
@@ -127,11 +116,12 @@ if __name__ == "__main__":
     model.load_state_dict(checkpoint["state_dict"])
     model.eval()
 
+    # Build prototypes
     train_bundles = sorted([f for f in os.listdir(bundle_root) if f.endswith("_train.npz")])
     proto_bundle = os.path.join(bundle_root, train_bundles[0])
-    print(f"\nBuilding BLIP prototypes from: {train_bundles[0]}")
     prototypes = build_class_prototypes(proto_bundle, loss_type)
 
+    # Pick test samples
     test_list_path = os.path.join(eeg_root, f"EEG_{feature_type}", "test_list.txt")
     with open(test_list_path, "r") as f:
         test_lines = [line.strip() for line in f if line.strip()]
@@ -143,58 +133,38 @@ if __name__ == "__main__":
         class_id = int(class_token.replace("class", "").split("_")[0])
         class_groups[class_id].append(rel_path)
 
-    chosen = [random.choice(class_groups[cid]) for cid in sorted(class_groups.keys()) if class_groups[cid]]
-    print(f"\nEvaluating {len(chosen)} samples (1 per class)")
+    chosen = [random.choice(v) for v in class_groups.values() if v]
 
+    # Evaluation
     correct_top1 = correct_top5 = total = 0
-    per_class_results = {}
-
     for rel_path in chosen:
         eeg_path = os.path.join(eeg_root, f"EEG_{feature_type}", rel_path)
-        parts = rel_path.split("/")
-        class_token = next(p for p in parts if p.startswith("class"))
-        true_class = int(class_token.replace("class", "").split("_")[0])
+        true_class = int(next(p for p in rel_path.split("/") if p.startswith("class")).replace("class","").split("_")[0])
 
         eeg = np.load(eeg_path)
+        eeg_flat = eeg.reshape(-1)
+        eeg_scaled = scaler.transform([eeg_flat])[0]
 
         if feature_type == "windows":
-            eeg_flat = eeg.reshape(-1)
-            eeg_scaled = scaler.transform([eeg_flat])[0]
             eeg_tensor = torch.tensor(eeg_scaled.reshape(7,62,100), dtype=torch.float32).unsqueeze(0).cuda()
-        elif feature_type in ["DE","PSD"]:
-            eeg_flat = eeg.reshape(-1)
-            eeg_scaled = scaler.transform([eeg_flat])[0]
-            eeg_tensor = torch.tensor(eeg_scaled.reshape(62,5), dtype=torch.float32).unsqueeze(0).cuda()
         else:
-            raise ValueError(f"Unsupported feature type: {feature_type}")
-
-        # log scaled stats
-        print(f"\nSample: {rel_path} | Scaled EEG mean={eeg_scaled.mean():.4f}, std={eeg_scaled.std():.4f}")
+            eeg_tensor = torch.tensor(eeg_scaled.reshape(62,5), dtype=torch.float32).unsqueeze(0).cuda()
 
         with torch.no_grad():
-            pred_emb = model(eeg_tensor).squeeze(0).cpu().numpy()
+            pred_emb = model(eeg_tensor).squeeze(0).cpu().numpy().reshape(77,768)
 
         if loss_type == "cosine":
-            pred_emb = pred_emb / np.linalg.norm(pred_emb)
+            pred_emb = pred_emb / (np.linalg.norm(pred_emb, axis=-1, keepdims=True) + 1e-8)
 
-        print(f"Pred emb norm: {np.linalg.norm(pred_emb):.4f}")
-
-        sims = {cid: float(np.dot(pred_emb, proto)) for cid, proto in prototypes.items()}
+        sims = {cid: tokenwise_cosine(pred_emb, proto) for cid, proto in prototypes.items()}
         ranked = sorted(sims.items(), key=lambda x: x[1], reverse=True)
-        top1_class = ranked[0][0]
-        top5_classes = [cid for cid, _ in ranked[:5]]
 
-        t1 = (top1_class == true_class)
-        t5 = (true_class in top5_classes)
-        per_class_results[true_class] = (t1, t5)
-        correct_top1 += int(t1)
-        correct_top5 += int(t5)
+        top1, top5 = ranked[0][0], [cid for cid,_ in ranked[:5]]
+        correct_top1 += int(top1 == true_class)
+        correct_top5 += int(true_class in top5)
         total += 1
 
-        print(f"True={true_class} Pred@1={top1_class} Top-5={top5_classes} | {'Correct' if t1 else 'Wrong'}")
+        print(f"True={true_class} | Pred@1={top1} | Top-5={top5} | {'Correct' if top1==true_class else 'Wrong'}")
 
-    acc_top1 = correct_top1 / total if total > 0 else 0.0
-    acc_top5 = correct_top5 / total if total > 0 else 0.0
-    print(f"\n=== Classification Accuracy ===")
-    print(f"Top-1 Accuracy: {acc_top1:.4f} ({correct_top1}/{total})")
-    print(f"Top-5 Accuracy: {acc_top5:.4f} ({correct_top5}/{total})")
+    print(f"\nTop-1 Accuracy: {correct_top1/total:.4f}")
+    print(f"Top-5 Accuracy: {correct_top5/total:.4f}")
