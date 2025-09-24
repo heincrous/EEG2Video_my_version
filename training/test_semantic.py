@@ -103,7 +103,7 @@
 #     print(f"Average Cosine similarity: {avg_cos:.6f}")
 
 # ==========================================
-# Semantic Predictor Evaluation (5 Random Samples Per Subject)
+# Semantic Predictor Evaluation (5 Random Samples Per Subject, Fixed BLIP Paths)
 # ==========================================
 
 import os
@@ -182,7 +182,7 @@ if __name__ == "__main__":
     # === Group samples by subject ===
     subject_groups = {}
     for sample in test_samples:
-        # subject name assumed to be before first slash (e.g. sub1/Block1/class00_clip01)
+        # subject assumed to be before first slash (e.g. sub1/Block1/class00_clip01)
         subject = sample.split("/")[0]
         subject_groups.setdefault(subject, []).append(sample)
 
@@ -203,8 +203,12 @@ if __name__ == "__main__":
         subj_mse, subj_cos, subj_count = 0.0, 0.0, 0
 
         for sample in samples:
-            eeg_path  = os.path.join(data_root, f"EEG_{feature_type}", sample + ".npy")
-            blip_path = os.path.join(data_root, "BLIP_embeddings", sample.split("/")[-1] + ".npy")  # strip block/subject for BLIP
+            # EEG uses full subject/block path
+            eeg_path = os.path.join(data_root, f"EEG_{feature_type}", sample + ".npy")
+            # BLIP strips subject, keeps block + clip
+            parts = sample.split("/")        # ["sub1", "Block1", "class00_clip01"]
+            blip_rel = "/".join(parts[1:])   # "Block1/class00_clip01"
+            blip_path = os.path.join(data_root, "BLIP_embeddings", blip_rel + ".npy")
 
             if not os.path.exists(eeg_path) or not os.path.exists(blip_path):
                 print(f"[WARNING] Missing files for {sample}")
@@ -239,12 +243,16 @@ if __name__ == "__main__":
             print(f"{subj} | Avg MSE={subj_avg_mse:.6f}, Avg Cosine={subj_avg_cos:.6f}")
 
     # === Global averages ===
-    avg_mse = global_mse / global_count
-    avg_cos = global_cos / global_count
+    if global_count > 0:
+        avg_mse = global_mse / global_count
+        avg_cos = global_cos / global_count
 
-    print("\n=== Global Averages across all subjects ===")
-    print(f"Average MSE: {avg_mse:.6f}")
-    print(f"Average Cosine similarity: {avg_cos:.6f}")
+        print("\n=== Global Averages across all subjects ===")
+        print(f"Average MSE: {avg_mse:.6f}")
+        print(f"Average Cosine similarity: {avg_cos:.6f}")
+    else:
+        avg_mse, avg_cos = float("nan"), float("nan")
+        print("\nNo valid samples found.")
 
     # === Save log ===
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
