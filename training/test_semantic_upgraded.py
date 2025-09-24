@@ -1,5 +1,5 @@
 # ==========================================
-# Semantic Predictor Upgraded Evaluation (with diagnostics)
+# Semantic Predictor Upgraded Evaluation (with conditional normalization + BLIP sanity check)
 # ==========================================
 
 import os
@@ -18,6 +18,7 @@ sys.path.append(repo_root)
 
 from core_files.models import eegnet, shallownet, deepnet, tsconv, conformer, mlpnet
 
+
 # === Wrapper for windowed encoders ===
 class WindowEncoderWrapper(torch.nn.Module):
     def __init__(self, base_encoder, out_dim):
@@ -32,15 +33,8 @@ class WindowEncoderWrapper(torch.nn.Module):
         return feats.mean(1)
 
 
-# === Cosine similarity ===
-def cosine_similarity(a, b):
-    a = F.normalize(a, dim=-1)
-    b = F.normalize(b, dim=-1)
-    return (a * b).sum().item()
-
-
 # === Build class prototypes ===
-def build_class_prototypes(bundle_path):
+def build_class_prototypes(bundle_path, loss_type):
     data = np.load(bundle_path, allow_pickle=True)
     blip_embeddings = data["BLIP_embeddings"]  # (N,77,768)
     keys = data["keys"]
@@ -51,9 +45,24 @@ def build_class_prototypes(bundle_path):
         class_token = next(p for p in parts if p.startswith("class"))
         class_id = int(class_token.replace("class", "").split("_")[0])
         emb = blip_embeddings[i].reshape(-1)
+
+        # store for prototypes
         class_groups[class_id].append(emb)
 
-    prototypes = {cid: np.mean(np.stack(embs), axis=0) for cid, embs in class_groups.items()}
+    # print first few BLIP embeddings for sanity check
+    for cid in sorted(class_groups.keys())[:2]:  # first 2 classes
+        print(f"\nClass {cid} example BLIP embeddings (first 2, first 10 values):")
+        for emb in class_groups[cid][:2]:
+            print(emb[:10])
+
+    # average per class, normalize if cosine
+    prototypes = {}
+    for cid, embs in class_groups.items():
+        avg_emb = np.mean(np.stack(embs), axis=0)
+        if loss_type == "cosine":
+            avg_emb = avg_emb / np.linalg.norm(avg_emb)
+        prototypes[cid] = avg_emb
+
     return prototypes
 
 
@@ -102,10 +111,11 @@ if __name__ == "__main__":
     parts = tag.split("_")
     feature_type = parts[-3]
     encoder_type = parts[-2]
+    loss_type    = parts[-1]  # cosine or mse
 
     print(f"\nLoading checkpoint: {ckpt_file}")
     print(f"Loading scaler: scaler_{tag}.pkl")
-    print(f"Detected feature type: {feature_type}, encoder: {encoder_type}")
+    print(f"Detected feature type: {feature_type}, encoder: {encoder_type}, loss: {loss_type}")
 
     with open(scaler_path, "rb") as f:
         scaler = pickle.load(f)
@@ -120,14 +130,7 @@ if __name__ == "__main__":
     train_bundles = sorted([f for f in os.listdir(bundle_root) if f.endswith("_train.npz")])
     proto_bundle = os.path.join(bundle_root, train_bundles[0])
     print(f"\nBuilding BLIP prototypes from: {train_bundles[0]}")
-    prototypes = build_class_prototypes(proto_bundle)
-
-    # quick prototype sanity: check similarity between two random classes
-    proto_ids = list(prototypes.keys())
-    if len(proto_ids) >= 2:
-        p1, p2 = random.sample(proto_ids, 2)
-        sim = cosine_similarity(torch.tensor(prototypes[p1]), torch.tensor(prototypes[p2]))
-        print(f"Prototype similarity between class {p1} and {p2}: {sim:.4f}")
+    prototypes = build_class_prototypes(proto_bundle, loss_type)
 
     test_list_path = os.path.join(eeg_root, f"EEG_{feature_type}", "test_list.txt")
     with open(test_list_path, "r") as f:
@@ -171,9 +174,12 @@ if __name__ == "__main__":
         with torch.no_grad():
             pred_emb = model(eeg_tensor).squeeze(0).cpu().numpy()
 
+        if loss_type == "cosine":
+            pred_emb = pred_emb / np.linalg.norm(pred_emb)
+
         print(f"Pred emb norm: {np.linalg.norm(pred_emb):.4f}")
 
-        sims = {cid: cosine_similarity(torch.tensor(pred_emb), torch.tensor(proto)) for cid, proto in prototypes.items()}
+        sims = {cid: float(np.dot(pred_emb, proto)) for cid, proto in prototypes.items()}
         ranked = sorted(sims.items(), key=lambda x: x[1], reverse=True)
         top1_class = ranked[0][0]
         top5_classes = [cid for cid, _ in ranked[:5]]
