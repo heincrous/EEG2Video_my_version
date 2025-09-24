@@ -103,7 +103,7 @@
 #     print(f"Average Cosine similarity: {avg_cos:.6f}")
 
 # ==========================================
-# Semantic Predictor Evaluation (5 Random Samples Per Subject, Fixed BLIP Paths)
+# Semantic Predictor Evaluation (5 Random Samples Per Subject, Using EEG Test List)
 # ==========================================
 
 import os
@@ -135,7 +135,8 @@ if __name__ == "__main__":
     data_root   = "/content/drive/MyDrive/EEG2Video_data/processed"
     ckpt_root   = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
     log_dir     = "/content/drive/MyDrive/EEG2Video_outputs/semantic_eval"
-    test_list   = os.path.join(data_root, "BLIP_embeddings/test_list.txt")
+    # use EEG test list instead of BLIP test list
+    test_list   = os.path.join(data_root, f"EEG_DE/test_list.txt")  
     os.makedirs(log_dir, exist_ok=True)
 
     # === Checkpoint selection ===
@@ -203,9 +204,9 @@ if __name__ == "__main__":
         subj_mse, subj_cos, subj_count = 0.0, 0.0, 0
 
         for sample in samples:
-            # EEG uses full subject/block path
+            # EEG path uses subject/block/clip
             eeg_path = os.path.join(data_root, f"EEG_{feature_type}", sample + ".npy")
-            # BLIP strips subject, keeps block + clip
+            # BLIP path strips subject, keeps block + clip
             parts = sample.split("/")        # ["sub1", "Block1", "class00_clip01"]
             blip_rel = "/".join(parts[1:])   # "Block1/class00_clip01"
             blip_path = os.path.join(data_root, "BLIP_embeddings", blip_rel + ".npy")
