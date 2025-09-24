@@ -1,5 +1,5 @@
 # ==========================================
-# Semantic Predictor Upgraded Evaluation (Prototype Classification)
+# Semantic Predictor Upgraded Evaluation (Prototype Classification, 1 Sample Per Class)
 # ==========================================
 
 import os
@@ -108,12 +108,23 @@ if __name__ == "__main__":
     with open(test_list_path, "r") as f:
         test_lines = [line.strip() for line in f if line.strip()]
 
-    # === Evaluate 40 random test samples ===
-    num_samples = min(40, len(test_lines))
-    chosen = random.sample(test_lines, num_samples)
+    # === Group test samples by class ===
+    class_groups = defaultdict(list)
+    for rel_path in test_lines:
+        class_id = int(rel_path.split("/")[1].replace("class", "").split("_")[0])
+        class_groups[class_id].append(rel_path)
+
+    # === Select one sample per class (40 total) ===
+    chosen = []
+    for class_id in sorted(class_groups.keys()):
+        if class_groups[class_id]:
+            chosen.append(random.choice(class_groups[class_id]))
+
+    print(f"\nEvaluating {len(chosen)} samples (1 per class)")
 
     correct = 0
     total = 0
+    per_class_results = {}
 
     for rel_path in chosen:
         eeg_path = os.path.join(eeg_root, f"EEG_{feature_type}", rel_path)
@@ -130,11 +141,14 @@ if __name__ == "__main__":
         sims = {cid: cosine_similarity(torch.tensor(pred_emb), torch.tensor(proto)) for cid, proto in prototypes.items()}
         pred_class = max(sims, key=sims.get)
 
-        if pred_class == true_class:
+        correct_flag = (pred_class == true_class)
+        per_class_results[true_class] = correct_flag
+
+        if correct_flag:
             correct += 1
         total += 1
 
-        print(f"{rel_path} | True={true_class} Pred={pred_class}")
+        print(f"{rel_path} | True={true_class} Pred={pred_class} | {'Correct' if correct_flag else 'Wrong'}")
 
     acc = correct / total if total > 0 else 0.0
     print(f"\n=== Classification Accuracy ===")
@@ -149,6 +163,11 @@ if __name__ == "__main__":
         f.write(f"Feature type: {feature_type}\n")
         f.write(f"Prototype source: {train_bundles[0]}\n")
         f.write(f"Samples tested: {total}\n")
-        f.write(f"Top-1 Accuracy: {acc:.4f}\n")
+        f.write(f"Top-1 Accuracy: {acc:.4f}\n\n")
+
+        f.write("=== Per-class results ===\n")
+        for cid in sorted(per_class_results.keys()):
+            res = "Correct" if per_class_results[cid] else "Wrong"
+            f.write(f"Class {cid:02d}: {res}\n")
 
     print(f"\nResults saved to: {log_file}")
