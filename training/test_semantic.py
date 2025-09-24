@@ -103,7 +103,7 @@
 #     print(f"Average Cosine similarity: {avg_cos:.6f}")
 
 # ==========================================
-# Semantic Predictor Multi-Sample Evaluation (Test List, Log Results)
+# Semantic Predictor Evaluation (5 Random Samples Per Subject)
 # ==========================================
 
 import os
@@ -179,42 +179,70 @@ if __name__ == "__main__":
     with open(test_list, "r") as f:
         test_samples = [line.strip() for line in f.readlines()]
 
-    global_mse, global_cos, global_count = 0.0, 0.0, 0
-    per_sample_results = []
-
+    # === Group samples by subject ===
+    subject_groups = {}
     for sample in test_samples:
-        eeg_path  = os.path.join(data_root, f"EEG_{feature_type}", sample + ".npy")
-        blip_path = os.path.join(data_root, "BLIP_embeddings", sample + ".npy")
+        # subject name assumed to be before first slash (e.g. sub1/Block1/class00_clip01)
+        subject = sample.split("/")[0]
+        subject_groups.setdefault(subject, []).append(sample)
 
-        if not os.path.exists(eeg_path) or not os.path.exists(blip_path):
-            continue
+    # === Sample 5 per subject ===
+    sampled = {}
+    for subj, samples in subject_groups.items():
+        if len(samples) <= 5:
+            chosen = samples
+        else:
+            chosen = random.sample(samples, 5)
+        sampled[subj] = chosen
 
-        eeg = np.load(eeg_path).reshape(-1)
-        blip = np.load(blip_path).reshape(-1)
+    # === Evaluation ===
+    global_mse, global_cos, global_count = 0.0, 0.0, 0
+    per_subject_results = {}
 
-        eeg_scaled = scaler.transform([eeg])[0]
-        eeg_tensor = torch.tensor(eeg_scaled, dtype=torch.float32).unsqueeze(0).cuda()
-        blip_tensor = torch.tensor(blip, dtype=torch.float32).cuda()
+    for subj, samples in sampled.items():
+        subj_mse, subj_cos, subj_count = 0.0, 0.0, 0
 
-        with torch.no_grad():
-            pred = model(eeg_tensor).squeeze(0)
+        for sample in samples:
+            eeg_path  = os.path.join(data_root, f"EEG_{feature_type}", sample + ".npy")
+            blip_path = os.path.join(data_root, "BLIP_embeddings", sample.split("/")[-1] + ".npy")  # strip block/subject for BLIP
 
-        mse = F.mse_loss(pred, blip_tensor).item()
-        cos = cosine_similarity(pred, blip_tensor)
+            if not os.path.exists(eeg_path) or not os.path.exists(blip_path):
+                print(f"[WARNING] Missing files for {sample}")
+                continue
 
-        per_sample_results.append((sample, mse, cos))
-        global_mse += mse
-        global_cos += cos
-        global_count += 1
+            eeg = np.load(eeg_path).reshape(-1)
+            blip = np.load(blip_path).reshape(-1)
 
-        if global_count % 50 == 0:
-            print(f"[{global_count}] {sample} | MSE={mse:.6f}, Cosine={cos:.6f}")
+            eeg_scaled = scaler.transform([eeg])[0]
+            eeg_tensor = torch.tensor(eeg_scaled, dtype=torch.float32).unsqueeze(0).cuda()
+            blip_tensor = torch.tensor(blip, dtype=torch.float32).cuda()
+
+            with torch.no_grad():
+                pred = model(eeg_tensor).squeeze(0)
+
+            mse = F.mse_loss(pred, blip_tensor).item()
+            cos = cosine_similarity(pred, blip_tensor)
+
+            subj_mse += mse
+            subj_cos += cos
+            subj_count += 1
+
+        if subj_count > 0:
+            subj_avg_mse = subj_mse / subj_count
+            subj_avg_cos = subj_cos / subj_count
+            per_subject_results[subj] = (subj_avg_mse, subj_avg_cos)
+
+            global_mse += subj_mse
+            global_cos += subj_cos
+            global_count += subj_count
+
+            print(f"{subj} | Avg MSE={subj_avg_mse:.6f}, Avg Cosine={subj_avg_cos:.6f}")
 
     # === Global averages ===
     avg_mse = global_mse / global_count
     avg_cos = global_cos / global_count
 
-    print("\n=== Global Averages across all test samples ===")
+    print("\n=== Global Averages across all subjects ===")
     print(f"Average MSE: {avg_mse:.6f}")
     print(f"Average Cosine similarity: {avg_cos:.6f}")
 
@@ -226,8 +254,8 @@ if __name__ == "__main__":
         f.write(f"Checkpoint: {ckpt_file}\n")
         f.write(f"Feature type: {feature_type}\n\n")
 
-        for sample, mse, cos in per_sample_results:
-            f.write(f"{sample} | MSE={mse:.6f}, Cosine={cos:.6f}\n")
+        for subj, (mse, cos) in per_subject_results.items():
+            f.write(f"{subj} | Avg MSE={mse:.6f}, Avg Cosine={cos:.6f}\n")
 
         f.write("\n=== Global Averages ===\n")
         f.write(f"Average MSE: {avg_mse:.6f}\n")
