@@ -1,6 +1,5 @@
 # ==========================================
-# Semantic Predictor Upgraded Evaluation
-# Prototype Classification (1 Sample Per Class, Top-1 and Top-5)
+# Semantic Predictor Upgraded Evaluation (with diagnostics)
 # ==========================================
 
 import os
@@ -17,7 +16,6 @@ from collections import defaultdict
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(repo_root)
 
-# Import encoders from core_files
 from core_files.models import eegnet, shallownet, deepnet, tsconv, conformer, mlpnet
 
 # === Wrapper for windowed encoders ===
@@ -29,23 +27,19 @@ class WindowEncoderWrapper(torch.nn.Module):
     def forward(self, x):  # x: (B,7,62,100)
         B, W, C, T = x.shape
         x = x.view(B * W, 1, C, T)
-        feats = self.base(x)   # (B*W, out_dim)
+        feats = self.base(x)
         feats = feats.view(B, W, -1)
         return feats.mean(1)
 
 
-# ==========================================
-# Cosine similarity helper
-# ==========================================
+# === Cosine similarity ===
 def cosine_similarity(a, b):
     a = F.normalize(a, dim=-1)
     b = F.normalize(b, dim=-1)
     return (a * b).sum().item()
 
 
-# ==========================================
-# Build class prototypes from one training bundle
-# ==========================================
+# === Build class prototypes ===
 def build_class_prototypes(bundle_path):
     data = np.load(bundle_path, allow_pickle=True)
     blip_embeddings = data["BLIP_embeddings"]  # (N,77,768)
@@ -63,9 +57,7 @@ def build_class_prototypes(bundle_path):
     return prototypes
 
 
-# ==========================================
-# Model builder
-# ==========================================
+# === Model builder ===
 def build_model(feature_type, encoder_type, output_dim, input_dim=None):
     if feature_type in ["DE", "PSD"]:
         return mlpnet(out_dim=output_dim, input_dim=input_dim)
@@ -88,9 +80,7 @@ def build_model(feature_type, encoder_type, output_dim, input_dim=None):
         raise ValueError(f"Invalid feature type: {feature_type}")
 
 
-# ==========================================
-# Main evaluation
-# ==========================================
+# === Main ===
 if __name__ == "__main__":
     bundle_root = "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles"
     eeg_root    = "/content/drive/MyDrive/EEG2Video_data/processed"
@@ -109,20 +99,17 @@ if __name__ == "__main__":
     ckpt_path = os.path.join(ckpt_root, ckpt_file)
     scaler_path = os.path.join(ckpt_root, f"scaler_{tag}.pkl")
 
-    # Parse tag
     parts = tag.split("_")
-    feature_type = parts[-3]     # DE / PSD / windows
-    encoder_type = parts[-2]     # mlp / eegnet / shallownet / deepnet / tsconv / conformer
+    feature_type = parts[-3]
+    encoder_type = parts[-2]
 
     print(f"\nLoading checkpoint: {ckpt_file}")
     print(f"Loading scaler: scaler_{tag}.pkl")
     print(f"Detected feature type: {feature_type}, encoder: {encoder_type}")
 
-    # Load scaler
     with open(scaler_path, "rb") as f:
         scaler = pickle.load(f)
 
-    # Build model
     input_dim = scaler.mean_.shape[0]
     output_dim = 77 * 768
     model = build_model(feature_type, encoder_type, output_dim, input_dim).cuda()
@@ -130,13 +117,18 @@ if __name__ == "__main__":
     model.load_state_dict(checkpoint["state_dict"])
     model.eval()
 
-    # Prototypes
     train_bundles = sorted([f for f in os.listdir(bundle_root) if f.endswith("_train.npz")])
     proto_bundle = os.path.join(bundle_root, train_bundles[0])
     print(f"\nBuilding BLIP prototypes from: {train_bundles[0]}")
     prototypes = build_class_prototypes(proto_bundle)
 
-    # Test list
+    # quick prototype sanity: check similarity between two random classes
+    proto_ids = list(prototypes.keys())
+    if len(proto_ids) >= 2:
+        p1, p2 = random.sample(proto_ids, 2)
+        sim = cosine_similarity(torch.tensor(prototypes[p1]), torch.tensor(prototypes[p2]))
+        print(f"Prototype similarity between class {p1} and {p2}: {sim:.4f}")
+
     test_list_path = os.path.join(eeg_root, f"EEG_{feature_type}", "test_list.txt")
     with open(test_list_path, "r") as f:
         test_lines = [line.strip() for line in f if line.strip()]
@@ -173,8 +165,13 @@ if __name__ == "__main__":
         else:
             raise ValueError(f"Unsupported feature type: {feature_type}")
 
+        # log scaled stats
+        print(f"\nSample: {rel_path} | Scaled EEG mean={eeg_scaled.mean():.4f}, std={eeg_scaled.std():.4f}")
+
         with torch.no_grad():
             pred_emb = model(eeg_tensor).squeeze(0).cpu().numpy()
+
+        print(f"Pred emb norm: {np.linalg.norm(pred_emb):.4f}")
 
         sims = {cid: cosine_similarity(torch.tensor(pred_emb), torch.tensor(proto)) for cid, proto in prototypes.items()}
         ranked = sorted(sims.items(), key=lambda x: x[1], reverse=True)
@@ -188,28 +185,10 @@ if __name__ == "__main__":
         correct_top5 += int(t5)
         total += 1
 
-        print(f"{rel_path} | True={true_class} Pred@1={top1_class} Top-5={top5_classes} | {'Correct' if t1 else 'Wrong'} (Top-1)")
+        print(f"True={true_class} Pred@1={top1_class} Top-5={top5_classes} | {'Correct' if t1 else 'Wrong'}")
 
     acc_top1 = correct_top1 / total if total > 0 else 0.0
     acc_top5 = correct_top5 / total if total > 0 else 0.0
     print(f"\n=== Classification Accuracy ===")
     print(f"Top-1 Accuracy: {acc_top1:.4f} ({correct_top1}/{total})")
     print(f"Top-5 Accuracy: {acc_top5:.4f} ({correct_top5}/{total})")
-
-    # Save log
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = os.path.join(log_dir, f"class_eval_{tag}_{timestamp}.txt")
-    with open(log_file, "w") as f:
-        f.write(f"Checkpoint: {ckpt_file}\n")
-        f.write(f"Feature type: {feature_type}\n")
-        f.write(f"Encoder: {encoder_type}\n")
-        f.write(f"Prototype source: {train_bundles[0]}\n")
-        f.write(f"Samples tested: {total}\n")
-        f.write(f"Top-1 Accuracy: {acc_top1:.4f}\n")
-        f.write(f"Top-5 Accuracy: {acc_top5:.4f}\n\n")
-        f.write("=== Per-class results ===\n")
-        for cid in sorted(per_class_results.keys()):
-            t1, t5 = per_class_results[cid]
-            f.write(f"Class {cid:02d}: Top-1={'Correct' if t1 else 'Wrong'}, Top-5={'Correct' if t5 else 'Wrong'}\n")
-
-    print(f"\nResults saved to: {log_file}")
