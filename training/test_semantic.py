@@ -178,7 +178,7 @@ if __name__ == "__main__":
 
     # === Load test list ===
     with open(test_list, "r") as f:
-        test_samples = [line.strip() for line in f.readlines()]
+        test_samples = [line.strip().replace(".npy", "") for line in f.readlines()]
 
     # === Group samples by subject ===
     subject_groups = {}
