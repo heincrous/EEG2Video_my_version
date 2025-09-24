@@ -1,5 +1,6 @@
 # ==========================================
-# Semantic Predictor Upgraded Evaluation (Prototype Classification, 1 Sample Per Class)
+# Semantic Predictor Upgraded Evaluation
+# Prototype Classification (1 Sample Per Class, Top-1 and Top-5)
 # ==========================================
 
 import os
@@ -35,7 +36,8 @@ def build_class_prototypes(bundle_path):
     # Group embeddings by class
     class_groups = defaultdict(list)
     for i, key in enumerate(keys):
-        class_id = int(key.split("/")[1].replace("class", ""))
+        class_token = key.split("/")[1].split("_")[0]   # "class17"
+        class_id = int(class_token.replace("class", ""))  # 17
         emb = blip_embeddings[i].reshape(-1)  # flatten
         class_groups[class_id].append(emb)
 
@@ -122,7 +124,9 @@ if __name__ == "__main__":
 
     print(f"\nEvaluating {len(chosen)} samples (1 per class)")
 
-    correct = 0
+    # === Evaluation ===
+    correct_top1 = 0
+    correct_top5 = 0
     total = 0
     per_class_results = {}
 
@@ -139,20 +143,31 @@ if __name__ == "__main__":
 
         # Compare to prototypes
         sims = {cid: cosine_similarity(torch.tensor(pred_emb), torch.tensor(proto)) for cid, proto in prototypes.items()}
-        pred_class = max(sims, key=sims.get)
+        ranked = sorted(sims.items(), key=lambda x: x[1], reverse=True)
+        top1_class = ranked[0][0]
+        top5_classes = [cid for cid, _ in ranked[:5]]
 
-        correct_flag = (pred_class == true_class)
-        per_class_results[true_class] = correct_flag
+        top1_flag = (top1_class == true_class)
+        top5_flag = (true_class in top5_classes)
 
-        if correct_flag:
-            correct += 1
+        per_class_results[true_class] = (top1_flag, top5_flag)
+
+        if top1_flag:
+            correct_top1 += 1
+        if top5_flag:
+            correct_top5 += 1
         total += 1
 
-        print(f"{rel_path} | True={true_class} Pred={pred_class} | {'Correct' if correct_flag else 'Wrong'}")
+        print(f"{rel_path} | True={true_class} Pred@1={top1_class} "
+              f"Top-5={top5_classes} | "
+              f"{'Correct' if top1_flag else 'Wrong'} (Top-1)")
 
-    acc = correct / total if total > 0 else 0.0
+    acc_top1 = correct_top1 / total if total > 0 else 0.0
+    acc_top5 = correct_top5 / total if total > 0 else 0.0
+
     print(f"\n=== Classification Accuracy ===")
-    print(f"Top-1 Accuracy: {acc:.4f} ({correct}/{total})")
+    print(f"Top-1 Accuracy: {acc_top1:.4f} ({correct_top1}/{total})")
+    print(f"Top-5 Accuracy: {acc_top5:.4f} ({correct_top5}/{total})")
 
     # === Save log ===
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -163,11 +178,13 @@ if __name__ == "__main__":
         f.write(f"Feature type: {feature_type}\n")
         f.write(f"Prototype source: {train_bundles[0]}\n")
         f.write(f"Samples tested: {total}\n")
-        f.write(f"Top-1 Accuracy: {acc:.4f}\n\n")
+        f.write(f"Top-1 Accuracy: {acc_top1:.4f}\n")
+        f.write(f"Top-5 Accuracy: {acc_top5:.4f}\n\n")
 
         f.write("=== Per-class results ===\n")
         for cid in sorted(per_class_results.keys()):
-            res = "Correct" if per_class_results[cid] else "Wrong"
-            f.write(f"Class {cid:02d}: {res}\n")
+            t1, t5 = per_class_results[cid]
+            f.write(f"Class {cid:02d}: Top-1={'Correct' if t1 else 'Wrong'}, "
+                    f"Top-5={'Correct' if t5 else 'Wrong'}\n")
 
     print(f"\nResults saved to: {log_file}")
