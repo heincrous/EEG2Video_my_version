@@ -3,7 +3,7 @@ ALIGN BLIP CAPTIONS TO CLIPS (Stable Diffusion v1-4 CLIP embeddings)
 ----------------------------------------------------------------------
 Uses the tokenizer + text_encoder from stable-diffusion-v1-4 so that
 embeddings exactly match those used during diffusion training.
-Each embedding is [77,768] (last_hidden_state).
+Each embedding is [77,768] from outputs.last_hidden_state.
 """
 
 import os
@@ -73,8 +73,9 @@ for block_id in range(7):
         ).to(device)
 
         with torch.no_grad():
-            outputs = text_encoder(**tokens)
-            seq_emb = outputs.last_hidden_state  # [B,77,768]
+            # EXACTLY what diffusion training does:
+            # text_encoder(prompt_ids)[0] = last_hidden_state
+            seq_emb = text_encoder(**tokens)[0]  # [B,77,768]
 
         emb = seq_emb.cpu().numpy()
 
