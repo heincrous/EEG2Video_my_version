@@ -17,7 +17,6 @@ from tqdm import tqdm
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(repo_root)
 
-# Import encoders from core_files
 from core_files.models import eegnet, shallownet, deepnet, tsconv, conformer, mlpnet
 
 
@@ -39,7 +38,7 @@ class EEGTextDataset(Dataset):
             else:
                 raise ValueError("feature_type must be one of: DE / PSD / windows")
 
-            text = data["BLIP_embeddings"].reshape(data["BLIP_embeddings"].shape[0], -1)  # (N,59136)
+            text = data["BLIP_embeddings"]  # (N,77,768)
 
             eeg_all.append(eeg)
             text_all.append(text)
@@ -76,21 +75,35 @@ class WindowEncoderWrapper(nn.Module):
     def __init__(self, base_encoder, out_dim):
         super().__init__()
         self.base = base_encoder
+        self.out_dim = out_dim
 
     def forward(self, x):  # x: (B,7,62,100)
         B, W, C, T = x.shape
-        x = x.view(B*W, 1, C, T)     # feed each window separately
+        x = x.view(B*W, 1, C, T)
         feats = self.base(x)         # (B*W, out_dim)
         feats = feats.view(B, W, -1)
-        return feats.mean(1)         # average across 7 windows
+        return feats.mean(1)
+
+
+# ==========================================
+# Reshape wrapper (flat -> (77,768))
+# ==========================================
+class ReshapeWrapper(nn.Module):
+    def __init__(self, base_model):
+        super().__init__()
+        self.base = base_model
+
+    def forward(self, x):
+        out = self.base(x)  # (B,59136)
+        return out.view(out.size(0), 77, 768)
 
 
 # ==========================================
 # Loss functions
 # ==========================================
 def cosine_loss(pred, target):
-    pred = F.normalize(pred, dim=-1)
-    target = F.normalize(target, dim=-1)
+    pred = F.normalize(pred.view(pred.size(0), -1), dim=-1)
+    target = F.normalize(target.view(target.size(0), -1), dim=-1)
     return 1 - (pred * target).sum(dim=-1).mean()
 
 
@@ -109,6 +122,7 @@ if __name__ == "__main__":
     all_bundles = sorted([f for f in os.listdir(bundle_dir) if f.endswith("_train.npz")])
     subjects    = [f.replace("_train.npz", "") for f in all_bundles]
 
+    # === Choose subjects ===
     print("\nSelect subject(s):")
     for idx, subj in enumerate(subjects):
         print(f"  [{idx}] {subj}")
@@ -122,37 +136,17 @@ if __name__ == "__main__":
         dataset   = EEGTextDataset([test_file], feature_type=feature_type, fit_scaler=True, max_samples=10)
         dataloader = DataLoader(dataset, batch_size=2, shuffle=False)
         eeg, txt = next(iter(dataloader))
-        output_dim = txt.shape[1]
+        output_dim = 77*768
 
         print("\nDry run shapes:")
         print("EEG batch:", eeg.shape, "Text batch:", txt.shape)
 
-        if feature_type in ["DE", "PSD"]:
-            input_dim = dataset.eeg.shape[1] * dataset.eeg.shape[2]
-            model = mlpnet(out_dim=output_dim, input_dim=input_dim)
-        elif feature_type == "windows":
-            if encoder_type == "mlp":
-                input_dim = dataset.eeg.shape[1] * dataset.eeg.shape[2] * dataset.eeg.shape[3]
-                model = mlpnet(out_dim=output_dim, input_dim=input_dim)
-            elif encoder_type == "eegnet":
-                model = WindowEncoderWrapper(eegnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
-            elif encoder_type == "shallownet":
-                model = WindowEncoderWrapper(shallownet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
-            elif encoder_type == "deepnet":
-                model = WindowEncoderWrapper(deepnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
-            elif encoder_type == "tsconv":
-                model = WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
-            elif encoder_type == "conformer":
-                model = WindowEncoderWrapper(conformer(out_dim=output_dim), out_dim=output_dim)
-            else:
-                raise ValueError("Unknown encoder type")
-        else:
-            raise ValueError("Invalid feature type")
+        model = mlpnet(out_dim=output_dim, input_dim=eeg[0].numel())
+        model = ReshapeWrapper(model)
 
         with torch.no_grad():
             out = model(eeg)
-        print("Forward pass OK — model output:", out.shape)
-        print("\nDry run successful. Exiting.")
+        print("Forward pass OK — model output:", out.shape)  # (B,77,768)
         exit()
 
     # === Select files ===
@@ -167,22 +161,14 @@ if __name__ == "__main__":
     dataset    = EEGTextDataset(selected_files, feature_type=feature_type, fit_scaler=True)
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=2, pin_memory=True)
 
-    # === Print scaler summary ===
-    print("\nScaler summary (training data):")
-    print(f"  Mean = {dataset.scaler.mean_.mean():.4f}, Std = {dataset.scaler.scale_.mean():.4f}")
-    print(f"  Feature dim = {dataset.scaler.mean_.shape[0]}")
-
     output_dim = 77*768
-    print(f"\nTraining Semantic Predictor ({encoder_type}) on {feature_type} features with {loss_type} loss")
-    print(f"Samples: {len(dataset)}")
+    input_dim  = dataset.eeg.shape[1] * np.prod(dataset.eeg.shape[2:])  # flatten EEG shape
 
     # === Model selection ===
     if feature_type in ["DE", "PSD"]:
-        input_dim = dataset.eeg.shape[1] * dataset.eeg.shape[2]
         model = mlpnet(out_dim=output_dim, input_dim=input_dim).cuda()
     elif feature_type == "windows":
         if encoder_type == "mlp":
-            input_dim = dataset.eeg.shape[1] * dataset.eeg.shape[2] * dataset.eeg.shape[3]
             model = mlpnet(out_dim=output_dim, input_dim=input_dim).cuda()
         elif encoder_type == "eegnet":
             model = WindowEncoderWrapper(eegnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim).cuda()
@@ -199,9 +185,14 @@ if __name__ == "__main__":
     else:
         raise ValueError("Invalid feature type")
 
+    # Wrap to reshape into (77,768)
+    model = ReshapeWrapper(model)
+
+    # === Optimizer ===
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(dataloader))
 
+    # === Training ===
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0.0
@@ -209,7 +200,7 @@ if __name__ == "__main__":
             for eeg, text in dataloader:
                 eeg, text = eeg.cuda(non_blocking=True), text.cuda(non_blocking=True)
                 optimizer.zero_grad()
-                pred = model(eeg)
+                pred = model(eeg)  # (B,77,768)
                 if loss_type == "mse":
                     loss = F.mse_loss(pred, text)
                 else:
