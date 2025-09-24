@@ -29,11 +29,11 @@ class EEGTextDataset(Dataset):
             data = np.load(f, allow_pickle=True)
 
             if feature_type == "DE":
-                eeg = data["EEG_DE"]
+                eeg = data["EEG_DE"]        # (N,62,5)
             elif feature_type == "PSD":
-                eeg = data["EEG_PSD"]
+                eeg = data["EEG_PSD"]       # (N,62,5)
             elif feature_type == "windows":
-                eeg = data["EEG_windows"]
+                eeg = data["EEG_windows"]   # (N,7,62,100)
             else:
                 raise ValueError("feature_type must be one of: DE / PSD / windows")
 
@@ -102,16 +102,10 @@ def cosine_loss(pred, target):
     return 1 - (pred * target).sum(dim=-1).mean()
 
 def contrastive_loss(pred, target, temperature=0.07):
-    """
-    InfoNCE-style loss. Treat pred<->target pairs as positives, all others in batch as negatives.
-    pred, target: (B,77,768)
-    """
     B = pred.size(0)
-    # flatten tokens → global embeddings
     pred = F.normalize(pred.view(B, -1), dim=-1)     # (B,D)
     target = F.normalize(target.view(B, -1), dim=-1) # (B,D)
-
-    logits = pred @ target.t() / temperature  # (B,B)
+    logits = pred @ target.t() / temperature         # (B,B)
     labels = torch.arange(B, device=pred.device)
     return F.cross_entropy(logits, labels)
 
@@ -137,6 +131,9 @@ if __name__ == "__main__":
     choice     = input("\nEnter subject indices (comma separated), 'all', or 'check': ").strip()
     num_epochs = int(input("\nEnter number of epochs (default 50): ") or 50)
 
+    # =======================
+    # Dry run check
+    # =======================
     if choice.lower() == "check":
         test_file = os.path.join(bundle_dir, all_bundles[0])
         dataset   = EEGTextDataset([test_file], feature_type=feature_type, fit_scaler=True, max_samples=10)
@@ -147,14 +144,36 @@ if __name__ == "__main__":
         print("\nDry run shapes:")
         print("EEG batch:", eeg.shape, "Text batch:", txt.shape)
 
-        model = mlpnet(out_dim=output_dim, input_dim=eeg[0].numel())
-        model = ReshapeWrapper(model, n_tokens=77)
+        # Same logic as training setup
+        if feature_type in ["DE", "PSD"]:
+            model = mlpnet(out_dim=output_dim, input_dim=eeg[0].numel())
+        elif feature_type == "windows":
+            if encoder_type == "mlp":
+                model = mlpnet(out_dim=output_dim, input_dim=eeg[0].numel())
+            elif encoder_type == "eegnet":
+                model = WindowEncoderWrapper(eegnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
+            elif encoder_type == "shallownet":
+                model = WindowEncoderWrapper(shallownet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
+            elif encoder_type == "deepnet":
+                model = WindowEncoderWrapper(deepnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
+            elif encoder_type == "tsconv":
+                model = WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
+            elif encoder_type == "conformer":
+                model = WindowEncoderWrapper(conformer(out_dim=output_dim), out_dim=output_dim)
+            else:
+                raise ValueError("Unknown encoder type")
+        else:
+            raise ValueError("Invalid feature type")
 
+        model = ReshapeWrapper(model, n_tokens=77)
         with torch.no_grad():
             out = model(eeg)
         print("Forward pass OK — model output:", out.shape)  # (B,77,768)
         exit()
 
+    # =======================
+    # Training
+    # =======================
     if choice.lower() == "all":
         selected_files = [os.path.join(bundle_dir, f) for f in all_bundles]
         tag = f"all_{feature_type}_{encoder_type}_{loss_type}"

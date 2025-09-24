@@ -1,10 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
 from torch import Tensor
 from einops import rearrange
-from einops.layers.torch import Rearrange, Reduce
 
 
 # ================================
@@ -24,8 +22,8 @@ class shallownet(nn.Module):
     def __init__(self, out_dim, C, T):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv2d(1, 40, (1, 25), (1, 1)),
-            nn.Conv2d(40, 40, (C, 1), (1, 1)),
+            nn.Conv2d(1, 40, (1, 25)),
+            nn.Conv2d(40, 40, (C, 1)),
             nn.BatchNorm2d(40),
             nn.ELU(),
             nn.AvgPool2d((1, 51), (1, 5)),
@@ -34,10 +32,13 @@ class shallownet(nn.Module):
         flat_dim = _get_flattened_size(self.net, C, T)
         self.out = nn.Linear(flat_dim, out_dim)
 
-    def forward(self, x):
+    def forward(self, x):  # (B,7,62,100)
+        B, W, C, T = x.shape
+        x = x.view(B*W, 1, C, T)
         x = self.net(x)
         x = x.view(x.size(0), -1)
-        return self.out(x)
+        x = self.out(x)
+        return x.view(B, W, -1)
 
 
 # ================================
@@ -47,38 +48,41 @@ class deepnet(nn.Module):
     def __init__(self, out_dim, C, T):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv2d(1, 25, (1, 10), (1, 1)),
-            nn.Conv2d(25, 25, (C, 1), (1, 1)),
+            nn.Conv2d(1, 25, (1, 10)),
+            nn.Conv2d(25, 25, (C, 1)),
             nn.BatchNorm2d(25),
             nn.ELU(),
-            nn.MaxPool2d((1, 2), (1, 2)),
+            nn.MaxPool2d((1, 2)),
             nn.Dropout(0.5),
 
-            nn.Conv2d(25, 50, (1, 10), (1, 1)),
+            nn.Conv2d(25, 50, (1, 10)),
             nn.BatchNorm2d(50),
             nn.ELU(),
-            nn.MaxPool2d((1, 2), (1, 2)),
+            nn.MaxPool2d((1, 2)),
             nn.Dropout(0.5),
 
-            nn.Conv2d(50, 100, (1, 10), (1, 1)),
+            nn.Conv2d(50, 100, (1, 10)),
             nn.BatchNorm2d(100),
             nn.ELU(),
-            nn.MaxPool2d((1, 2), (1, 2)),
+            nn.MaxPool2d((1, 2)),
             nn.Dropout(0.5),
 
-            nn.Conv2d(100, 200, (1, 10), (1, 1)),
+            nn.Conv2d(100, 200, (1, 10)),
             nn.BatchNorm2d(200),
             nn.ELU(),
-            nn.MaxPool2d((1, 2), (1, 2)),
+            nn.MaxPool2d((1, 2)),
             nn.Dropout(0.5),
         )
         flat_dim = _get_flattened_size(self.net, C, T)
         self.out = nn.Linear(flat_dim, out_dim)
 
-    def forward(self, x):
+    def forward(self, x):  # (B,7,62,100)
+        B, W, C, T = x.shape
+        x = x.view(B*W, 1, C, T)
         x = self.net(x)
         x = x.view(x.size(0), -1)
-        return self.out(x)
+        x = self.out(x)
+        return x.view(B, W, -1)
 
 
 # ================================
@@ -88,26 +92,29 @@ class eegnet(nn.Module):
     def __init__(self, out_dim, C, T):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv2d(1, 8, (1, 64), (1, 1)),
+            nn.Conv2d(1, 8, (1, 64)),
             nn.BatchNorm2d(8),
-            nn.Conv2d(8, 16, (C, 1), (1, 1)),
+            nn.Conv2d(8, 16, (C, 1)),
             nn.BatchNorm2d(16),
             nn.ELU(),
-            nn.AvgPool2d((1, 2), (1, 2)),
+            nn.AvgPool2d((1, 2)),
             nn.Dropout(0.5),
-            nn.Conv2d(16, 16, (1, 16), (1, 1)),
+            nn.Conv2d(16, 16, (1, 16)),
             nn.BatchNorm2d(16),
             nn.ELU(),
-            nn.AvgPool2d((1, 2), (1, 2)),
+            nn.AvgPool2d((1, 2)),
             nn.Dropout2d(0.5),
         )
         flat_dim = _get_flattened_size(self.net, C, T)
         self.out = nn.Linear(flat_dim, out_dim)
 
-    def forward(self, x):
+    def forward(self, x):  # (B,7,62,100)
+        B, W, C, T = x.shape
+        x = x.view(B*W, 1, C, T)
         x = self.net(x)
         x = x.view(x.size(0), -1)
-        return self.out(x)
+        x = self.out(x)
+        return x.view(B, W, -1)
 
 
 # ================================
@@ -117,11 +124,11 @@ class tsconv(nn.Module):
     def __init__(self, out_dim, C, T):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv2d(1, 40, (1, 25), (1, 1)),
+            nn.Conv2d(1, 40, (1, 25)),
             nn.AvgPool2d((1, 51), (1, 5)),
             nn.BatchNorm2d(40),
             nn.ELU(),
-            nn.Conv2d(40, 40, (C, 1), (1, 1)),
+            nn.Conv2d(40, 40, (C, 1)),
             nn.BatchNorm2d(40),
             nn.ELU(),
             nn.Dropout(0.5),
@@ -129,10 +136,13 @@ class tsconv(nn.Module):
         flat_dim = _get_flattened_size(self.net, C, T)
         self.out = nn.Linear(flat_dim, out_dim)
 
-    def forward(self, x):
+    def forward(self, x):  # (B,7,62,100)
+        B, W, C, T = x.shape
+        x = x.view(B*W, 1, C, T)
         x = self.net(x)
         x = x.view(x.size(0), -1)
-        return self.out(x)
+        x = self.out(x)
+        return x.view(B, W, -1)
 
 
 # ================================
@@ -142,7 +152,7 @@ class mlpnet(nn.Module):
     def __init__(self, out_dim, input_dim=310):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Flatten(),
+            nn.Flatten(),  # (B,62,5) -> (B,310)
             nn.Linear(input_dim, 10000),
             nn.ReLU(),
             nn.Linear(10000, 10000),
@@ -151,10 +161,10 @@ class mlpnet(nn.Module):
             nn.ReLU(),
             nn.Linear(10000, 10000),
             nn.ReLU(),
-            nn.Linear(10000, out_dim)  # out_dim = 77*768 = 59136
+            nn.Linear(10000, out_dim)
         )
 
-    def forward(self, x):
+    def forward(self, x):  # x already flattened to (B,310) in your script
         return self.net(x)
 
 
@@ -162,25 +172,22 @@ class mlpnet(nn.Module):
 # Conformer (simplified encoder + transformer)
 # ================================
 class PatchEmbedding(nn.Module):
-    def __init__(self, emb_size=40, C=62):
+    def __init__(self, emb_size=40, C=62, T=100):
         super().__init__()
-        self.shallownet = nn.Sequential(
-            nn.Conv2d(1, 40, (1, 25), (1, 1)),
-            nn.Conv2d(40, 40, (C, 1), (1, 1)),
+        self.net = nn.Sequential(
+            nn.Conv2d(1, 40, (C, 25)),
             nn.BatchNorm2d(40),
             nn.ELU(),
-            nn.AvgPool2d((1, 75), (1, 15)),  # slice time into patches
-            nn.Dropout(0.5),
-        )
-        self.projection = nn.Sequential(
-            nn.Conv2d(40, emb_size, (1, 1), stride=(1, 1)),
-            Rearrange('b e (h) (w) -> b (h w) e'),
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.Linear(40, emb_size),
         )
 
-    def forward(self, x: Tensor) -> Tensor:
-        x = self.shallownet(x)
-        x = self.projection(x)
-        return x
+    def forward(self, x):  # (B,7,62,100)
+        B, W, C, T = x.shape
+        x = x.view(B*W, 1, C, T)
+        out = self.net(x)            # (B*W, emb_size)
+        return out.view(B, W, -1)    # (B,7,emb_size)
 
 
 class MultiHeadAttention(nn.Module):
@@ -202,26 +209,20 @@ class MultiHeadAttention(nn.Module):
         if mask is not None:
             fill_value = torch.finfo(torch.float32).min
             energy.mask_fill(~mask, fill_value)
-
-        scaling = self.emb_size ** (1 / 2)
+        scaling = self.emb_size ** 0.5
         att = F.softmax(energy / scaling, dim=-1)
         att = self.att_drop(att)
-        out = torch.einsum('bhal, bhlv -> bhav ', att, values)
+        out = torch.einsum('bhal, bhlv -> bhav', att, values)
         out = rearrange(out, "b h n d -> b n (h d)")
-        out = self.projection(out)
-        return out
+        return self.projection(out)
 
 
 class ResidualAdd(nn.Module):
     def __init__(self, fn):
         super().__init__()
         self.fn = fn
-
     def forward(self, x, **kwargs):
-        res = x
-        x = self.fn(x, **kwargs)
-        x += res
-        return x
+        return x + self.fn(x, **kwargs)
 
 
 class FeedForwardBlock(nn.Sequential):
@@ -235,12 +236,8 @@ class FeedForwardBlock(nn.Sequential):
 
 
 class TransformerEncoderBlock(nn.Sequential):
-    def __init__(self,
-                 emb_size,
-                 num_heads=10,
-                 drop_p=0.5,
-                 forward_expansion=4,
-                 forward_drop_p=0.5):
+    def __init__(self, emb_size, num_heads=10, drop_p=0.5,
+                 forward_expansion=4, forward_drop_p=0.5):
         super().__init__(
             ResidualAdd(nn.Sequential(
                 nn.LayerNorm(emb_size),
@@ -249,8 +246,8 @@ class TransformerEncoderBlock(nn.Sequential):
             )),
             ResidualAdd(nn.Sequential(
                 nn.LayerNorm(emb_size),
-                FeedForwardBlock(
-                    emb_size, expansion=forward_expansion, drop_p=forward_drop_p),
+                FeedForwardBlock(emb_size, expansion=forward_expansion,
+                                 drop_p=forward_drop_p),
                 nn.Dropout(drop_p)
             ))
         )
@@ -264,9 +261,7 @@ class TransformerEncoder(nn.Sequential):
 class ClassificationHead(nn.Module):
     def __init__(self, emb_size, out_dim):
         super().__init__()
-        self.fc = nn.Sequential(
-            nn.Linear(emb_size * 7, out_dim)  # assume ~7 patches
-        )
+        self.fc = nn.Linear(emb_size * 7, out_dim)  # always 7 tokens
 
     def forward(self, x):
         x = x.contiguous().view(x.size(0), -1)
@@ -274,9 +269,9 @@ class ClassificationHead(nn.Module):
 
 
 class conformer(nn.Sequential):
-    def __init__(self, out_dim, emb_size=40, depth=3, C=62):
+    def __init__(self, out_dim, emb_size=40, depth=3, C=62, T=100):
         super().__init__(
-            PatchEmbedding(emb_size, C=C),
+            PatchEmbedding(emb_size, C=C, T=T),
             TransformerEncoder(depth, emb_size),
             ClassificationHead(emb_size, out_dim),
         )
