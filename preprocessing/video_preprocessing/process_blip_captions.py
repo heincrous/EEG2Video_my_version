@@ -43,7 +43,7 @@ if hidden_size != 768:
 ordinals = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th"]
 
 # batching setup
-batch_size = 64
+batch_size = 256
 
 for block_id in range(7):
     fname = f"{ordinals[block_id]}_10min.txt"
