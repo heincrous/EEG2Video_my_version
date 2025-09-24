@@ -167,6 +167,11 @@ if __name__ == "__main__":
     dataset    = EEGTextDataset(selected_files, feature_type=feature_type, fit_scaler=True)
     dataloader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=2, pin_memory=True)
 
+    # === Print scaler summary ===
+    print("\nScaler summary (training data):")
+    print(f"  Mean = {dataset.scaler.mean_.mean():.4f}, Std = {dataset.scaler.scale_.mean():.4f}")
+    print(f"  Feature dim = {dataset.scaler.mean_.shape[0]}")
+
     output_dim = 77*768
     print(f"\nTraining Semantic Predictor ({encoder_type}) on {feature_type} features with {loss_type} loss")
     print(f"Samples: {len(dataset)}")
