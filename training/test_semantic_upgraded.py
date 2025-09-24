@@ -4,7 +4,6 @@
 # ==========================================
 
 import os
-import sys
 import pickle
 import random
 import numpy as np
@@ -13,11 +12,7 @@ import torch.nn.functional as F
 from datetime import datetime
 from collections import defaultdict
 
-# Add repo root so we can import core_files
-repo_root = "/content/EEG2Video_my_version"
-sys.path.append(repo_root)
-
-# Import encoders from core_files
+# === Repo imports ===
 from core_files.models import eegnet, shallownet, deepnet, tsconv, conformer, mlpnet
 
 # === Wrapper for windowed encoders ===
@@ -160,9 +155,18 @@ if __name__ == "__main__":
         class_token = next(p for p in parts if p.startswith("class"))
         true_class = int(class_token.replace("class", "").split("_")[0])
 
-        eeg = np.load(eeg_path).reshape(-1)
-        eeg_scaled = scaler.transform([eeg])[0]
-        eeg_tensor = torch.tensor(eeg_scaled, dtype=torch.float32).unsqueeze(0).cuda()
+        eeg = np.load(eeg_path)
+
+        if feature_type == "windows":
+            eeg_flat = eeg.reshape(-1)
+            eeg_scaled = scaler.transform([eeg_flat])[0]
+            eeg_tensor = torch.tensor(eeg_scaled.reshape(7,62,100), dtype=torch.float32).unsqueeze(0).cuda()
+        elif feature_type in ["DE","PSD"]:
+            eeg_flat = eeg.reshape(-1)
+            eeg_scaled = scaler.transform([eeg_flat])[0]
+            eeg_tensor = torch.tensor(eeg_scaled.reshape(62,5), dtype=torch.float32).unsqueeze(0).cuda()
+        else:
+            raise ValueError(f"Unsupported feature type: {feature_type}")
 
         with torch.no_grad():
             pred_emb = model(eeg_tensor).squeeze(0).cpu().numpy()
