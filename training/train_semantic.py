@@ -14,7 +14,7 @@ from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
 # Add repo root so we can import core_files
-repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+repo_root = "/content/EEG2Video_my_version"
 sys.path.append(repo_root)
 
 # Import encoders from core_files
@@ -68,9 +68,9 @@ class EEGTextDataset(Dataset):
         txt = self.text[idx]
 
         if eeg.ndim == 3:  # windows (7,62,100)
-            eeg = eeg  # keep as is
+            eeg = eeg
         elif eeg.ndim == 2:  # DE/PSD (62,5)
-            eeg = eeg  # keep as is
+            eeg = eeg
         else:
             raise ValueError(f"Unexpected EEG shape: {eeg.shape}")
 
@@ -106,8 +106,9 @@ def cosine_loss(pred, target):
 # Training loop
 # ==========================================
 if __name__ == "__main__":
-    bundle_dir = os.path.join(repo_root, "data/SubjectBundles")  # adjust if needed
-    save_root  = os.path.join(repo_root, "checkpoints/semantic_predictor")
+    # Use Google Drive paths
+    bundle_dir = "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles"
+    save_root  = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
     os.makedirs(save_root, exist_ok=True)
 
     feature_type = input("\nEnter feature type (DE / PSD / windows): ").strip()
@@ -157,7 +158,6 @@ if __name__ == "__main__":
         model = mlpnet(out_dim=output_dim, input_dim=input_dim).cuda()
     elif feature_type == "windows":
         if encoder_type == "mlp":
-            # Fallback: flatten windows for MLP
             input_dim = dataset.eeg.shape[1] * dataset.eeg.shape[2] * dataset.eeg.shape[3]
             model = mlpnet(out_dim=output_dim, input_dim=input_dim).cuda()
         elif encoder_type == "eegnet":
