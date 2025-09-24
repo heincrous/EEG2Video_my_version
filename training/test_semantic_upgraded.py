@@ -36,8 +36,9 @@ def build_class_prototypes(bundle_path):
     # Group embeddings by class
     class_groups = defaultdict(list)
     for i, key in enumerate(keys):
-        class_token = key.split("/")[1].split("_")[0]   # "class17"
-        class_id = int(class_token.replace("class", ""))  # 17
+        parts = key.split("/")
+        class_token = next(p for p in parts if p.startswith("class"))
+        class_id = int(class_token.replace("class", "").split("_")[0])
         emb = blip_embeddings[i].reshape(-1)  # flatten
         class_groups[class_id].append(emb)
 
@@ -113,7 +114,9 @@ if __name__ == "__main__":
     # === Group test samples by class ===
     class_groups = defaultdict(list)
     for rel_path in test_lines:
-        class_id = int(rel_path.split("/")[1].replace("class", "").split("_")[0])
+        parts = rel_path.split("/")
+        class_token = next(p for p in parts if p.startswith("class"))
+        class_id = int(class_token.replace("class", "").split("_")[0])
         class_groups[class_id].append(rel_path)
 
     # === Select one sample per class (40 total) ===
@@ -132,7 +135,10 @@ if __name__ == "__main__":
 
     for rel_path in chosen:
         eeg_path = os.path.join(eeg_root, f"EEG_{feature_type}", rel_path)
-        true_class = int(rel_path.split("/")[1].replace("class", "").split("_")[0])
+
+        parts = rel_path.split("/")
+        class_token = next(p for p in parts if p.startswith("class"))
+        true_class = int(class_token.replace("class", "").split("_")[0])
 
         eeg = np.load(eeg_path).reshape(-1)
         eeg_scaled = scaler.transform([eeg])[0]
