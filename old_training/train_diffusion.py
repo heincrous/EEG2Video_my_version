@@ -1,34 +1,26 @@
-# ==========================================
-# Diffusion Training
-# ==========================================
-
-# === Standard libraries ===
-import os
-import sys
-import math
-import random
 import logging
 import inspect
+import math
+import os
+import sys
+import random
 from typing import Dict, Optional, Tuple
 
-# === Third-party libraries ===
 import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
-from torch.utils.data import Dataset, DataLoader
-from tqdm import tqdm
-from einops import rearrange
 
 import diffusers
 import transformers
+from accelerate import Accelerator
+from accelerate.utils import set_seed
 from diffusers import AutoencoderKL, DDPMScheduler, DDIMScheduler
 from diffusers.optimization import get_scheduler
 from transformers import CLIPTextModel, CLIPTokenizer
-from accelerate import Accelerator
-from accelerate.utils import set_seed
+from tqdm import tqdm
+from einops import rearrange
 
-# === Repo imports ===
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(os.path.join(repo_root, "pipelines"))
 from pipeline_tuneavideo import TuneAVideoPipeline
@@ -36,44 +28,19 @@ from pipeline_tuneavideo import TuneAVideoPipeline
 sys.path.append(os.path.join(repo_root, "core_files"))
 from unet import UNet3DConditionModel
 
-
-# ==========================================
-# Paths
-# ==========================================
-pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
-bundle_root            = "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles"
-save_root              = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints"
-output_dir             = "/content/drive/MyDrive/EEG2Video_outputs"
-
-os.makedirs(save_root, exist_ok=True)
-os.makedirs(output_dir, exist_ok=True)
-
-
-# ==========================================
-# Memory config
-# ==========================================
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 
-# ==========================================
+# ------------------------------
 # NPZ Dataset
-# ==========================================
-class NPZVideoDataset(Dataset):
-    """
-    Loads NPZ bundles for EEG2Video training.
-
-    Expected arrays inside .npz:
-      - "Video_latents" : numpy array (N,F,C,H,W)
-      - "BLIP_text"     : list/array of N caption strings
-    """
+# ------------------------------
+class NPZVideoDataset(torch.utils.data.Dataset):
     def __init__(self, file_path, tokenizer):
         self.samples = []
         self.tokenizer = tokenizer
-
         data = np.load(file_path, allow_pickle=True)
-        vids  = data["Video_latents"]    # (N,F,C,H,W)
-        texts = data["BLIP_text"]        # (N,) captions
-
+        vids = data["Video_latents"]    # (N,F,C,H,W)
+        texts = data["BLIP_text"]       # (N,) list of captions
         for i in range(len(vids)):
             self.samples.append((vids[i], str(texts[i])))
 
@@ -89,20 +56,16 @@ class NPZVideoDataset(Dataset):
             truncation=True,
             return_tensors="pt",
         ).input_ids[0]
-
         return {
             "latents": torch.from_numpy(latents).float(),  # (F,C,H,W)
             "prompt_ids": prompt_ids,
         }
 
 
-# ==========================================
-# Helper functions
-# ==========================================
+# ------------------------------
+# Helper: Batched VAE encoding
+# ------------------------------
 def encode_frames_in_batches(vae, pixel_values, video_length, batch_size=4):
-    """
-    Encode video frames into latents using VAE, in batches.
-    """
     all_latents = []
     for i in range(0, pixel_values.shape[0], batch_size):
         batch = pixel_values[i:i+batch_size]
@@ -110,21 +73,21 @@ def encode_frames_in_batches(vae, pixel_values, video_length, batch_size=4):
             latent = vae.encode(batch).latent_dist.sample()
             latent = latent * 0.18215
         all_latents.append(latent)
-
     latents = torch.cat(all_latents, dim=0)
     latents = rearrange(latents, "(b f) c h w -> b c f h w", f=video_length)
     return latents
 
 
-# ==========================================
-# Main training
-# ==========================================
 def main(
     pretrained_model_path: str,
     output_dir: str,
     validation_data: Dict,
     validation_steps: int = 100,
-    trainable_modules: Tuple[str] = ("attn1.to_q", "attn2.to_q", "attn_temp"),
+    trainable_modules: Tuple[str] = (
+        "attn1.to_q",
+        "attn2.to_q",
+        "attn_temp",
+    ),
     train_batch_size: int = 4,
     max_train_steps: int = 1200000,
     learning_rate: float = 3e-5,
@@ -161,24 +124,20 @@ def main(
     if accelerator.is_main_process:
         os.makedirs(output_dir, exist_ok=True)
 
-    # ==========================================
-    # Load pretrained models
-    # ==========================================
+    # ---- Load pretrained components ----
     noise_scheduler = DDPMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
-    tokenizer       = CLIPTokenizer.from_pretrained(pretrained_model_path, subfolder="tokenizer")
-    text_encoder    = CLIPTextModel.from_pretrained(pretrained_model_path, subfolder="text_encoder")
-    vae             = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae")
-    unet            = UNet3DConditionModel.from_pretrained_2d(pretrained_model_path, subfolder="unet")
+    tokenizer = CLIPTokenizer.from_pretrained(pretrained_model_path, subfolder="tokenizer")
+    text_encoder = CLIPTextModel.from_pretrained(pretrained_model_path, subfolder="text_encoder")
+    vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae")
+    unet = UNet3DConditionModel.from_pretrained_2d(pretrained_model_path, subfolder="unet")
 
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
     unet.requires_grad_(False)
-
     for name, module in unet.named_modules():
         if name.endswith(tuple(trainable_modules)):
             for params in module.parameters():
                 params.requires_grad = True
-
     if gradient_checkpointing:
         unet.enable_gradient_checkpointing()
 
@@ -201,32 +160,26 @@ def main(
         eps=adam_epsilon,
     )
 
-    # ==========================================
-    # Dataset
-    # ==========================================
+    # ---- Dataset ----
+    bundle_root = "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles"
     all_bundles = sorted([f for f in os.listdir(bundle_root) if f.endswith("_train.npz")])
     if not all_bundles:
         raise FileNotFoundError("No *_train.npz found in SubjectBundles.")
     first_file = os.path.join(bundle_root, all_bundles[0])
 
-    print("\nSelect mode:")
-    print("  [0] check (dry run)")
-    print("  [1] train (full training)")
-    mode_idx = int(input("Enter choice index: "))
-    mode = ["check", "train"][mode_idx]
-    print("Using:", mode)
-
-    num_epochs = int(input("Enter number of epochs: "))
+    print(f"\nUsing dataset file: {first_file}")
+    mode = input("\nEnter 'check' for dry run or 'train' for full training: ").strip().lower()
+    num_epochs = int(input("\nEnter number of epochs: "))
 
     dataset = NPZVideoDataset(first_file, tokenizer)
-    print(f"Loaded {len(dataset)} samples from {first_file}")
+    print(f"Loaded {len(dataset)} samples.")
 
     if mode == "check":
         sample = dataset[0]
         print("Dry run OK | Latents:", sample["latents"].shape, "| Prompt length:", sample["prompt_ids"].shape)
         sys.exit()
 
-    train_dataloader = DataLoader(
+    train_dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=train_batch_size,
         shuffle=True,
@@ -242,14 +195,12 @@ def main(
         num_training_steps=num_epochs * len(train_dataloader) * gradient_accumulation_steps,
     )
 
-    # Prepare with accelerator
+    # prepare with accelerator
     unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
         unet, optimizer, train_dataloader, lr_scheduler
     )
 
-    # ==========================================
-    # Training loop
-    # ==========================================
+    # ---- Sanity check ----
     first_batch = next(iter(train_dataloader))
     latents = first_batch["latents"]
     inferred_video_length = latents.shape[1]
@@ -270,6 +221,9 @@ def main(
 
     global_step = 0
     first_epoch = 1
+
+    save_root = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints"
+    os.makedirs(save_root, exist_ok=True)
 
     for epoch in range(first_epoch, num_epochs + 1):
         unet.train()
@@ -305,7 +259,7 @@ def main(
 
         avg_loss = total_loss / len(train_dataloader)
         current_lr = lr_scheduler.get_last_lr()[0]
-        print(f"[Epoch {epoch}] Avg loss: {avg_loss:.6f}")
+        print(f"[Epoch {epoch}] Avg loss: {avg_loss:.6f} | LR: {current_lr:.2e}")
 
         if accelerator.is_main_process:
             ckpt_path = os.path.join(save_root, f"diffusion_epoch{epoch}.pt")
@@ -318,10 +272,6 @@ def main(
             print(f"Saved checkpoint: {ckpt_path}")
 
     accelerator.wait_for_everyone()
-
-    # ==========================================
-    # Save pipeline
-    # ==========================================
     if accelerator.is_main_process:
         unet = accelerator.unwrap_model(unet)
         pipeline = TuneAVideoPipeline.from_pretrained(
@@ -335,13 +285,10 @@ def main(
     accelerator.end_training()
 
 
-# ==========================================
-# Entrypoint
-# ==========================================
 if __name__ == "__main__":
     config = dict(
-        pretrained_model_path=pretrained_model_path,
-        output_dir=output_dir,
+        pretrained_model_path="/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4",
+        output_dir="/content/drive/MyDrive/EEG2Video_outputs",
         validation_data=dict(prompts=None, num_inv_steps=20, use_inv_latent=False),
         train_batch_size=4,
         learning_rate=3e-5,
@@ -351,3 +298,4 @@ if __name__ == "__main__":
         seed=42,
     )
     main(**config)
+
