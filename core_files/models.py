@@ -162,25 +162,32 @@ class mlpnet(nn.Module):
         return self.net(x)
 
 # ================================
-# Conformer
+# Conformer (authors' version, ViT-style)
 # ================================
+from einops.layers.torch import Rearrange, Reduce
+
 class PatchEmbedding(nn.Module):
-    def __init__(self, emb_size=40, C=62, T=100):
+    def __init__(self, emb_size=40):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(1, 40, (C, 25)),
+        self.shallownet = nn.Sequential(
+            nn.Conv2d(1, 40, (1, 25), (1, 1)),
+            nn.Conv2d(40, 40, (62, 1), (1, 1)),
             nn.BatchNorm2d(40),
             nn.ELU(),
-            nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Flatten(),
-            nn.Linear(40, emb_size),
+            nn.AvgPool2d((1, 75), (1, 15)),  # slice into patches along time dim
+            nn.Dropout(0.5),
+        )
+        self.projection = nn.Sequential(
+            nn.Conv2d(40, emb_size, (1, 1)),  # project channel dim → emb_size
+            Rearrange('b e 1 w -> b w e'),    # flatten patches into tokens
         )
 
     def forward(self, x):
         B, W, C, T = x.shape
-        x = x.view(B*W, 1, C, T)
-        out = self.net(x)           # (B*W,emb_size)
-        return out.view(B, W, -1)   # (B,7,emb_size)
+        x = x.view(B*W, 1, C, T)      # merge windows
+        x = self.shallownet(x)
+        x = self.projection(x)        # (B*W, n_patches, emb_size)
+        return x.view(B, -1, x.size(-1))  # (B, n_patches*W, emb_size)
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, emb_size, num_heads, dropout):
@@ -193,14 +200,13 @@ class MultiHeadAttention(nn.Module):
         self.att_drop = nn.Dropout(dropout)
         self.projection = nn.Linear(emb_size, emb_size)
 
-    def forward(self, x: Tensor, mask: Tensor = None) -> Tensor:
+    def forward(self, x, mask=None):
         queries = rearrange(self.queries(x), "b n (h d) -> b h n d", h=self.num_heads)
-        keys = rearrange(self.keys(x), "b n (h d) -> b h n d", h=self.num_heads)
-        values = rearrange(self.values(x), "b n (h d) -> b h n d", h=self.num_heads)
-        energy = torch.einsum('bhqd, bhkd -> bhqk', queries, keys)
+        keys    = rearrange(self.keys(x), "b n (h d) -> b h n d", h=self.num_heads)
+        values  = rearrange(self.values(x), "b n (h d) -> b h n d", h=self.num_heads)
+        energy  = torch.einsum('bhqd, bhkd -> bhqk', queries, keys)
         if mask is not None:
-            fill_value = torch.finfo(torch.float32).min
-            energy.mask_fill(~mask, fill_value)
+            energy.masked_fill_(~mask, float("-inf"))
         scaling = self.emb_size ** 0.5
         att = F.softmax(energy / scaling, dim=-1)
         att = self.att_drop(att)
@@ -231,34 +237,37 @@ class TransformerEncoderBlock(nn.Sequential):
             ResidualAdd(nn.Sequential(
                 nn.LayerNorm(emb_size),
                 MultiHeadAttention(emb_size, num_heads, drop_p),
-                nn.Dropout(drop_p)
+                nn.Dropout(drop_p),
             )),
             ResidualAdd(nn.Sequential(
                 nn.LayerNorm(emb_size),
                 FeedForwardBlock(emb_size, expansion=forward_expansion,
                                  drop_p=forward_drop_p),
-                nn.Dropout(drop_p)
-            ))
+                nn.Dropout(drop_p),
+            )),
         )
 
 class TransformerEncoder(nn.Sequential):
     def __init__(self, depth, emb_size):
-        super().__init__(*[TransformerEncoderBlock(emb_size) for _ in range(depth)])
+        super().__init__(*[
+            TransformerEncoderBlock(emb_size) for _ in range(depth)
+        ])
 
-class conformer(nn.Module):
-    def __init__(self, out_dim, emb_size=40, depth=3, C=62, T=100):
-        super().__init__()
-        self.embed = PatchEmbedding(emb_size, C=C, T=T)
-        self.encoder = TransformerEncoder(depth, emb_size)
-        self.fc = nn.Linear(emb_size, out_dim // 7)  # 8448
-        self.out_dim = out_dim
+class ClassificationHead(nn.Sequential):
+    def __init__(self, emb_size, out_dim):
+        super().__init__(
+            Reduce('b n e -> b e', 'mean'),  # mean pool tokens
+            nn.LayerNorm(emb_size),
+            nn.Linear(emb_size, out_dim),
+        )
 
-    def forward(self, x):
-        B = x.size(0)                  # true batch size
-        feats = self.embed(x)          # (B,7,emb_size)
-        feats = self.encoder(feats)    # (B,7,emb_size)
-        feats = self.fc(feats)         # (B,7,8448)
-        return feats.reshape(B, self.out_dim)  # (B,59136)
+class conformer(nn.Sequential):
+    def __init__(self, emb_size=40, depth=3, out_dim=77*768):
+        super().__init__(
+            PatchEmbedding(emb_size),
+            TransformerEncoder(depth, emb_size),
+            ClassificationHead(emb_size, out_dim),
+        )
 
 # ================================
 # GLFNet (for DE/PSD features)
