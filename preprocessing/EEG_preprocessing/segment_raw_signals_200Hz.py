@@ -1,18 +1,16 @@
 """
-SEGMENT RAW EEG INTO CLIP-ALIGNED SEGMENTS (SUBJECT-LEVEL ARRAYS)
------------------------------------------------------------------
+SEGMENT EEG INTO CLIP-ALIGNED SEGMENTS (SUBJECT-LEVEL ARRAYS)
+-------------------------------------------------------------
 Input:
   raw/EEG/subX.npy, subX_session2.npy ...
-  Original sampling rate = 1000 Hz
-  Channels              = 62
-  Block length          = 40 classes × (3 s hint + 5×2 s clips) = 520 s
-  Each block per channel = 520000 samples (before downsample)
+  Sampling rate = 200 Hz
+  Channels      = 62
+  Block length  = 40 classes × (3 s hint + 5×2 s clips) = 520 s
+  Each block per channel = 104000 samples (already downsampled)
 
 Process:
-  - Band-pass filter (0.1–100 Hz).
-  - Downsample to 200 Hz.
   - Use GT_LABEL (7×40) to align EEG with video class order per block.
-  - For each class slot: skip 3 s hint (600 samples at 200 Hz),
+  - For each class slot: skip 3 s hint (600 samples),
     then extract 5×2 s clips (5×400 samples).
   - Collect into subject-level array shaped (7,40,5,400,62).
 
@@ -25,21 +23,13 @@ import os
 import sys
 import numpy as np
 from tqdm import tqdm
-from scipy.signal import butter, filtfilt, resample
 
 # parameters
-raw_freq = 1000   # original dataset sampling rate
-fre = 200         # target sampling rate
-segment_len = 2 * fre   # 400 samples (2 s after downsample)
-hint_len    = 3 * fre   # 600 samples (3 s after downsample)
+fre = 200         # dataset is already 200 Hz
+segment_len = 2 * fre   # 400 samples (2 s)
+hint_len    = 3 * fre   # 600 samples (3 s)
 channels = 62
 clips_per_class = 5
-
-# band-pass filter
-def bandpass_filter(data, low=0.1, high=100, fs=1000, order=4):
-    nyq = 0.5 * fs
-    b, a = butter(order, [low/nyq, high/nyq], btype="band")
-    return filtfilt(b, a, data, axis=-1)
 
 # paths
 raw_dir = "/content/drive/MyDrive/EEG2Video_data/raw/EEG/"
@@ -68,22 +58,13 @@ else:
 # process each subject
 for subj_file in selected_files:
     subj_name = subj_file.replace(".npy", "")
-    eeg_data = np.load(os.path.join(raw_dir, subj_file))  # [7,62,T_raw]
+    eeg_data = np.load(os.path.join(raw_dir, subj_file))  # [7,62,104000]
 
-    # allocate subject-level array
     subj_array = np.zeros((7, 40, 5, segment_len, channels), dtype=np.float32)
 
     for block_id in range(7):
-        now_data = eeg_data[block_id]  # [62,T_raw]
-
-        # band-pass filter
-        now_data = bandpass_filter(now_data, low=0.1, high=100, fs=raw_freq)
-
-        # downsample to 200 Hz with rounding
-        T_down = int(round(now_data.shape[1] * fre / raw_freq))
-        now_data = resample(now_data, T_down, axis=-1)  # [62,T_down]
-
-        l = 0  # time pointer
+        now_data = eeg_data[block_id]  # [62,T_block], T_block≈104000
+        l = 0
 
         for order_idx in tqdm(range(40), desc=f"{subj_name} Block {block_id+1}"):
             true_class = GT_LABEL[block_id, order_idx]
@@ -108,7 +89,6 @@ for subj_file in selected_files:
                 subj_array[block_id, true_class, clip_id] = eeg_slice
                 l = end_idx
 
-        # sanity check
         expected_len = (hint_len + clips_per_class*segment_len) * 40
         if l != expected_len:
             print(
@@ -116,7 +96,6 @@ for subj_file in selected_files:
                 f"expected {expected_len}."
             )
 
-    # save subject-level array
     out_path = os.path.join(out_dir, f"{subj_name}.npy")
     np.save(out_path, subj_array)
     print(f"Saved {subj_name} → {out_path}, shape {subj_array.shape}")
