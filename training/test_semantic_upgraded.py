@@ -98,20 +98,32 @@ def preprocess_for_fusion(batch_dict, feat_types):
 # -------------------------------------------------
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     sem_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
+    proto_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/prototype_checkpoints"
 
-    # list semantic checkpoints
-    ckpts = [f for f in os.listdir(sem_dir) if f.endswith(".pt")]
-    ckpts = sorted(ckpts)
-    print("Available semantic checkpoints:")
-    for i, c in enumerate(ckpts):
-        print(f"{i}: {c}")
+    # collect checkpoints from both dirs
+    candidates = []
+    for d, tag in [(sem_dir,"S"), (proto_dir,"P")]:
+        if os.path.isdir(d):
+            for f in sorted(os.listdir(d)):
+                if f.endswith(".pt"):
+                    candidates.append((f, d, tag))
+
+    if not candidates:
+        print("No checkpoints found in semantic_checkpoints or prototype_checkpoints.")
+        return
+
+    print("Available checkpoints:")
+    for i, (f, d, tag) in enumerate(candidates):
+        print(f"{i}: [{tag}] {f}")
     choice = int(input("Select checkpoint index: ").strip())
-    ckpt_path = os.path.join(sem_dir, ckpts[choice])
 
-    # infer subject
-    subj_name = ckpts[choice].replace("semantic_checkpoint_","").replace(".pt","")
-    print(f"Selected subject: {subj_name}")
+    fname, ckpt_dir, tag = candidates[choice]
+    ckpt_path = os.path.join(ckpt_dir, fname)
+
+    subj_name = fname.replace("semantic_checkpoint_","").replace("prototype_checkpoint_","").replace(".pt","")
+    print(f"Selected subject: {subj_name} ({'semantic' if tag=='S' else 'prototype'})")
 
     # load fusion config + checkpoint
     fusion_cfg = json.load(open(f"/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints/fusion_config_{subj_name}.json"))
@@ -136,7 +148,7 @@ def main():
     fusion.load_state_dict(torch.load(f"/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints/fusion_checkpoint_{subj_name}.pt", map_location=device))
     fusion.eval()
 
-    # load semantic predictor + scaler
+    # load predictor + classifier
     predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
     state = torch.load(ckpt_path, map_location=device)
     predictor.load_state_dict(state["predictor"])
@@ -145,11 +157,10 @@ def main():
 
     scaler = joblib.load(ckpt_path.replace(".pt","_scaler.pkl"))
 
-    # load EEG + BLIP embeddings
+    # load EEG + BLIP
     eeg_feats = load_subject_features(subj_name, feat_types)
     text_emb = np.load("/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/BLIP_embeddings.npy").reshape(-1,77*768)
 
-    # take block 0 for testing
     trial_count = min([eeg_feats[f].shape[2] for f in feat_types])
     Xs, Ys = {ft: [] for ft in feat_types}, []
     for c in range(40):
@@ -160,7 +171,6 @@ def main():
     Xs = {ft: torch.tensor(np.array(Xs[ft]),dtype=torch.float32) for ft in feat_types}
     Ys = torch.tensor(np.array(Ys),dtype=torch.float32).to(device)
 
-    # ---- Fusion feature extraction ----
     proc = preprocess_for_fusion(Xs, feat_types)
     with torch.no_grad():
         Feat_raw = fusion({ft: proc[ft].to(device) for ft in feat_types}, return_feats=True).cpu()
@@ -170,10 +180,7 @@ def main():
     cos_feats = F.cosine_similarity(Feat_raw[0].unsqueeze(0), Feat_raw[1:], dim=-1)
     print("Mean cosine similarity between fusion features:", cos_feats.mean().item())
 
-    # scale for semantic predictor
     Feat = torch.tensor(scaler.transform(Feat_raw.numpy()),dtype=torch.float32).to(device)
-
-    # ---- Semantic prediction ----
     with torch.no_grad():
         pred = predictor(Feat)
 
