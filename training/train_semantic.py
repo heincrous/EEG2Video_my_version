@@ -1,5 +1,5 @@
 # ==========================================
-# train_semantic_interactive.py (patched to avoid BLIP duplication)
+# train_semantic_interactive.py (subject-specific checkpoints)
 # ==========================================
 
 import os
@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
 
 # === Repo imports ===
 repo_root = "/content/EEG2Video_my_version"
@@ -34,44 +35,42 @@ class SemanticPredictor(nn.Module):
         return self.net(x)
 
 # ==========================================
-# EEG-BLIP Dataset (lazy loading, no preloading)
+# EEG-BLIP Dataset (subject-specific)
 # ==========================================
 class EEGTextDataset(Dataset):
-    def __init__(self, bundle_file, feature_type="windows", train=True):
+    def __init__(self, bundle_file, subject_id, feature_type="windows", train=True):
         bundle = np.load(bundle_file, allow_pickle=True)
         self.eeg_all = bundle["EEG_data"].item()
         self.blip_emb = bundle["BLIP_embeddings"]
         self.feature_type = feature_type
         self.blocks = range(0,6) if train else [6]
 
-        # Build index list of (subj, block, concept, clip, window)
-        self.index = []
-        for subj, subj_data in self.eeg_all.items():
-            if feature_type not in ["windows", "segments"]:
-                raise ValueError("Invalid feature type")
+        if subject_id not in self.eeg_all:
+            raise ValueError(f"Subject {subject_id} not found in bundle")
+        self.subj = subject_id
+        self.subj_data = self.eeg_all[subject_id]
 
-            for b in self.blocks:
-                for c in range(40):
-                    for k in range(5):
-                        if feature_type == "windows":
-                            for w in range(7):   # 7 sliding windows
-                                self.index.append((subj, b, c, k, w))
-                        else:  # segments
-                            self.index.append((subj, b, c, k, None))
+        self.index = []
+        for b in self.blocks:
+            for c in range(40):
+                for k in range(5):
+                    if feature_type == "windows":
+                        for w in range(7):
+                            self.index.append((b, c, k, w))
+                    else:
+                        self.index.append((b, c, k, None))
 
     def __len__(self):
         return len(self.index)
 
     def __getitem__(self, idx):
-        subj, b, c, k, w = self.index[idx]
-        subj_data = self.eeg_all[subj]
-
+        b, c, k, w = self.index[idx]
         if self.feature_type == "windows":
-            eeg_clip = subj_data["EEG_windows"][b, c, k][w]   # (62,100)
-            eeg_clip = torch.tensor(eeg_clip, dtype=torch.float32).unsqueeze(0)  # (1,62,100)
-        else:  # segments
-            eeg_clip = subj_data["EEG_segments"][b, c, k]     # (62,400)
-            eeg_clip = torch.tensor(eeg_clip, dtype=torch.float32).unsqueeze(0)  # (1,62,400)
+            eeg_clip = self.subj_data["EEG_windows"][b, c, k][w]
+            eeg_clip = torch.tensor(eeg_clip, dtype=torch.float32).unsqueeze(0)
+        else:
+            eeg_clip = self.subj_data["EEG_segments"][b, c, k]
+            eeg_clip = torch.tensor(eeg_clip, dtype=torch.float32).unsqueeze(0)
 
         blip_clip = self.blip_emb[b, c, k].flatten()
         blip_clip = torch.tensor(blip_clip, dtype=torch.float32)
@@ -96,7 +95,7 @@ def main():
         "conformer": conformer
     }
     if feature_type == "windows":
-        valid_encoders = {k:v for k,v in encoders_all.items() if k != "deepnet"}  # deepnet fails at T=100
+        valid_encoders = {k:v for k,v in encoders_all.items() if k != "deepnet"}
         C, T = 62, 100
     elif feature_type == "segments":
         valid_encoders = encoders_all
@@ -117,6 +116,7 @@ def main():
         return
 
     if mode_choice == "train":
+        subject_id = input("Enter subject ID (e.g. sub1): ").strip()
         print(f"Available encoders for {feature_type}: {list(valid_encoders.keys())}")
         encoder_choice = input("Select encoder: ").strip()
         epochs_choice  = int(input("Enter number of epochs: "))
@@ -128,7 +128,7 @@ def main():
         encoder = EncoderClass(out_dim=512, C=C, T=T).to(device)
         semantic = SemanticPredictor(input_dim=512).to(device)
 
-        train_ds = EEGTextDataset(bundle_file, feature_type=feature_type, train=True)
+        train_ds = EEGTextDataset(bundle_file, subject_id, feature_type=feature_type, train=True)
         train_loader = DataLoader(train_ds, batch_size=256, shuffle=True)
 
         criterion = nn.MSELoss()
@@ -139,7 +139,7 @@ def main():
 
         for epoch in range(epochs_choice):
             total = 0
-            for eeg, text in train_loader:
+            for eeg, text in tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs_choice}"):
                 eeg, text = eeg.to(device), text.to(device)
                 optimizer.zero_grad()
                 pred = semantic(encoder(eeg))
@@ -150,7 +150,10 @@ def main():
             avg_loss = total/len(train_loader)
             print(f"Epoch {epoch+1}/{epochs_choice} Loss: {avg_loss:.4f}")
 
-        ckpt_path = os.path.join(ckpt_dir, f"semantic_{feature_type}_{encoder_choice}.pt")
+        ckpt_path = os.path.join(
+            ckpt_dir,
+            f"semantic_{subject_id}_{feature_type}_{encoder_choice}.pt"
+        )
         torch.save({
             'epoch': epochs_choice,
             'encoder_state_dict': encoder.state_dict(),
