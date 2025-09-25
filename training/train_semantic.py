@@ -85,9 +85,8 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if mode_choice == "dry":
-        ds = EEGTextDataset(bundle_file, train=True)
-        eeg, text = ds[0]
-        eeg, text = eeg.unsqueeze(0).to(device), text.unsqueeze(0).to(device)
+        # Dummy EEG input: (batch=1, channel=1, C=62, T=100)
+        eeg = torch.randn(1, 1, 62, 100).to(device)
 
         for name, EncoderClass in encoders.items():
             encoder = EncoderClass(out_dim=512, C=62, T=100).to(device)
@@ -110,10 +109,10 @@ def main():
         semantic = SemanticPredictor(input_dim=512).to(device)
 
         train_ds = EEGTextDataset(bundle_file, train=True)
-        train_loader = DataLoader(train_ds, batch_size=16, shuffle=True)
+        train_loader = DataLoader(train_ds, batch_size=256, shuffle=True)
 
         criterion = nn.MSELoss()
-        optimizer = optim.Adam(list(encoder.parameters())+list(semantic.parameters()), lr=1e-3)
+        optimizer = optim.Adam(list(encoder.parameters())+list(semantic.parameters()), lr=5e-4)
 
         ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
         os.makedirs(ckpt_dir, exist_ok=True)
