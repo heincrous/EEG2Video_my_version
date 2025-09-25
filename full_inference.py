@@ -1,25 +1,28 @@
 # ==========================================
-# Full Inference (with Semantic Predictor auto-detection, cleaned)
+# Full Inference (Semantic Predictor auto-detection, random samples, all models)
 # ==========================================
 
-import os, sys, gc, glob, imageio, torch
+import os, sys, gc, glob, random, imageio, torch
 import numpy as np
 import joblib
-from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
+
+# === Repo imports ===
+from core_files.models import (
+    eegnet, shallownet, deepnet, tsconv, conformer, mlpnet,
+    glfnet, glfnet_mlp
+)
 from core_files.unet import UNet3DConditionModel
-
-repo_root = "/content/EEG2Video_my_version"
-sys.path.append(os.path.join(repo_root, "core_files"))
+from training.train_semantic import WindowEncoderWrapper, ReshapeWrapper
 from add_noise import Diffusion
+from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 
+# === Paths ===
 drive_root            = "/content/drive/MyDrive/EEG2Video_data/processed"
 pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 finetuned_model_path  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final"
 semantic_ckpt_dir     = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
 
-eeg_feat_list_path    = os.path.join(drive_root, "EEG_DE/test_list.txt")
 blip_text_root        = os.path.join(drive_root, "BLIP_text")
-
 output_dir            = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference"
 os.makedirs(output_dir, exist_ok=True)
 
@@ -28,6 +31,7 @@ gc.collect()
 torch.cuda.empty_cache()
 device = "cuda"
 
+# === Helper: pick checkpoint ===
 def select_ckpt(ckpt_dir, name="checkpoint"):
     ckpts = sorted(glob.glob(os.path.join(ckpt_dir, "*.pt")))
     if not ckpts:
@@ -38,6 +42,7 @@ def select_ckpt(ckpt_dir, name="checkpoint"):
     choice = int(input(f"Select {name} checkpoint index: "))
     return ckpts[choice]
 
+# === Load semantic predictor ===
 semantic_ckpt = select_ckpt(semantic_ckpt_dir, "semantic")
 semantic_tag  = os.path.basename(semantic_ckpt).replace("semantic_predictor_", "").replace(".pt", "")
 print("Using semantic checkpoint:", semantic_ckpt)
@@ -49,6 +54,7 @@ print(f"Feature: {feature_type}, Encoder: {encoder_type}, Loss: {loss_type}")
 
 semantic_scaler = joblib.load(os.path.join(semantic_ckpt_dir, f"scaler_{semantic_tag}.pkl"))
 
+# === Load diffusion backbone ===
 from diffusers import AutoencoderKL, DDIMScheduler
 vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae").to(device, dtype=torch.float32)
 scheduler = DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
@@ -63,14 +69,19 @@ pipe = TuneAVideoPipeline.from_pretrained(
 ).to(device)
 pipe.enable_vae_slicing()
 
-from core_files.models import eegnet, shallownet, deepnet, tsconv, conformer, mlpnet
-from training.train_semantic import WindowEncoderWrapper, ReshapeWrapper
-
+# === Build semantic predictor model ===
 output_dim = 77 * 768
 
 if feature_type in ["DE", "PSD"]:
     input_dim = 62 * 5
-    model = mlpnet(out_dim=output_dim, input_dim=input_dim).to(device)
+    if encoder_type == "mlp":
+        model = mlpnet(out_dim=output_dim, input_dim=input_dim).to(device)
+    elif encoder_type == "glfnet":
+        model = glfnet(out_dim=output_dim, emb_dim=256, C=62, T=5).to(device)
+    elif encoder_type == "glfnet_mlp":
+        model = glfnet_mlp(out_dim=output_dim, emb_dim=256, input_dim=input_dim).to(device)
+    else:
+        raise ValueError(f"Unknown encoder type {encoder_type}")
 elif feature_type == "windows":
     if encoder_type == "mlp":
         input_dim = 7 * 62 * 100
@@ -96,16 +107,28 @@ model.load_state_dict(ckpt["state_dict"])
 model.eval()
 print("Semantic predictor rebuilt and loaded.")
 
+# === Diffusion wrapper ===
 dana_diffusion = Diffusion(time_steps=500)
 
-with open(eeg_feat_list_path, "r") as f:
-    eeg_feat_files = [line.strip() for line in f]
+# === Load test bundles and pick random sample ===
+bundle_root = os.path.join(drive_root, "SubjectBundles")
+test_bundles = sorted([f for f in os.listdir(bundle_root) if f.endswith("_test.npz")])
+if not test_bundles:
+    raise FileNotFoundError("No test bundles found!")
 
-eeg_feat_file = os.path.join(drive_root, "EEG_DE", eeg_feat_files[0])
-print("Chosen EEG feature file:", eeg_feat_file)
+test_bundle = random.choice(test_bundles)
+data = np.load(os.path.join(bundle_root, test_bundle), allow_pickle=True)
+eeg_data = data[f"EEG_{feature_type}"]
+keys = data["keys"]
 
-parts = eeg_feat_files[0].split("/")
-subj, block, fname = parts[0], parts[1], parts[2]
+idx = random.randrange(len(keys))
+eeg_feat = eeg_data[idx]
+key = keys[idx]
+print("Chosen test sample:", test_bundle, key)
+
+# === Find associated BLIP caption ===
+parts = key.split("/")
+block, fname = parts[1], parts[2]
 blip_caption_path = os.path.join(blip_text_root, block, fname.replace(".npy", ".txt"))
 
 if os.path.exists(blip_caption_path):
@@ -114,20 +137,22 @@ if os.path.exists(blip_caption_path):
 else:
     blip_prompt = "[Prompt not found]"
 print("Associated BLIP caption:", blip_prompt)
-print("BLIP caption file:", blip_caption_path)
 
-eeg_feat = np.load(eeg_feat_file)
-if eeg_feat.ndim > 1:
-    eeg_feat = eeg_feat.reshape(-1)
-eeg_feat_scaled = semantic_scaler.transform([eeg_feat])[0]
-eeg_feat_tensor = torch.tensor(eeg_feat_scaled, dtype=torch.float32).unsqueeze(0).to(device)
+# === Prepare EEG features ===
+eeg_flat = eeg_feat.reshape(-1)
+eeg_scaled = semantic_scaler.transform([eeg_flat])[0]
+if feature_type == "windows":
+    eeg_tensor = torch.tensor(eeg_scaled.reshape(7,62,100), dtype=torch.float32).unsqueeze(0).to(device)
+else:
+    eeg_tensor = torch.tensor(eeg_scaled.reshape(62,5), dtype=torch.float32).unsqueeze(0).to(device)
 
 with torch.no_grad():
-    semantic_pred = model(eeg_feat_tensor)
+    semantic_pred = model(eeg_tensor)
 print("Semantic embedding shape:", semantic_pred.shape)
 
 negative = semantic_pred.mean(dim=0, keepdim=True).float().to(device)
 
+# === Run inference ===
 def run_inference():
     video = pipe(
         model=None,
@@ -142,7 +167,6 @@ def run_inference():
     ).videos
 
     print("Generated video tensor:", video.shape)
-
     frames = (video[0] * 255).clamp(0, 255).to(torch.uint8)
     frames = frames.permute(0, 2, 3, 1).cpu().numpy()
     if frames.shape[-1] > 3:
@@ -150,14 +174,15 @@ def run_inference():
     elif frames.shape[-1] == 1:
         frames = np.repeat(frames, 3, axis=-1)
 
-    mp4_path = os.path.join(output_dir, "sample_eeg2video_semantic_only.mp4")
+    base_name = f"{os.path.splitext(test_bundle)[0]}_{idx}.mp4"
+    mp4_path = os.path.join(output_dir, base_name)
     writer = imageio.get_writer(mp4_path, fps=3, codec="libx264")
     for f in frames:
         writer.append_data(f)
     writer.close()
 
     print("Video saved to:", mp4_path)
-    print("EEG file:", eeg_feat_file)
-    print("Prompt:", blip_prompt)
+    print("EEG sample:", key)
+    print("BLIP caption:", blip_prompt)
 
 run_inference()
