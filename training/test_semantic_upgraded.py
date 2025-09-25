@@ -157,15 +157,24 @@ def main():
     Xs = {ft: torch.tensor(np.array(Xs[ft]),dtype=torch.float32) for ft in feat_types}
     Ys = torch.tensor(np.array(Ys),dtype=torch.float32).to(device)
 
+    # ---- Fusion feature extraction ----
     proc = preprocess_for_fusion(Xs, feat_types)
     with torch.no_grad():
-        Feat = fusion({ft: proc[ft].to(device) for ft in feat_types}, return_feats=True).cpu().numpy()
-    Feat = torch.tensor(scaler.transform(Feat),dtype=torch.float32).to(device)
+        Feat_raw = fusion({ft: proc[ft].to(device) for ft in feat_types}, return_feats=True).cpu()
 
+    print("\n=== Fusion Features Check ===")
+    print("Fusion variance:", Feat_raw.var(dim=0).mean().item())
+    cos_feats = F.cosine_similarity(Feat_raw[0].unsqueeze(0), Feat_raw[1:], dim=-1)
+    print("Mean cosine similarity between fusion features:", cos_feats.mean().item())
+
+    # scale for semantic predictor
+    Feat = torch.tensor(scaler.transform(Feat_raw.numpy()),dtype=torch.float32).to(device)
+
+    # ---- Semantic prediction ----
     with torch.no_grad():
         pred = predictor(Feat)
 
-    # collapse checks
+    print("\n=== Semantic Predictor Check ===")
     print("Prediction variance:", pred.var(dim=0).mean().item())
     cos_preds = F.cosine_similarity(pred[0].unsqueeze(0), pred[1:], dim=-1)
     print("Mean cosine similarity between predictions:", cos_preds.mean().item())
