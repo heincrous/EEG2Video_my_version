@@ -6,7 +6,7 @@ Input:
   Sampling rate = 200 Hz
   Channels      = 62
   Block length  = 40 classes × (3 s hint + 5×2 s clips) = 520 s
-  Each block per channel = 104000 samples (already downsampled)
+  Each block per channel = 104000 samples
 
 Process:
   - Use GT_LABEL (7×40) to align EEG with video class order per block.
@@ -25,7 +25,7 @@ import numpy as np
 from tqdm import tqdm
 
 # parameters
-fre = 200         # dataset is already 200 Hz
+fre = 200
 segment_len = 2 * fre   # 400 samples (2 s)
 hint_len    = 3 * fre   # 600 samples (3 s)
 channels = 62
@@ -63,7 +63,7 @@ for subj_file in selected_files:
     subj_array = np.zeros((7, 40, 5, segment_len, channels), dtype=np.float32)
 
     for block_id in range(7):
-        now_data = eeg_data[block_id]  # [62,T_block], T_block≈104000
+        now_data = eeg_data[block_id]  # [62,T_block], T_block ≈ 104000
         l = 0
 
         for order_idx in tqdm(range(40), desc=f"{subj_name} Block {block_id+1}"):
