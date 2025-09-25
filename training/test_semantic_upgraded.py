@@ -14,15 +14,16 @@ from collections import defaultdict
 # === Repo imports ===
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(repo_root)
-from core_files.models import eegnet, shallownet, deepnet, tsconv, conformer, mlpnet
-
+from core_files.models import (
+    eegnet, shallownet, deepnet, tsconv, conformer, mlpnet,
+    glfnet, glfnet_mlp
+)
 
 # === Wrapper for CNN-based encoders ===
 class WindowEncoderWrapper(torch.nn.Module):
     def __init__(self, base_encoder, out_dim):
         super().__init__()
         self.base = base_encoder
-
     def forward(self, x):  # (B,7,62,100)
         B, W, C, T = x.shape
         x = x.view(B*W, 1, C, T)
@@ -30,32 +31,27 @@ class WindowEncoderWrapper(torch.nn.Module):
         feats = feats.view(B, W, -1)
         return feats.mean(1)  # (B, out_dim)
 
-
 # === Reshape wrapper (flat -> (77,768)) ===
 class ReshapeWrapper(torch.nn.Module):
     def __init__(self, base_model, n_tokens=77):
         super().__init__()
         self.base = base_model
         self.n_tokens = n_tokens
-
     def forward(self, x):
         out = self.base(x)  # (B, n_tokens*768)
         return out.view(out.size(0), self.n_tokens, 768)
-
 
 # === Build class prototypes (token-aware) ===
 def build_class_prototypes(bundle_path, loss_type):
     data = np.load(bundle_path, allow_pickle=True)
     blip_embeddings = data["BLIP_embeddings"]  # (N,77,768)
     keys = data["keys"]
-
     class_groups = defaultdict(list)
     for i, key in enumerate(keys):
         parts = key.split("/")
         class_token = next(p for p in parts if p.startswith("class"))
         class_id = int(class_token.replace("class", "").split("_")[0])
-        class_groups[class_id].append(blip_embeddings[i])  # keep full (77,768)
-
+        class_groups[class_id].append(blip_embeddings[i])
     prototypes = {}
     for cid, embs in class_groups.items():
         avg_emb = np.mean(np.stack(embs), axis=0)  # (77,768)
@@ -65,11 +61,17 @@ def build_class_prototypes(bundle_path, loss_type):
         prototypes[cid] = avg_emb
     return prototypes
 
-
 # === Model builder ===
 def build_model(feature_type, encoder_type, output_dim, input_dim=None):
     if feature_type in ["DE", "PSD"]:
-        return mlpnet(out_dim=output_dim, input_dim=input_dim)
+        if encoder_type == "mlp":
+            return mlpnet(out_dim=output_dim, input_dim=input_dim)
+        elif encoder_type == "glfnet":
+            return glfnet(out_dim=output_dim, emb_dim=256, C=62, T=5)
+        elif encoder_type == "glfnet_mlp":
+            return glfnet_mlp(out_dim=output_dim, emb_dim=256, input_dim=input_dim)
+        else:
+            raise ValueError(f"Unknown encoder type for DE/PSD: {encoder_type}")
     elif feature_type == "windows":
         if encoder_type == "mlp":
             return mlpnet(out_dim=output_dim, input_dim=input_dim)
@@ -84,18 +86,15 @@ def build_model(feature_type, encoder_type, output_dim, input_dim=None):
         elif encoder_type == "conformer":
             return conformer(out_dim=output_dim)   # no wrapper
         else:
-            raise ValueError(f"Unknown encoder type: {encoder_type}")
+            raise ValueError(f"Unknown encoder type for windows: {encoder_type}")
     else:
         raise ValueError(f"Invalid feature type: {feature_type}")
 
-
 # === Cosine similarity across tokens ===
 def tokenwise_cosine(a, b):
-    # a, b: (77,768)
     a = a / (np.linalg.norm(a, axis=-1, keepdims=True) + 1e-8)
     b = b / (np.linalg.norm(b, axis=-1, keepdims=True) + 1e-8)
-    return float((a * b).sum(-1).mean())  # average across 77 tokens
-
+    return float((a * b).sum(-1).mean())
 
 # === Main ===
 if __name__ == "__main__":
@@ -161,11 +160,11 @@ if __name__ == "__main__":
 
         if feature_type == "windows":
             eeg_tensor = torch.tensor(eeg_scaled.reshape(7,62,100), dtype=torch.float32).unsqueeze(0).cuda()
-        else:
+        else:  # DE/PSD
             eeg_tensor = torch.tensor(eeg_scaled.reshape(62,5), dtype=torch.float32).unsqueeze(0).cuda()
 
         with torch.no_grad():
-            pred_emb = model(eeg_tensor).squeeze(0).cpu().numpy()  # already (77,768)
+            pred_emb = model(eeg_tensor).squeeze(0).cpu().numpy()
 
         if loss_type == "cosine":
             pred_emb = pred_emb / (np.linalg.norm(pred_emb, axis=-1, keepdims=True) + 1e-8)

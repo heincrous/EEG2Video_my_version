@@ -18,8 +18,7 @@ repo_root = "/content/EEG2Video_my_version"
 sys.path.append(repo_root)
 
 from core_files.models import (
-    eegnet, shallownet, deepnet, tsconv, conformer, mlpnet,
-    glfnet, glfnet_mlp
+    eegnet, shallownet, deepnet, tsconv, conformer, mlpnet, glfnet, glfnet_mlp
 )
 
 # ==========================================
