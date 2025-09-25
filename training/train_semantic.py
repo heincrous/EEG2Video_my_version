@@ -92,11 +92,11 @@ if __name__ == "__main__":
     mode = input("\nMode (train / dry): ").strip()
 
     # Dummy shapes for dry run
-    dummy_windows   = torch.randn(2, 7, 62, 100).cuda()
-    dummy_segments  = torch.randn(2, 1, 62, 400).cuda()
-    dummy_de        = torch.randn(2, 62, 5).cuda()
+    dummy_windows   = torch.randn(2, 7, 62, 100).cuda()   # (B,W,C,T)
+    dummy_segments  = torch.randn(2, 1, 62, 400).cuda()   # (B,1,C,T)
+    dummy_de        = torch.randn(2, 62, 5).cuda()        # (B,C,F)
     dummy_psd       = torch.randn(2, 62, 5).cuda()
-    dummy_txt       = torch.randn(2, 77, 768).cuda()
+    dummy_txt       = torch.randn(2, 77, 768).cuda()      # (B,77,768)
 
     output_dim = 77*768
 
@@ -179,7 +179,7 @@ if __name__ == "__main__":
     eeg_all = np.stack(eeg_list)
     txt_all = np.stack(txt_list)
 
-    # Explicit reshape logic
+    # Explicit reshape logic (assumes [62,400] for segments now)
     if feature_type == "segments":
         train_eeg = eeg_all[:, :6].reshape(-1, 1, 62, 400)
         test_eeg  = eeg_all[:, 6:].reshape(-1, 1, 62, 400)

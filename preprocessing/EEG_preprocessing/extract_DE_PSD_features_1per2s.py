@@ -3,10 +3,10 @@ EXTRACT DE/PSD FEATURES (SUBJECT-LEVEL ARRAYS)
 ----------------------------------------------
 Input:
   processed/EEG_segments/subX.npy
-    Shape = [7,40,5,400,62]
+    Shape = [7,40,5,62,400]
 
 Process:
-  - For each clip [400,62], compute DE and PSD features using DE_PSD().
+  - For each clip [62,400], compute DE and PSD features using DE_PSD().
   - Each result = [62,5] (channels × frequency bands).
   - Preserve subject-level hierarchy.
 
@@ -50,7 +50,7 @@ for idx in selected_idxs:
     print(f"\nProcessing {subj_name}...")
 
     # load subject EEG segments
-    data = np.load(subj_path)  # [7,40,5,400,62]
+    data = np.load(subj_path)  # [7,40,5,62,400]
 
     # allocate outputs
     de_array  = np.zeros((7,40,5,62,5), dtype=np.float32)
@@ -59,17 +59,14 @@ for idx in selected_idxs:
     for b in range(7):
         for c in tqdm(range(40), desc=f"{subj_name} Block{b+1}"):
             for k in range(5):
-                seg = data[b,c,k]        # [400,62]
-                seg = seg.T              # [62,400]
-                de, psd = DE_PSD(seg, fre, 2)
-                de_array[b,c,k]  = de    # [62,5]
-                psd_array[b,c,k] = psd   # [62,5]
+                seg = data[b,c,k]        # [62,400]
+                de, psd = DE_PSD(seg, fre, 2)  # expect [62,5] each
+                de_array[b,c,k]  = de
+                psd_array[b,c,k] = psd
 
     # save subject-level arrays
     out_de_path  = os.path.join(out_de_dir,  f"{subj_name}.npy")
     out_psd_path = os.path.join(out_psd_dir, f"{subj_name}.npy")
-    os.makedirs(os.path.dirname(out_de_path), exist_ok=True)
-    os.makedirs(os.path.dirname(out_psd_path), exist_ok=True)
 
     np.save(out_de_path, de_array)
     np.save(out_psd_path, psd_array)
@@ -77,4 +74,4 @@ for idx in selected_idxs:
     print(f"Saved DE  → {out_de_path} {de_array.shape}")
     print(f"Saved PSD → {out_psd_path} {psd_array.shape}")
 
-print("\nProcessing complete. Subject-level DE/PSD files saved.")
+print("\nProcessing complete.")

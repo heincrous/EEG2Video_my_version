@@ -12,11 +12,11 @@ Process:
   - Use GT_LABEL (7×40) to align EEG with video class order per block.
   - For each class slot: skip 3 s hint (600 samples),
     then extract 5×2 s clips (5×400 samples).
-  - Collect into subject-level array shaped (7,40,5,400,62).
+  - Collect into subject-level array shaped (7,40,5,62,400).
 
 Output:
   processed/EEG_segments/subX.npy
-    Shape = [7,40,5,400,62]
+    Shape = [7,40,5,62,400]
 """
 
 import os
@@ -60,7 +60,7 @@ for subj_file in selected_files:
     subj_name = subj_file.replace(".npy", "")
     eeg_data = np.load(os.path.join(raw_dir, subj_file))  # [7,62,104000]
 
-    subj_array = np.zeros((7, 40, 5, segment_len, channels), dtype=np.float32)
+    subj_array = np.zeros((7, 40, 5, channels, segment_len), dtype=np.float32)
 
     for block_id in range(7):
         now_data = eeg_data[block_id]  # [62,T_block], T_block ≈ 104000
@@ -84,8 +84,6 @@ for subj_file in selected_files:
                     )
 
                 eeg_slice = now_data[:, start_idx:end_idx]  # [62,400]
-                eeg_slice = eeg_slice.T  # → [400,62]
-
                 subj_array[block_id, true_class, clip_id] = eeg_slice
                 l = end_idx
 
@@ -101,3 +99,5 @@ for subj_file in selected_files:
     out_path = os.path.join(out_dir, f"{subj_name}.npy")
     np.save(out_path, subj_array)
     print(f"Saved {subj_name} → {out_path}, shape {subj_array.shape}")
+
+print("\nProcessing complete.")

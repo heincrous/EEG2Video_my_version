@@ -3,11 +3,11 @@ CREATE EEG WINDOWS FOR SEQ2SEQ INPUT (SUBJECT-LEVEL ARRAYS)
 -----------------------------------------------------------
 Input:
   processed/EEG_segments/subX.npy
-    Shape = [7,40,5,400,62]
+    Shape = [7,40,5,62,400]
 
 Process:
   - Apply sliding window (size=100, overlap=50).
-  - Each 2s clip [400,62] → [7,62,100].
+  - Each 2s clip [62,400] → [7,62,100].
   - Preserve subject-level structure.
 
 Output:
@@ -32,12 +32,12 @@ os.makedirs(out_dir, exist_ok=True)  # ensure directory exists
 
 def make_windows(seg):
     """
-    seg: [400,62]
+    seg: [62,400]
     return: [7,62,100]
     """
     windows = []
     for start in range(0, 400 - window_size + 1, step):
-        win = seg[start:start+window_size, :].T  # [62,100]
+        win = seg[:, start:start+window_size]  # [62,100]
         windows.append(win)
     return np.stack(windows, axis=0)  # [7,62,100]
 
@@ -63,18 +63,17 @@ for idx in selected_idxs:
 
     print(f"\nProcessing {subj_name}...")
 
-    data = np.load(subj_path)  # [7,40,5,400,62]
+    data = np.load(subj_path)  # [7,40,5,62,400]
     out_array = np.zeros((7,40,5,num_windows,62,100), dtype=np.float32)
 
     for b in range(7):
         for c in tqdm(range(40), desc=f"{subj_name} Block{b+1}"):
             for k in range(5):
-                seg = data[b,c,k]  # [400,62]
+                seg = data[b,c,k]  # [62,400]
                 windows = make_windows(seg)  # [7,62,100]
                 out_array[b,c,k] = windows
 
     out_path = os.path.join(out_dir, f"{subj_name}.npy")
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
     np.save(out_path, out_array)
     print(f"Saved {subj_name} → {out_path}, shape {out_array.shape}")
 
