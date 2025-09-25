@@ -14,7 +14,7 @@ repo_root = "/content/EEG2Video_my_version"
 sys.path.append(repo_root)
 from core_files.models import (
     eegnet, shallownet, deepnet, tsconv, conformer, mlpnet,
-    glfnet, glfnet_mlp, glmnet
+    glfnet_mlp, glmnet
 )
 
 # === Wrappers ===
@@ -62,31 +62,35 @@ def build_prototypes(blip_emb, loss_type):
         prototypes[class_id] = proto
     return prototypes
 
-# === Model builder ===
+# === Model builder (consistent with training) ===
 def build_model(feature_type, encoder_type, output_dim, input_dim=None, window_reduce="mean"):
     if feature_type in ["DE","PSD"]:
         if encoder_type == "mlp":
             return mlpnet(out_dim=output_dim, input_dim=input_dim)
-        elif encoder_type == "glfnet":
-            return glfnet(out_dim=output_dim, emb_dim=256, C=62, T=5)
         elif encoder_type == "glfnet_mlp":
             return glfnet_mlp(out_dim=output_dim, emb_dim=256, input_dim=input_dim)
-    elif feature_type == "windows":
+
+    elif feature_type == "segments":
         if encoder_type == "mlp":
             return mlpnet(out_dim=output_dim, input_dim=input_dim)
         elif encoder_type == "eegnet":
-            return WindowEncoderWrapper(eegnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim, reduce=window_reduce)
+            return eegnet(out_dim=output_dim, C=62, T=400)
         elif encoder_type == "shallownet":
-            return WindowEncoderWrapper(shallownet(out_dim=output_dim, C=62, T=100), out_dim=output_dim, reduce=window_reduce)
+            return shallownet(out_dim=output_dim, C=62, T=400)
         elif encoder_type == "deepnet":
-            return WindowEncoderWrapper(deepnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim, reduce=window_reduce)
+            return deepnet(out_dim=output_dim, C=62, T=400)
         elif encoder_type == "tsconv":
-            return WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim, reduce=window_reduce)
+            return tsconv(out_dim=output_dim, C=62, T=400)
+        elif encoder_type == "glmnet":
+            return glmnet(out_dim=output_dim, emb_dim=256, C=62, T=400)
+
+    elif feature_type == "windows":
+        if encoder_type == "mlp":
+            return mlpnet(out_dim=output_dim, input_dim=input_dim)
         elif encoder_type == "conformer":
             return conformer(out_dim=output_dim)
-        elif encoder_type == "glmnet":
-            return WindowEncoderWrapper(glmnet(out_dim=output_dim, emb_dim=256, C=62, T=100), out_dim=output_dim, reduce=window_reduce)
-    raise ValueError(f"Invalid encoder: {encoder_type}")
+
+    raise ValueError(f"Invalid combination: {feature_type}, {encoder_type}")
 
 # === Main ===
 if __name__ == "__main__":
@@ -102,12 +106,17 @@ if __name__ == "__main__":
     ckpt_path = os.path.join(ckpt_root, ckpt_file)
     scaler_path = os.path.join(ckpt_root, f"scaler_{tag}.pkl")
 
-    # Parse tag (feature, encoder, window_reduce, loss)
+    # Parse tag (feature, encoder, loss)
     parts = tag.split("_")
     feature_type = parts[0]
     loss_type    = parts[-1]
-    encoder_type = "_".join(parts[1:-2])
-    window_reduce = parts[-2] if feature_type=="windows" else "mean"
+    if feature_type == "windows":
+        window_reduce = parts[-2]
+        encoder_type = "_".join(parts[1:-2])
+    else:
+        window_reduce = "mean"
+        encoder_type = "_".join(parts[1:-1])
+
     print(f"\n[Config] Feature={feature_type}, Encoder={encoder_type}, Loss={loss_type}, WindowReduce={window_reduce}")
 
     # Load scaler
@@ -144,9 +153,11 @@ if __name__ == "__main__":
                 eeg_flat = eeg[ci,cj].reshape(-1)
                 eeg_scaled = scaler.transform([eeg_flat])[0]
 
-                if feature_type=="windows":
+                if feature_type == "windows":
                     eeg_tensor = torch.tensor(eeg_scaled.reshape(7,62,100),dtype=torch.float32).unsqueeze(0).cuda()
-                else:
+                elif feature_type == "segments":
+                    eeg_tensor = torch.tensor(eeg_scaled.reshape(1,62,400),dtype=torch.float32).unsqueeze(0).cuda()
+                elif feature_type in ["DE","PSD"]:
                     eeg_tensor = torch.tensor(eeg_scaled.reshape(62,5),dtype=torch.float32).unsqueeze(0).cuda()
 
                 true_class = ci
