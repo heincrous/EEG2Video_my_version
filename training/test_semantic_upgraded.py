@@ -1,5 +1,5 @@
 # ==========================================
-# Semantic Predictor Evaluation (Row-aware, token-wise similarity)
+# Semantic Predictor Evaluation (Row-aware, token-wise similarity, multi-bundle)
 # ==========================================
 
 import os
@@ -49,17 +49,14 @@ def build_class_prototypes(bundle_path, loss_type):
 
     class_groups = defaultdict(list)
     for i, key in enumerate(keys):
-        parts = key.split("/")
-        class_token = next(p for p in parts if p.startswith("class"))
-        class_id = int(class_token.replace("class", "").split("_")[0])
+        class_id = int(next(p for p in key.split("/") if p.startswith("class")).replace("class", "").split("_")[0])
         class_groups[class_id].append(blip_embeddings[i])
 
     prototypes = {}
     for cid, embs in class_groups.items():
         avg_emb = np.mean(np.stack(embs), axis=0)  # (77,768)
         if "cosine" in loss_type:
-            norms = np.linalg.norm(avg_emb, axis=-1, keepdims=True) + 1e-8
-            avg_emb = avg_emb / norms
+            avg_emb = avg_emb / (np.linalg.norm(avg_emb, axis=-1, keepdims=True) + 1e-8)
         prototypes[cid] = avg_emb
     return prototypes
 
@@ -86,7 +83,7 @@ def build_model(feature_type, encoder_type, output_dim, input_dim=None):
         elif encoder_type == "tsconv":
             return WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
         elif encoder_type == "conformer":
-            return conformer(out_dim=output_dim)   # no wrapper
+            return conformer(out_dim=output_dim)
         else:
             raise ValueError(f"Unknown encoder type for windows: {encoder_type}")
     else:
@@ -101,7 +98,6 @@ def tokenwise_cosine(a, b):
 # === Main ===
 if __name__ == "__main__":
     bundle_root = "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles"
-    eeg_root    = "/content/drive/MyDrive/EEG2Video_data/processed"
     ckpt_root   = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
 
     ckpts = [f for f in os.listdir(ckpt_root) if f.startswith("semantic_predictor_") and f.endswith(".pt")]
@@ -113,13 +109,12 @@ if __name__ == "__main__":
     ckpt_path = os.path.join(ckpt_root, ckpt_file)
     scaler_path = os.path.join(ckpt_root, f"scaler_{tag}.pkl")
 
-    # === Smarter parsing ===
+    # Parse naming
     parts = tag.split("_")
-    # drop "all" or subject names at the front
     parts = parts[1:]
     feature_type = parts[0]
-    loss_type = parts[-1]
-    encoder_type = "_".join(parts[1:-1])  # handles glfnet_mlp etc.
+    loss_type    = parts[-1]
+    encoder_type = "_".join(parts[1:-1])
 
     print(f"\n[Config] Feature={feature_type}, Encoder={encoder_type}, Loss={loss_type}")
 
@@ -134,38 +129,35 @@ if __name__ == "__main__":
     model.load_state_dict(checkpoint["state_dict"])
     model.eval()
 
-    # Build prototypes
+    # === Build prototypes from first train bundle ===
     train_bundles = sorted([f for f in os.listdir(bundle_root) if f.endswith("_train.npz")])
     proto_bundle = os.path.join(bundle_root, train_bundles[0])
     prototypes = build_class_prototypes(proto_bundle, loss_type)
 
-    # Pick test samples
-    test_list_path = os.path.join(eeg_root, f"EEG_{feature_type}", "test_list.txt")
-    with open(test_list_path, "r") as f:
-        test_lines = [line.strip() for line in f if line.strip()]
-
+    # === Collect test samples from ALL test bundles ===
+    test_bundles = sorted([f for f in os.listdir(bundle_root) if f.endswith("_test.npz")])
     class_groups = defaultdict(list)
-    for rel_path in test_lines:
-        parts = rel_path.split("/")
-        class_token = next(p for p in parts if p.startswith("class"))
-        class_id = int(class_token.replace("class", "").split("_")[0])
-        class_groups[class_id].append(rel_path)
 
-    chosen = [random.choice(v) for v in class_groups.values() if v]
+    for tb in test_bundles:
+        data = np.load(os.path.join(bundle_root, tb), allow_pickle=True)
+        eeg_data = data[f"EEG_{feature_type}"]
+        keys = data["keys"]
+        for i, key in enumerate(keys):
+            class_id = int(next(p for p in key.split("/") if p.startswith("class")).replace("class","").split("_")[0])
+            class_groups[class_id].append(eeg_data[i])
 
-    # Evaluation
+    # Choose one random sample per class across ALL bundles
+    chosen = {cid: random.choice(samples) for cid, samples in class_groups.items() if samples}
+
+    # === Evaluation ===
     correct_top1 = correct_top5 = total = 0
-    for rel_path in chosen:
-        eeg_path = os.path.join(eeg_root, f"EEG_{feature_type}", rel_path)
-        true_class = int(next(p for p in rel_path.split("/") if p.startswith("class")).replace("class","").split("_")[0])
-
-        eeg = np.load(eeg_path)
+    for true_class, eeg in chosen.items():
         eeg_flat = eeg.reshape(-1)
         eeg_scaled = scaler.transform([eeg_flat])[0]
 
         if feature_type == "windows":
             eeg_tensor = torch.tensor(eeg_scaled.reshape(7,62,100), dtype=torch.float32).unsqueeze(0).cuda()
-        else:  # DE/PSD
+        else:
             eeg_tensor = torch.tensor(eeg_scaled.reshape(62,5), dtype=torch.float32).unsqueeze(0).cuda()
 
         with torch.no_grad():
@@ -177,7 +169,7 @@ if __name__ == "__main__":
         sims = {cid: tokenwise_cosine(pred_emb, proto) for cid, proto in prototypes.items()}
         ranked = sorted(sims.items(), key=lambda x: x[1], reverse=True)
 
-        top1, top5 = ranked[0][0], [cid for cid,_ in ranked[:5]]
+        top1, top5 = ranked[0][0], [cid for cid, _ in ranked[:5]]
         correct_top1 += int(top1 == true_class)
         correct_top5 += int(true_class in top5)
         total += 1
