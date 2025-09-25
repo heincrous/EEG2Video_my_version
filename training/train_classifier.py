@@ -112,16 +112,17 @@ def main():
     # === Training ===
     if mode_choice=="train":
         subject_id=input("Enter subject ID (e.g. sub1): ").strip()
+        feature_type=input("Select feature type (windows/segments): ").strip()
         print("Available encoders: ", list(encoders_all.keys()))
         encoder_choice=input("Select encoder: ").strip()
         epochs_choice=int(input("Enter number of epochs: "))
 
         if encoder_choice not in encoders_all:
             raise ValueError("Invalid encoder choice")
+        if feature_type not in ["windows","segments"]:
+            raise ValueError("Invalid feature type")
 
-        # infer feature type from encoder choice (deepnet only supports segments)
-        feature_type="segments" if encoder_choice=="deepnet" else "windows"
-        C,T=(62,400) if feature_type=="segments" else (62,100)
+        C,T=(62,100) if feature_type=="windows" else (62,400)
 
         EncoderClass=encoders_all[encoder_choice]
         encoder=EncoderClass(out_dim=512,C=C,T=T).to(device)
