@@ -23,7 +23,7 @@ from .unet_blocks import (
     get_down_block,
     get_up_block,
 )
-from resnet import InflatedConv3d
+from .resnet import InflatedConv3d
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
