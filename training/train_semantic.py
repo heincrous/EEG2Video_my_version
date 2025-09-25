@@ -1,5 +1,5 @@
 # ==========================================
-# Semantic Predictor Training (Bundle-Based, Blocks 1–6 train, Block 7 test)
+# Semantic Predictor Training (Blocks 1–6 train, Block 7 test)
 # ==========================================
 
 import os, sys, pickle
@@ -38,25 +38,8 @@ class EEGTextDataset(Dataset):
         return torch.tensor(self.eeg[idx], dtype=torch.float32), torch.tensor(self.text[idx], dtype=torch.float32)
 
 # ==========================================
-# Wrappers
+# Reshape Wrapper (force output into [B,77,768])
 # ==========================================
-class WindowEncoderWrapper(nn.Module):
-    def __init__(self, base_encoder, out_dim, reduce="mean"):
-        super().__init__()
-        self.base = base_encoder
-        self.reduce = reduce
-    def forward(self, x):  # (B,W,C,T)
-        B, W, C, T = x.shape
-        x = x.view(B*W, 1, C, T)
-        feats = self.base(x)
-        feats = feats.view(B, W, -1)
-        if self.reduce == "mean":
-            return feats.mean(1)
-        elif self.reduce == "none":
-            return feats.view(B, -1)
-        else:
-            raise ValueError("reduce must be 'mean' or 'none'")
-
 class ReshapeWrapper(nn.Module):
     def __init__(self, base_model, n_tokens=77):
         super().__init__()
@@ -73,6 +56,7 @@ def cosine_loss(pred, target):
     pred = F.normalize(pred.view(pred.size(0), -1), dim=-1)
     target = F.normalize(target.view(target.size(0), -1), dim=-1)
     return 1 - (pred * target).sum(dim=-1).mean()
+
 def contrastive_loss(pred, target, temperature=0.07):
     B = pred.size(0)
     pred = F.normalize(pred.view(B, -1), dim=-1)
@@ -80,10 +64,18 @@ def contrastive_loss(pred, target, temperature=0.07):
     logits = pred @ target.t() / temperature
     labels = torch.arange(B, device=pred.device)
     return F.cross_entropy(logits, labels)
-def mse_cosine_loss(pred, target): return F.mse_loss(pred, target) + cosine_loss(pred, target)
-def mse_contrastive_loss(pred, target): return F.mse_loss(pred, target) + contrastive_loss(pred, target)
-def cosine_contrastive_loss(pred, target): return cosine_loss(pred, target) + contrastive_loss(pred, target)
-def mse_cosine_contrastive_loss(pred, target): return F.mse_loss(pred, target) + cosine_loss(pred, target) + contrastive_loss(pred, target)
+
+def mse_cosine_loss(pred, target): 
+    return F.mse_loss(pred, target) + cosine_loss(pred, target)
+
+def mse_contrastive_loss(pred, target): 
+    return F.mse_loss(pred, target) + contrastive_loss(pred, target)
+
+def cosine_contrastive_loss(pred, target): 
+    return cosine_loss(pred, target) + contrastive_loss(pred, target)
+
+def mse_cosine_contrastive_loss(pred, target): 
+    return F.mse_loss(pred, target) + cosine_loss(pred, target) + contrastive_loss(pred, target)
 
 # ==========================================
 # Main
@@ -92,7 +84,6 @@ if __name__ == "__main__":
     mode = input("\nMode (train / dry): ").strip()
 
     # Dummy shapes for dry run
-    dummy_windows   = torch.randn(2, 7, 62, 100).cuda()   # (B,W,C,T)
     dummy_segments  = torch.randn(2, 1, 62, 400).cuda()   # (B,1,C,T)
     dummy_de        = torch.randn(2, 62, 5).cuda()        # (B,C,F)
     dummy_psd       = torch.randn(2, 62, 5).cuda()
@@ -114,14 +105,6 @@ if __name__ == "__main__":
             out = ReshapeWrapper(base.cuda())(dummy_segments)
             print(f"Segments-{name}: {out.shape}")
 
-        # Windows
-        for name, base in {
-            "mlp": mlpnet(output_dim, 7*62*100),
-            "conformer": conformer(out_dim=output_dim),
-        }.items():
-            out = ReshapeWrapper(base.cuda())(dummy_windows)
-            print(f"Windows-{name}: {out.shape}")
-
         # DE
         for name, base in {
             "mlp": mlpnet(output_dim, 62*5),
@@ -142,7 +125,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     # ---- Training mode ----
-    feature_type = input("\nEnter feature type (segments / windows / DE / PSD): ").strip()
+    feature_type = input("\nEnter feature type (segments / DE / PSD): ").strip()
     bundle_path  = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_EEG_bundle.npz"
     save_root    = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
     os.makedirs(save_root, exist_ok=True)
@@ -150,17 +133,11 @@ if __name__ == "__main__":
     if feature_type == "segments":
         print("\nEncoders: mlp / eegnet / shallownet / deepnet / tsconv / glmnet")
         encoder_type = input("Enter encoder type: ").strip()
-        window_reduce = None
-    elif feature_type == "windows":
-        print("\nEncoders: mlp / conformer")
-        encoder_type = input("Enter encoder type: ").strip()
-        window_reduce = input("Window reduction (mean / none): ").strip() or "mean"
     elif feature_type in ["DE","PSD"]:
         print("\nEncoders: mlp / glfnet_mlp")
         encoder_type = input("Enter encoder type: ").strip()
-        window_reduce = None
     else:
-        raise ValueError("feature_type must be segments / windows / DE / PSD")
+        raise ValueError("feature_type must be segments / DE / PSD")
 
     print("\nLoss options: mse / cosine / contrastive / mse+cosine / mse+contrastive / cosine+contrastive / mse+cosine+contrastive")
     loss_type = input("Enter loss type: ").strip()
@@ -183,9 +160,6 @@ if __name__ == "__main__":
     if feature_type == "segments":
         train_eeg = eeg_all[:, :6].reshape(-1, 1, 62, 400)
         test_eeg  = eeg_all[:, 6:].reshape(-1, 1, 62, 400)
-    elif feature_type == "windows":
-        train_eeg = eeg_all[:, :6].reshape(-1, 7, 62, 100)
-        test_eeg  = eeg_all[:, 6:].reshape(-1, 7, 62, 100)
     elif feature_type in ["DE","PSD"]:
         train_eeg = eeg_all[:, :6].reshape(-1, 62, 5)
         test_eeg  = eeg_all[:, 6:].reshape(-1, 62, 5)
@@ -214,10 +188,6 @@ if __name__ == "__main__":
         elif encoder_type == "deepnet": model = deepnet(output_dim, 62, 400).cuda()
         elif encoder_type == "tsconv": model = tsconv(output_dim, 62, 400).cuda()
         elif encoder_type == "mlp": model = mlpnet(output_dim, input_dim).cuda()
-
-    elif feature_type == "windows":
-        if encoder_type == "mlp": model = mlpnet(output_dim, input_dim).cuda()
-        elif encoder_type == "conformer": model = conformer(output_dim).cuda()
 
     elif feature_type in ["DE","PSD"]:
         if encoder_type == "mlp": model = mlpnet(output_dim, input_dim).cuda()
@@ -255,10 +225,7 @@ if __name__ == "__main__":
         print(f"[Epoch {epoch+1}] Avg {loss_type} loss: {total_loss/len(train_loader):.6f}")
 
     # Save
-    if feature_type == "windows":
-        tag = f"{feature_type}_{encoder_type}_{loss_type}_{window_reduce}"
-    else:
-        tag = f"{feature_type}_{encoder_type}_{loss_type}"
+    tag = f"{feature_type}_{encoder_type}_{loss_type}"
     ckpt_path   = os.path.join(save_root, f"semantic_predictor_{tag}.pt")
     scaler_path = os.path.join(save_root, f"scaler_{tag}.pkl")
     torch.save({"state_dict": model.state_dict()}, ckpt_path)
