@@ -42,7 +42,7 @@ sys.path.append(os.path.join(repo_root, "core_files"))
 from gt_label import GT_LABEL   # shape (7,40), values 0–39
 
 # list subject files
-all_files = [f for f in os.listdir(raw_dir) if f.endswith(".npy")]
+all_files = sorted([f for f in os.listdir(raw_dir) if f.endswith(".npy")])
 print("Available subject files:")
 for i, f in enumerate(all_files):
     print(f"{i}: {f}")
@@ -96,6 +96,8 @@ for subj_file in selected_files:
                 f"expected {expected_len}."
             )
 
+    # ensure output directory exists
+    os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f"{subj_name}.npy")
     np.save(out_path, subj_array)
     print(f"Saved {subj_name} → {out_path}, shape {subj_array.shape}")
