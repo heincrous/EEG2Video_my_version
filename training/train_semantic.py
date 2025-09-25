@@ -1,5 +1,6 @@
 # ==========================================
-# train_semantic_interactive.py (subject-specific checkpoints)
+# train_semantic_interactive.py
+# Subject-specific checkpoints + optional dual-head + full dry run
 # ==========================================
 
 import os
@@ -17,7 +18,7 @@ sys.path.append(repo_root)
 from core_files.models import shallownet, deepnet, eegnet, tsconv, conformer
 
 # ==========================================
-# Semantic Predictor (MLP)
+# Semantic Predictor (single-head)
 # ==========================================
 class SemanticPredictor(nn.Module):
     def __init__(self, input_dim, hidden_dims=[1024, 2048, 1024], out_dim=77*768):
@@ -33,6 +34,26 @@ class SemanticPredictor(nn.Module):
 
     def forward(self, x):
         return self.net(x)
+
+# ==========================================
+# Dual-Head Predictor (semantic + classification)
+# ==========================================
+class DualHeadPredictor(nn.Module):
+    def __init__(self, input_dim=512, hidden_dims=[1024,2048,1024], out_dim=77*768, num_classes=40):
+        super().__init__()
+        layers = []
+        prev = input_dim
+        for h in hidden_dims:
+            layers.append(nn.Linear(prev,h))
+            layers.append(nn.ReLU())
+            prev = h
+        self.shared = nn.Sequential(*layers)
+        self.semantic_head = nn.Linear(prev,out_dim)
+        self.class_head = nn.Linear(prev,num_classes)
+
+    def forward(self,x):
+        feats = self.shared(x)
+        return self.semantic_head(feats), self.class_head(feats)
 
 # ==========================================
 # EEG-BLIP Dataset (subject-specific)
@@ -75,7 +96,7 @@ class EEGTextDataset(Dataset):
         blip_clip = self.blip_emb[b, c, k].flatten()
         blip_clip = torch.tensor(blip_clip, dtype=torch.float32)
 
-        return eeg_clip, blip_clip
+        return eeg_clip, blip_clip, c  # also return class ID
 
 # ==========================================
 # Main
@@ -105,45 +126,70 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # === Dry run mode ===
     if mode_choice == "dry":
         eeg = torch.randn(1, 1, C, T).to(device)
         for name, EncoderClass in valid_encoders.items():
             encoder = EncoderClass(out_dim=512, C=C, T=T).to(device)
+            feats = encoder(eeg)
+
+            # Single-head
             semantic = SemanticPredictor(input_dim=512).to(device)
-            out = semantic(encoder(eeg))
-            print(f"[{feature_type}] {name}: EEG {eeg.shape} -> Output {out.shape}")
+            out_sem = semantic(feats)
+            print(f"[{feature_type}] {name} single-head: EEG {eeg.shape} -> Semantic {out_sem.shape}")
+
+            # Dual-head
+            dual = DualHeadPredictor(input_dim=512).to(device)
+            out_sem, out_cls = dual(feats)
+            print(f"[{feature_type}] {name} dual-head: EEG {eeg.shape} -> Semantic {out_sem.shape}, Class {out_cls.shape}")
+
         print("Dry run completed for all valid encoder-feature combos")
         return
 
+    # === Training mode ===
     if mode_choice == "train":
         subject_id = input("Enter subject ID (e.g. sub1): ").strip()
         print(f"Available encoders for {feature_type}: {list(valid_encoders.keys())}")
         encoder_choice = input("Select encoder: ").strip()
         epochs_choice  = int(input("Enter number of epochs: "))
+        dual_head_flag = input("Use dual-head model with classification loss? (y/n): ").strip().lower() == "y"
 
         if encoder_choice not in valid_encoders:
             raise ValueError("Invalid encoder choice")
 
         EncoderClass = valid_encoders[encoder_choice]
         encoder = EncoderClass(out_dim=512, C=C, T=T).to(device)
-        semantic = SemanticPredictor(input_dim=512).to(device)
+        if dual_head_flag:
+            model = DualHeadPredictor(input_dim=512).to(device)
+        else:
+            model = SemanticPredictor(input_dim=512).to(device)
 
         train_ds = EEGTextDataset(bundle_file, subject_id, feature_type=feature_type, train=True)
         train_loader = DataLoader(train_ds, batch_size=256, shuffle=True)
 
-        criterion = nn.MSELoss()
-        optimizer = optim.Adam(list(encoder.parameters())+list(semantic.parameters()), lr=5e-4)
+        mse_loss = nn.MSELoss()
+        ce_loss = nn.CrossEntropyLoss()
+        optimizer = optim.Adam(list(encoder.parameters())+list(model.parameters()), lr=5e-4)
 
         ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
         os.makedirs(ckpt_dir, exist_ok=True)
 
         for epoch in range(epochs_choice):
             total = 0
-            for eeg, text in tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs_choice}"):
-                eeg, text = eeg.to(device), text.to(device)
+            for eeg, text, cls in tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs_choice}"):
+                eeg, text, cls = eeg.to(device), text.to(device), cls.to(device)
                 optimizer.zero_grad()
-                pred = semantic(encoder(eeg))
-                loss = criterion(pred, text)
+                feats = encoder(eeg)
+
+                if dual_head_flag:
+                    pred_sem, pred_cls = model(feats)
+                    loss_sem = mse_loss(pred_sem, text)
+                    loss_cls = ce_loss(pred_cls, cls)
+                    loss = loss_sem + 0.1*loss_cls  # weighting factor
+                else:
+                    pred_sem = model(feats)
+                    loss = mse_loss(pred_sem, text)
+
                 loss.backward()
                 optimizer.step()
                 total += loss.item()
@@ -152,14 +198,15 @@ def main():
 
         ckpt_path = os.path.join(
             ckpt_dir,
-            f"semantic_{subject_id}_{feature_type}_{encoder_choice}.pt"
+            f"semantic_{subject_id}_{feature_type}_{encoder_choice}{'_dual' if dual_head_flag else ''}.pt"
         )
         torch.save({
             'epoch': epochs_choice,
             'encoder_state_dict': encoder.state_dict(),
-            'semantic_state_dict': semantic.state_dict(),
+            'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
-            'final_loss': avg_loss
+            'final_loss': avg_loss,
+            'dual_head': dual_head_flag
         }, ckpt_path)
         print(f"Final checkpoint saved to {ckpt_path}")
 
