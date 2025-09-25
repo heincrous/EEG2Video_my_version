@@ -1,5 +1,5 @@
 # ==========================================
-# Semantic Predictor Evaluation (Row-aware, token-wise similarity, multi-bundle)
+# Semantic Predictor Evaluation (Multi-bundle, Embedding + Classification Metrics)
 # ==========================================
 
 import os
@@ -29,7 +29,7 @@ class WindowEncoderWrapper(torch.nn.Module):
         x = x.view(B*W, 1, C, T)
         feats = self.base(x)
         feats = feats.view(B, W, -1)
-        return feats.mean(1)  # (B, out_dim)
+        return feats.mean(1)
 
 # === Reshape wrapper (flat -> (77,768)) ===
 class ReshapeWrapper(torch.nn.Module):
@@ -38,7 +38,7 @@ class ReshapeWrapper(torch.nn.Module):
         self.base = base_model
         self.n_tokens = n_tokens
     def forward(self, x):
-        out = self.base(x)  # (B, n_tokens*768)
+        out = self.base(x)
         return out.view(out.size(0), self.n_tokens, 768)
 
 # === Build class prototypes (token-aware) ===
@@ -138,20 +138,25 @@ if __name__ == "__main__":
     test_bundles = sorted([f for f in os.listdir(bundle_root) if f.endswith("_test.npz")])
     class_groups = defaultdict(list)
 
+    test_samples = []
     for tb in test_bundles:
         data = np.load(os.path.join(bundle_root, tb), allow_pickle=True)
         eeg_data = data[f"EEG_{feature_type}"]
+        blip_data = data["BLIP_embeddings"]
         keys = data["keys"]
         for i, key in enumerate(keys):
             class_id = int(next(p for p in key.split("/") if p.startswith("class")).replace("class","").split("_")[0])
-            class_groups[class_id].append(eeg_data[i])
+            class_groups[class_id].append((eeg_data[i], blip_data[i]))
+            test_samples.append((class_id, eeg_data[i], blip_data[i]))
 
     # Choose one random sample per class across ALL bundles
     chosen = {cid: random.choice(samples) for cid, samples in class_groups.items() if samples}
 
     # === Evaluation ===
     correct_top1 = correct_top5 = total = 0
-    for true_class, eeg in chosen.items():
+    mse_vals, cos_vals, token_cos_vals, corr_vals = [], [], [], []
+
+    for true_class, (eeg, true_emb) in chosen.items():
         eeg_flat = eeg.reshape(-1)
         eeg_scaled = scaler.transform([eeg_flat])[0]
 
@@ -166,15 +171,34 @@ if __name__ == "__main__":
         if "cosine" in loss_type:
             pred_emb = pred_emb / (np.linalg.norm(pred_emb, axis=-1, keepdims=True) + 1e-8)
 
+        # === Classification via prototypes ===
         sims = {cid: tokenwise_cosine(pred_emb, proto) for cid, proto in prototypes.items()}
         ranked = sorted(sims.items(), key=lambda x: x[1], reverse=True)
-
         top1, top5 = ranked[0][0], [cid for cid, _ in ranked[:5]]
         correct_top1 += int(top1 == true_class)
         correct_top5 += int(true_class in top5)
         total += 1
 
-        print(f"True={true_class} | Pred@1={top1} | Top-5={top5} | {'Correct' if top1==true_class else 'Wrong'}")
+        # === Embedding-level metrics ===
+        mse_vals.append(np.mean((pred_emb - true_emb)**2))
+        cos = np.dot(pred_emb.flatten(), true_emb.flatten()) / (
+            np.linalg.norm(pred_emb.flatten()) * np.linalg.norm(true_emb.flatten()) + 1e-8
+        )
+        cos_vals.append(cos)
+
+        a = pred_emb / (np.linalg.norm(pred_emb, axis=-1, keepdims=True) + 1e-8)
+        b = true_emb / (np.linalg.norm(true_emb, axis=-1, keepdims=True) + 1e-8)
+        token_cos_vals.append((a * b).sum(-1).mean())
+
+        corr_vals.append(np.corrcoef(pred_emb.flatten(), true_emb.flatten())[0,1])
+
+        print(f"True={true_class} | Pred@1={top1} | Top-5={top5} | "
+              f"MSE={mse_vals[-1]:.6f}, Cos={cos_vals[-1]:.4f}, "
+              f"TokenCos={token_cos_vals[-1]:.4f}, Corr={corr_vals[-1]:.4f}")
 
     print(f"\nTop-1 Accuracy: {correct_top1/total:.4f}")
     print(f"Top-5 Accuracy: {correct_top5/total:.4f}")
+    print(f"Mean MSE: {np.mean(mse_vals):.6f}")
+    print(f"Mean Cosine similarity: {np.mean(cos_vals):.4f}")
+    print(f"Mean Token-wise cosine: {np.mean(token_cos_vals):.4f}")
+    print(f"Mean Pearson correlation: {np.mean(corr_vals):.4f}")
