@@ -6,7 +6,6 @@ import os, sys, gc, glob, random, imageio, torch, shutil
 import numpy as np
 import joblib
 
-# === Repo imports ===
 from core_files.models import (
     eegnet, shallownet, deepnet, tsconv, conformer, mlpnet,
     glfnet, glfnet_mlp
@@ -16,7 +15,6 @@ from training.train_semantic import WindowEncoderWrapper, ReshapeWrapper
 from core_files.add_noise import Diffusion
 from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 
-# === Paths ===
 drive_root            = "/content/drive/MyDrive/EEG2Video_data/processed"
 pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 finetuned_model_path  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final"
@@ -24,7 +22,6 @@ semantic_ckpt_dir     = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_c
 
 blip_text_root        = os.path.join(drive_root, "BLIP_text")
 video_mp4_root        = os.path.join(drive_root, "Video_mp4")
-video_gif_root        = os.path.join(drive_root, "Video_gif")
 
 output_dir            = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference"
 os.makedirs(output_dir, exist_ok=True)
@@ -98,13 +95,15 @@ elif feature_type == "windows":
     elif encoder_type == "tsconv":
         base_model = WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
     elif encoder_type == "conformer":
-        base_model = conformer(out_dim=output_dim)  # NOTE: no WindowEncoderWrapper
+        base_model = conformer(out_dim=output_dim)
     else:
         raise ValueError(f"Unknown encoder type {encoder_type}")
 else:
     raise ValueError(f"Invalid feature type {feature_type}")
 
 model = ReshapeWrapper(base_model, n_tokens=77).to(device)
+model.load_state_dict(torch.load(semantic_ckpt, map_location=device)["state_dict"])
+model.eval()
 
 # === Diffusion wrapper ===
 dana_diffusion = Diffusion(time_steps=500)
@@ -125,7 +124,7 @@ eeg_feat = eeg_data[idx]
 key = keys[idx]
 print("Chosen test sample:", test_bundle, key)
 
-# === Find associated BLIP caption and video paths ===
+# === Parse key for naming and caption ===
 parts = key.split("/")
 if len(parts) == 3:
     _, block, fname = parts
@@ -135,18 +134,12 @@ else:
     raise ValueError(f"Unexpected key format: {key}")
 
 blip_caption_path = os.path.join(blip_text_root, block, fname.replace(".npy", ".txt"))
+blip_prompt = "[Prompt not found]"
 if os.path.exists(blip_caption_path):
     with open(blip_caption_path, "r") as f:
         blip_prompt = f.read().strip()
-else:
-    blip_prompt = "[Prompt not found]"
 
 video_mp4_path = os.path.join(video_mp4_root, block, fname.replace(".npy", ".mp4"))
-video_gif_path = os.path.join(video_gif_root, block, fname.replace(".npy", ".gif"))
-
-print("Associated BLIP caption:", blip_prompt)
-print("Associated video (mp4):", video_mp4_path)
-print("Associated video (gif):", video_gif_path)
 
 # === Prepare EEG features ===
 eeg_flat = eeg_feat.reshape(-1)
@@ -158,7 +151,6 @@ else:
 
 with torch.no_grad():
     semantic_pred = model(eeg_tensor)
-print("Semantic embedding shape:", semantic_pred.shape)
 
 negative = semantic_pred.mean(dim=0, keepdim=True).float().to(device)
 
@@ -176,7 +168,6 @@ def run_inference():
         guidance_scale=12.5,
     ).videos
 
-    print("Generated video tensor:", video.shape)
     frames = (video[0] * 255).clamp(0, 255).to(torch.uint8)
     frames = frames.permute(0, 2, 3, 1).cpu().numpy()
     if frames.shape[-1] > 3:
@@ -184,25 +175,22 @@ def run_inference():
     elif frames.shape[-1] == 1:
         frames = np.repeat(frames, 3, axis=-1)
 
-    base_name = f"{os.path.splitext(test_bundle)[0]}_{idx}.mp4"
-    mp4_path = os.path.join(output_dir, base_name)
-    writer = imageio.get_writer(mp4_path, fps=3, codec="libx264")
+    clip_name = fname.replace(".npy", "")
+    inf_path = os.path.join(output_dir, f"{clip_name}_inference.mp4")
+    gt_path  = os.path.join(output_dir, f"{clip_name}_groundtruth.mp4")
+
+    writer = imageio.get_writer(inf_path, fps=3, codec="libx264")
     for f in frames:
         writer.append_data(f)
     writer.close()
 
-    # Copy ground-truth video for side-by-side comparison
     if os.path.exists(video_mp4_path):
-        gt_copy_path = os.path.join(output_dir, f"GT_{block}_{fname.replace('.npy','.mp4')}")
-        shutil.copy(video_mp4_path, gt_copy_path)
-        print("Ground-truth copied to:", gt_copy_path)
-    else:
-        print("Ground-truth .mp4 not found")
+        shutil.copy(video_mp4_path, gt_path)
 
-    print("Video saved to:", mp4_path)
-    print("EEG sample:", key)
-    print("BLIP caption:", blip_prompt)
-    print("Ground-truth clip (mp4):", video_mp4_path)
-    print("Ground-truth clip (gif):", video_gif_path)
+    print("Saved:")
+    print(" - Inference video:", inf_path)
+    print(" - Ground-truth video:", gt_path)
+    print(" - EEG sample key:", key)
+    print(" - BLIP caption:", blip_prompt)
 
 run_inference()
