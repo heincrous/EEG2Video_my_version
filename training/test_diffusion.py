@@ -1,5 +1,5 @@
 # ==========================================
-# Diffusion Inference
+# Diffusion Inference (Random Test Bundle, Text-to-Video)
 # ==========================================
 
 # === Standard libraries ===
@@ -9,6 +9,7 @@ import gc
 import random
 
 # === Third-party libraries ===
+import numpy as np
 import torch
 import imageio
 from einops import rearrange
@@ -29,8 +30,7 @@ from unet import UNet3DConditionModel
 # ==========================================
 pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 trained_output_dir    = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final"
-test_text_list        = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/test_list.txt"
-blip_text_root        = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text"
+bundle_root           = "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles"
 save_dir              = "/content/drive/MyDrive/EEG2Video_outputs/test_diffusion"
 
 os.makedirs(trained_output_dir, exist_ok=True)
@@ -65,16 +65,24 @@ pipe = pipe.to("cuda")
 
 
 # ==========================================
-# Pick random prompt
+# Pick random test prompt from bundle
 # ==========================================
-with open(test_text_list, "r") as f:
-    test_prompts = [os.path.join(blip_text_root, line.strip()) for line in f]
+test_bundles = [f for f in os.listdir(bundle_root) if f.endswith("_test.npz")]
+if not test_bundles:
+    raise FileNotFoundError("No *_test.npz found in SubjectBundles.")
 
-prompt_path = random.choice(test_prompts)
-with open(prompt_path, "r") as pf:
-    prompt_text = pf.read().strip()
+chosen_bundle = random.choice(test_bundles)
+bundle_path = os.path.join(bundle_root, chosen_bundle)
 
-print("Chosen prompt file:", prompt_path)
+data = np.load(bundle_path, allow_pickle=True)
+texts = data["BLIP_text"]  # (N,)
+
+idx = random.randrange(len(texts))
+prompt_text = str(texts[idx])
+
+print("Chosen test bundle:", chosen_bundle)
+print("Chosen sample index:", idx)
+print("Prompt text:", prompt_text)
 
 
 # ==========================================
@@ -111,8 +119,7 @@ elif frames.shape[-1] == 1:
 
 print("Final frame shape:", frames.shape)
 
-base_name = os.path.splitext(os.path.basename(prompt_path))[0]
-base_name = f"{base_name}_{video_length}f_{fps}fps.mp4"
+base_name = f"{os.path.splitext(chosen_bundle)[0]}_idx{idx}_{video_length}f_{fps}fps.mp4"
 mp4_path = os.path.join(save_dir, base_name)
 
 writer = imageio.get_writer(mp4_path, fps=fps, codec="libx264")

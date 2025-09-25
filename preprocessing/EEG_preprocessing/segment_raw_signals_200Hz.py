@@ -1,21 +1,21 @@
 """
-SEGMENT RAW EEG INTO CLIP-ALIGNED SEGMENTS
-------------------------------------------
+SEGMENT RAW EEG INTO CLIP-ALIGNED SEGMENTS (SUBJECT-LEVEL ARRAYS)
+-----------------------------------------------------------------
 Input:
   raw/EEG/subX.npy, subX_session2.npy ...
   Sampling rate = 200 Hz
   Channels      = 62
   Video clip length = 2 s → 400 samples
+  Each class slot: 3 s hint (600 samples) + 5×2 s clips (5×400 samples)
 
 Process:
   - Use GT_LABEL (7x40) to align EEG stream with video class order per block.
-  - Each block has 40 classes × 5 clips = 200 clips.
-  - For each video clip, cut out the corresponding [400,62] EEG slice.
-  - Store under Block and true class folder.
+  - For each class slot, skip 3 s hint then extract 5×2 s clips.
+  - Collect into subject-level array shaped (7,40,5,400,62).
 
 Output:
-  processed/EEG_segments/subX/BlockY/classYY_clipZZ.npy
-    Shape = [400,62]
+  processed/EEG_segments/subX.npy
+    Shape = [7,40,5,400,62]
 """
 
 import os
@@ -24,18 +24,20 @@ import numpy as np
 from tqdm import tqdm
 
 fre = 200
-segment_len = 2 * fre  # 400 samples
+segment_len = 2 * fre   # 400 samples (2 s)
+hint_len    = 3 * fre   # 600 samples (3 s)
 channels = 62
 clips_per_class = 5
 
 # paths
 raw_dir = "/content/drive/MyDrive/EEG2Video_data/raw/EEG/"
 out_dir = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments/"
+os.makedirs(out_dir, exist_ok=True)
 
-# import GT_LABEL directly from core_files/gt_label.py
+# import GT_LABEL
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(os.path.join(repo_root, "core_files"))
-from gt_label import GT_LABEL   # GT_LABEL shape (7,40), values 0–39
+from gt_label import GT_LABEL   # shape (7,40), values 0–39
 
 # list subject files
 all_files = [f for f in os.listdir(raw_dir) if f.endswith(".npy")]
@@ -43,7 +45,7 @@ print("Available subject files:")
 for i, f in enumerate(all_files):
     print(f"{i}: {f}")
 
-# user chooses which subjects
+# user chooses subjects
 chosen = input("Enter indices of subjects to process (comma separated, 'all' for all): ").strip()
 if chosen.lower() == "all":
     selected_files = all_files
@@ -56,28 +58,33 @@ for subj_file in selected_files:
     subj_name = subj_file.replace(".npy", "")
     eeg_data = np.load(os.path.join(raw_dir, subj_file))  # shape [7,62,T]
 
+    # allocate subject-level array
+    subj_array = np.zeros((7, 40, 5, segment_len, channels), dtype=np.float32)
+
     for block_id in range(7):
         now_data = eeg_data[block_id]  # [62,T]
+        l = 0  # pointer into time axis
 
         for order_idx in tqdm(range(40), desc=f"{subj_name} Block {block_id+1}"):
             true_class = GT_LABEL[block_id, order_idx]  # 0–39
 
-            for clip_id in range(clips_per_class):
-                # flatten index within block: 0..199
-                flat_idx = order_idx * clips_per_class + clip_id
-                start_idx = flat_idx * segment_len
-                end_idx = start_idx + segment_len
+            # skip 3 s hint
+            l += hint_len
 
+            for clip_id in range(clips_per_class):
+                start_idx = l
+                end_idx   = l + segment_len
                 eeg_slice = now_data[:, start_idx:end_idx]  # [62,400]
                 eeg_slice = eeg_slice.T  # → [400,62]
 
-                out_path = os.path.join(
-                    out_dir,
-                    subj_name,
-                    f"Block{block_id+1}",
-                    f"class{true_class:02d}_clip{clip_id+1:02d}.npy"
-                )
-                os.makedirs(os.path.dirname(out_path), exist_ok=True)
-                np.save(out_path, eeg_slice)
+                subj_array[block_id, true_class, clip_id] = eeg_slice
+                l = end_idx
 
-    print(f"Finished {subj_name}")
+        # sanity check: ensure consumed exactly 40*(3s+5*2s) = 20800 samples
+        assert l == (hint_len + clips_per_class*segment_len) * 40, \
+            f"Block {block_id+1} length mismatch: got {l}"
+
+    # save subject-level array
+    out_path = os.path.join(out_dir, f"{subj_name}.npy")
+    np.save(out_path, subj_array)
+    print(f"Saved {subj_name} → {out_path}, shape {subj_array.shape}")

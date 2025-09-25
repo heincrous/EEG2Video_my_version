@@ -1,9 +1,12 @@
 """
-ALIGN BLIP CAPTIONS TO CLIPS (Stable Diffusion v1-4 CLIP embeddings only)
-----------------------------------------------------------------------
+ALIGN BLIP CAPTIONS TO CLIPS (SUBJECT-LEVEL ARRAYS)
+---------------------------------------------------
 Generates embeddings for each caption using the Stable Diffusion v1-4
-tokenizer + text_encoder. These are the exact embeddings used during
-diffusion training. Each embedding has shape [77,768].
+tokenizer + text_encoder. Each embedding has shape [77,768].
+
+Output:
+  processed/BLIP_text/BLIP_text.npy         shape [7,40,5] (captions as strings)
+  processed/BLIP_embeddings/BLIP_embeddings.npy shape [7,40,5,77,768]
 """
 
 import os, sys
@@ -35,7 +38,11 @@ encoder   = CLIPTextModel.from_pretrained(pretrained_model_path, subfolder="text
 encoder.eval()
 
 ordinals = ["1st","2nd","3rd","4th","5th","6th","7th"]
-batch_size = 256
+batch_size = 128
+
+# allocate subject-level arrays
+all_texts = np.empty((7,40,5), dtype=object)
+all_embs  = np.zeros((7,40,5,77,768), dtype=np.float32)
 
 for block_id in range(7):
     fname = f"{ordinals[block_id]}_10min.txt"
@@ -47,10 +54,8 @@ for block_id in range(7):
     with open(fpath, "r") as f:
         captions = [c.strip() for c in f.readlines()]
 
-    text_block_dir  = os.path.join(out_text_dir, f"Block{block_id+1}")
-    embed_block_dir = os.path.join(out_embed_dir, f"Block{block_id+1}")
-    os.makedirs(text_block_dir, exist_ok=True)
-    os.makedirs(embed_block_dir, exist_ok=True)
+    if len(captions) != 200:
+        print(f"Warning: Block {block_id+1} has {len(captions)} captions (expected 200)")
 
     for start in tqdm(range(0,len(captions),batch_size), desc=f"Block {block_id+1}"):
         batch_caps = captions[start:start+batch_size]
@@ -67,24 +72,18 @@ for block_id in range(7):
             emb = encoder(**tokens)[0].cpu().numpy()  # [B,77,768]
 
         for j, caption in enumerate(batch_caps):
-            flat_idx = start+j
+            flat_idx  = start+j
             order_idx = flat_idx // 5
             clip_id   = flat_idx % 5
             true_class = GT_LABEL[block_id, order_idx]
 
-            # save caption
-            text_path = os.path.join(
-                text_block_dir,
-                f"class{true_class:02d}_clip{clip_id+1:02d}.txt"
-            )
-            with open(text_path,"w") as f:
-                f.write(caption)
+            all_texts[block_id, true_class, clip_id] = caption
+            all_embs[block_id, true_class, clip_id]  = emb[j]
 
-            # save embedding
-            embed_path = os.path.join(
-                embed_block_dir,
-                f"class{true_class:02d}_clip{clip_id+1:02d}.npy"
-            )
-            np.save(embed_path, emb[j])
+# save subject-level arrays
+np.save(os.path.join(out_text_dir,  "BLIP_text.npy"), all_texts)
+np.save(os.path.join(out_embed_dir, "BLIP_embeddings.npy"), all_embs)
 
-    print(f"Finished Block {block_id+1}")
+print(f"\nFinished all blocks →")
+print(f"Saved BLIP_text.npy shape {all_texts.shape}")
+print(f"Saved BLIP_embeddings.npy shape {all_embs.shape}")
