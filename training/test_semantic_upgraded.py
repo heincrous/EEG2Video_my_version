@@ -16,7 +16,7 @@ repo_root = "/content/EEG2Video_my_version"
 sys.path.append(repo_root)
 from core_files.models import (
     eegnet, shallownet, deepnet, tsconv, conformer, mlpnet,
-    glfnet, glfnet_mlp, glmnet   # <-- added glmnet
+    glfnet, glfnet_mlp, glmnet
 )
 
 # === Wrapper for CNN-based encoders ===
@@ -25,7 +25,11 @@ class WindowEncoderWrapper(torch.nn.Module):
         super().__init__()
         self.base = base_encoder
     def forward(self, x):  # (B,7,62,100)
-        return self.base(x)  # glmnet already returns (B,W,feat)
+        B, W, C, T = x.shape
+        x = x.view(B*W, 1, C, T)
+        feats = self.base(x)
+        feats = feats.view(B, W, -1)
+        return feats.mean(1)
 
 # === Reshape wrapper (flat -> (77,768)) ===
 class ReshapeWrapper(torch.nn.Module):
@@ -80,7 +84,7 @@ def build_model(feature_type, encoder_type, output_dim, input_dim=None):
             return WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
         elif encoder_type == "conformer":
             return conformer(out_dim=output_dim)
-        elif encoder_type == "glmnet":   # <-- added glmnet support
+        elif encoder_type == "glmnet":
             return WindowEncoderWrapper(glmnet(out_dim=output_dim, emb_dim=256, C=62, T=100), out_dim=output_dim)
         else:
             raise ValueError(f"Unknown encoder type for windows: {encoder_type}")
@@ -108,8 +112,7 @@ if __name__ == "__main__":
     scaler_path = os.path.join(ckpt_root, f"scaler_{tag}.pkl")
 
     # Parse naming
-    parts = tag.split("_")
-    parts = parts[1:]
+    parts = tag.split("_")[1:]  # drop "semantic_predictor"
     feature_type = parts[0]
     loss_type    = parts[-1]
     encoder_type = "_".join(parts[1:-1])
