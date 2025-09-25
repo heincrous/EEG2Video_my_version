@@ -81,7 +81,7 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device,
     best_val_acc, best_state = 0.0, None
 
     # prepare save path
-    save_dir = "/content/drive/MyDrive/EEG2Video_checkpoint/fusion_checkpoints"
+    save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints"
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, f"fusion_checkpoint_{subj_name}.pt")
     cfg_path  = os.path.join(save_dir, f"fusion_config_{subj_name}.json")
