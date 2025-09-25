@@ -122,7 +122,7 @@ def run_cv(subj_name, drive_root, device):
     segments = np.load(os.path.join(drive_root,"EEG_segments",f"{subj_name}.npy"))  # (7,40,5,62,400)
     blip = np.load(os.path.join(drive_root,"BLIP_embeddings","BLIP_embeddings.npy")) # (7,40,5,77,768)
 
-    blip = blip.reshape(7,40,5,-1)  # (7,40,5,59136)
+    blip = blip.reshape(7, 40, 5, -1)  # preserves 7x40x5
 
     all_val_losses, all_test_losses = [], []
 
