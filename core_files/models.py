@@ -353,5 +353,3 @@ class glmnet(nn.Module):
         out = self.out(combined)
 
         return out.view(B, W, -1)
-
-

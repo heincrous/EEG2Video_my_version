@@ -49,24 +49,16 @@ print("Using semantic checkpoint:", semantic_ckpt)
 print("Semantic tag:", semantic_tag)
 
 parts = semantic_tag.split("_")
-
-# --- Robust parser for feature/encoder/loss ---
 feature_type, encoder_type, loss_type = None, None, None
 if any(ft in parts for ft in ["DE", "PSD", "windows"]):
     for candidate in ["DE", "PSD", "windows"]:
         if candidate in parts:
             feature_type = candidate
             break
-
-    # Handle special cases
     if "glfnet" in parts and "mlp" in parts:
         encoder_type = "glfnet_mlp"
-        idx = parts.index("mlp")
-        loss_type = "_".join(parts[idx+1:]) if idx+1 < len(parts) else "unknown"
     elif "glmnet" in parts:
         encoder_type = "glmnet"
-        idx = parts.index("glmnet")
-        loss_type = "_".join(parts[idx+1:]) if idx+1 < len(parts) else "unknown"
     else:
         idx = parts.index(feature_type)
         if idx + 1 < len(parts):
@@ -75,7 +67,6 @@ if any(ft in parts for ft in ["DE", "PSD", "windows"]):
             loss_type = "_".join(parts[idx+2:])
 else:
     raise ValueError(f"Could not parse semantic tag: {semantic_tag}")
-
 print(f"Feature: {feature_type}, Encoder: {encoder_type}, Loss: {loss_type}")
 
 semantic_scaler = joblib.load(os.path.join(semantic_ckpt_dir, f"scaler_{semantic_tag}.pkl"))
@@ -97,7 +88,6 @@ pipe.enable_vae_slicing()
 
 # === Build semantic predictor model ===
 output_dim = 77 * 768
-
 if feature_type in ["DE", "PSD"]:
     input_dim = 62 * 5
     if encoder_type == "mlp":
@@ -132,9 +122,6 @@ else:
 model = ReshapeWrapper(base_model, n_tokens=77).to(device)
 model.load_state_dict(torch.load(semantic_ckpt, map_location=device)["state_dict"])
 model.eval()
-
-# === Diffusion wrapper ===
-dana_diffusion = Diffusion(time_steps=500)
 
 # === Load test bundles and pick random sample ===
 bundle_root = os.path.join(drive_root, "SubjectBundles")
@@ -179,17 +166,19 @@ else:
 
 with torch.no_grad():
     semantic_pred = model(eeg_tensor)
-
 negative = semantic_pred.mean(dim=0, keepdim=True).float().to(device)
 
 # === Run inference ===
 def run_inference():
+    video_length = 6
+    fps = 3
+
     video = pipe(
         model=None,
         eeg=semantic_pred,
         negative_eeg=negative,
         latents=None,
-        video_length=6,
+        video_length=video_length,
         height=288,
         width=512,
         num_inference_steps=100,
@@ -198,16 +187,21 @@ def run_inference():
 
     frames = (video[0] * 255).clamp(0, 255).to(torch.uint8)
     frames = frames.permute(0, 2, 3, 1).cpu().numpy()
+
+    # Enforce exactly 6 frames
+    assert frames.shape[0] == video_length, f"Expected {video_length} frames, got {frames.shape[0]}"
+    frames = frames[:video_length]
+
     if frames.shape[-1] > 3:
         frames = frames[..., :3]
     elif frames.shape[-1] == 1:
         frames = np.repeat(frames, 3, axis=-1)
 
     clip_name = fname.replace(".npy", "")
-    inf_path = os.path.join(output_dir, f"{clip_name}_inference.mp4")
+    inf_path = os.path.join(output_dir, f"{clip_name}_inference_{video_length}f_{fps}fps.mp4")
     gt_path  = os.path.join(output_dir, f"{clip_name}_groundtruth.mp4")
 
-    writer = imageio.get_writer(inf_path, fps=3, codec="libx264")
+    writer = imageio.get_writer(inf_path, fps=fps, codec="libx264")
     for f in frames:
         writer.append_data(f)
     writer.close()

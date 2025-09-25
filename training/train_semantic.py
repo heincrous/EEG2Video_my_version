@@ -201,7 +201,7 @@ if __name__ == "__main__":
         tag = "_".join([subjects[i] for i in selected_idx]) + f"_{feature_type}_{encoder_type}_{loss_type}"
 
     dataset    = EEGTextDataset(selected_files, feature_type=feature_type, fit_scaler=True)
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=2, pin_memory=True)
+    dataloader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=2, pin_memory=True)
 
     output_dim = 77*768
     input_dim  = dataset.eeg.shape[1] * np.prod(dataset.eeg.shape[2:])
