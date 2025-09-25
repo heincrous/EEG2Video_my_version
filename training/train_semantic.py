@@ -11,10 +11,9 @@ from torch.utils.data import DataLoader, Dataset
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
-# Add repo root
+# === Repo imports ===
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(repo_root)
-
 from core_files.models import (
     eegnet, shallownet, deepnet, tsconv, conformer, mlpnet,
     glfnet_mlp, glmnet
@@ -46,7 +45,7 @@ class WindowEncoderWrapper(nn.Module):
         super().__init__()
         self.base = base_encoder
         self.reduce = reduce
-    def forward(self, x):
+    def forward(self, x):  # (B,W,C,T)
         B, W, C, T = x.shape
         x = x.view(B*W, 1, C, T)
         feats = self.base(x)
@@ -94,84 +93,72 @@ if __name__ == "__main__":
 
     # Dummy shapes for dry run
     dummy_windows   = torch.randn(2, 7, 62, 100).cuda()
-    dummy_segments  = torch.randn(2, 1, 62, 400).cuda()   # add W=1
+    dummy_segments  = torch.randn(2, 1, 62, 400).cuda()
     dummy_de        = torch.randn(2, 62, 5).cuda()
     dummy_psd       = torch.randn(2, 62, 5).cuda()
     dummy_txt       = torch.randn(2, 77, 768).cuda()
 
-    output_dim        = 77*768
-    input_dim_windows = 7*62*100
-    input_dim_segments = 1*62*400
-    input_dim_depsd   = 62*5
+    output_dim = 77*768
 
     if mode == "dry":
         print("\n--- DRY RUN ---")
+        # Segments
+        for name, base in {
+            "eegnet": eegnet(output_dim, 62, 400),
+            "shallownet": shallownet(output_dim, 62, 400),
+            "deepnet": deepnet(output_dim, 62, 400),
+            "tsconv": tsconv(output_dim, 62, 400),
+            "glmnet": glmnet(output_dim, 256, 62, 400),
+            "mlp": mlpnet(output_dim, 62*400),
+        }.items():
+            out = ReshapeWrapper(base.cuda())(dummy_segments)
+            print(f"Segments-{name}: {out.shape}")
 
-        print("\n[Segments features]")
-        seg_encoders = {
-            "eegnet": eegnet(out_dim=output_dim, C=62, T=400),
-            "shallownet": shallownet(out_dim=output_dim, C=62, T=400),
-            "deepnet": deepnet(out_dim=output_dim, C=62, T=400),
-            "tsconv": tsconv(out_dim=output_dim, C=62, T=400),
-            "glmnet": glmnet(out_dim=output_dim, emb_dim=256, C=62, T=400),
-            "mlp": mlpnet(out_dim=output_dim, input_dim=input_dim_segments),
-        }
-        for name, base in seg_encoders.items():
-            model = ReshapeWrapper(base.cuda())
-            out = model(dummy_segments)
-            print(f"{name}: {out.shape}")
-
-        print("\n[Windows features]")
-        win_encoders = {
-            "mlp": mlpnet(out_dim=output_dim, input_dim=input_dim_windows),
+        # Windows
+        for name, base in {
+            "mlp": mlpnet(output_dim, 7*62*100),
             "conformer": conformer(out_dim=output_dim),
-        }
-        for name, base in win_encoders.items():
-            model = ReshapeWrapper(base.cuda())
-            out = model(dummy_windows)
-            print(f"{name}: {out.shape}")
+        }.items():
+            out = ReshapeWrapper(base.cuda())(dummy_windows)
+            print(f"Windows-{name}: {out.shape}")
 
-        print("\n[DE features]")
-        de_encoders = {
-            "mlp": mlpnet(out_dim=output_dim, input_dim=input_dim_depsd),
-            "glfnet_mlp": glfnet_mlp(out_dim=output_dim, emb_dim=256, input_dim=input_dim_depsd),
-        }
-        for name, base in de_encoders.items():
-            model = ReshapeWrapper(base.cuda())
-            out = model(dummy_de)
-            print(f"{name}: {out.shape}")
+        # DE
+        for name, base in {
+            "mlp": mlpnet(output_dim, 62*5),
+            "glfnet_mlp": glfnet_mlp(output_dim, 256, 62*5),
+        }.items():
+            out = ReshapeWrapper(base.cuda())(dummy_de)
+            print(f"DE-{name}: {out.shape}")
 
-        print("\n[PSD features]")
-        psd_encoders = {
-            "mlp": mlpnet(out_dim=output_dim, input_dim=input_dim_depsd),
-            "glfnet_mlp": glfnet_mlp(out_dim=output_dim, emb_dim=256, input_dim=input_dim_depsd),
-        }
-        for name, base in psd_encoders.items():
-            model = ReshapeWrapper(base.cuda())
-            out = model(dummy_psd)
-            print(f"{name}: {out.shape}")
+        # PSD
+        for name, base in {
+            "mlp": mlpnet(output_dim, 62*5),
+            "glfnet_mlp": glfnet_mlp(output_dim, 256, 62*5),
+        }.items():
+            out = ReshapeWrapper(base.cuda())(dummy_psd)
+            print(f"PSD-{name}: {out.shape}")
 
         print("\nDry run complete.")
         sys.exit(0)
 
     # ---- Training mode ----
     feature_type = input("\nEnter feature type (segments / windows / DE / PSD): ").strip()
-    bundle_path = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_EEG_bundle.npz"
-    save_root   = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
+    bundle_path  = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_EEG_bundle.npz"
+    save_root    = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
     os.makedirs(save_root, exist_ok=True)
 
     if feature_type == "segments":
         print("\nEncoders: mlp / eegnet / shallownet / deepnet / tsconv / glmnet")
         encoder_type = input("Enter encoder type: ").strip()
-        window_reduce = "mean"
+        window_reduce = None
     elif feature_type == "windows":
         print("\nEncoders: mlp / conformer")
         encoder_type = input("Enter encoder type: ").strip()
-        window_reduce = "mean"
+        window_reduce = input("Window reduction (mean / none): ").strip() or "mean"
     elif feature_type in ["DE","PSD"]:
         print("\nEncoders: mlp / glfnet_mlp")
         encoder_type = input("Enter encoder type: ").strip()
-        window_reduce = "mean"
+        window_reduce = None
     else:
         raise ValueError("feature_type must be segments / windows / DE / PSD")
 
@@ -192,12 +179,16 @@ if __name__ == "__main__":
     eeg_all = np.stack(eeg_list)
     txt_all = np.stack(txt_list)
 
+    # Explicit reshape logic
     if feature_type == "segments":
         train_eeg = eeg_all[:, :6].reshape(-1, 1, 62, 400)
         test_eeg  = eeg_all[:, 6:].reshape(-1, 1, 62, 400)
-    else:
-        train_eeg = eeg_all[:, :6].reshape(-1, *eeg_all.shape[3:])
-        test_eeg  = eeg_all[:, 6:].reshape(-1, *eeg_all.shape[3:])
+    elif feature_type == "windows":
+        train_eeg = eeg_all[:, :6].reshape(-1, 7, 62, 100)
+        test_eeg  = eeg_all[:, 6:].reshape(-1, 7, 62, 100)
+    elif feature_type in ["DE","PSD"]:
+        train_eeg = eeg_all[:, :6].reshape(-1, 62, 5)
+        test_eeg  = eeg_all[:, 6:].reshape(-1, 62, 5)
 
     train_txt = txt_all[:, :6].reshape(-1, 77, 768)
     test_txt  = txt_all[:, 6:].reshape(-1, 77, 768)
@@ -206,39 +197,33 @@ if __name__ == "__main__":
     test_set  = EEGTextDataset(test_eeg, test_txt, scaler=train_set.scaler, fit_scaler=False)
     train_loader = DataLoader(train_set, batch_size=32, shuffle=True, num_workers=2, pin_memory=True)
 
+    input_dim = train_set.eeg.shape[1] * np.prod(train_set.eeg.shape[2:])
     output_dim = 77*768
-    input_dim  = train_set.eeg.shape[1] * np.prod(train_set.eeg.shape[2:])
 
+    # Build model
     if feature_type == "segments":
-        if encoder_type == "glmnet":
-            base = glmnet(out_dim=output_dim, emb_dim=256, C=62, T=400).cuda()
-            model = base
-        elif encoder_type == "eegnet":
-            model = eegnet(out_dim=output_dim, C=62, T=400).cuda()
-        elif encoder_type == "shallownet":
-            model = shallownet(out_dim=output_dim, C=62, T=400).cuda()
-        elif encoder_type == "deepnet":
-            model = deepnet(out_dim=output_dim, C=62, T=400).cuda()
-        elif encoder_type == "tsconv":
-            model = tsconv(out_dim=output_dim, C=62, T=400).cuda()
-        elif encoder_type == "mlp":
-            model = mlpnet(out_dim=output_dim, input_dim=input_dim).cuda()
+        if encoder_type == "glmnet": model = glmnet(output_dim, 256, 62, 400).cuda()
+        elif encoder_type == "eegnet": model = eegnet(output_dim, 62, 400).cuda()
+        elif encoder_type == "shallownet": model = shallownet(output_dim, 62, 400).cuda()
+        elif encoder_type == "deepnet": model = deepnet(output_dim, 62, 400).cuda()
+        elif encoder_type == "tsconv": model = tsconv(output_dim, 62, 400).cuda()
+        elif encoder_type == "mlp": model = mlpnet(output_dim, input_dim).cuda()
+
     elif feature_type == "windows":
-        if encoder_type == "mlp":
-            model = mlpnet(out_dim=output_dim, input_dim=input_dim).cuda()
-        elif encoder_type == "conformer":
-            model = conformer(out_dim=output_dim).cuda()
+        if encoder_type == "mlp": model = mlpnet(output_dim, input_dim).cuda()
+        elif encoder_type == "conformer": model = conformer(output_dim).cuda()
+
     elif feature_type in ["DE","PSD"]:
-        if encoder_type == "mlp":
-            model = mlpnet(out_dim=output_dim, input_dim=input_dim).cuda()
-        elif encoder_type == "glfnet_mlp":
-            model = glfnet_mlp(out_dim=output_dim, emb_dim=256, input_dim=input_dim).cuda()
+        if encoder_type == "mlp": model = mlpnet(output_dim, input_dim).cuda()
+        elif encoder_type == "glfnet_mlp": model = glfnet_mlp(output_dim, 256, input_dim).cuda()
 
     model = ReshapeWrapper(model, n_tokens=77)
 
+    # Optimizer + scheduler
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(train_loader))
 
+    # Training loop
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0.0
@@ -263,7 +248,11 @@ if __name__ == "__main__":
                 pbar.update(1)
         print(f"[Epoch {epoch+1}] Avg {loss_type} loss: {total_loss/len(train_loader):.6f}")
 
-    tag = f"{feature_type}_{encoder_type}_{loss_type}"
+    # Save
+    if feature_type == "windows":
+        tag = f"{feature_type}_{encoder_type}_{loss_type}_{window_reduce}"
+    else:
+        tag = f"{feature_type}_{encoder_type}_{loss_type}"
     ckpt_path   = os.path.join(save_root, f"semantic_predictor_{tag}.pt")
     scaler_path = os.path.join(save_root, f"scaler_{tag}.pkl")
     torch.save({"state_dict": model.state_dict()}, ckpt_path)
