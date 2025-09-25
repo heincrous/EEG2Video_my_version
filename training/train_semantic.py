@@ -1,33 +1,89 @@
-# ==========================================
-# train_semantic_interactive.py
-# Subject-specific checkpoints + optional dual-head + full dry run
-# ==========================================
-
-import os
-import sys
+import os, sys
+import json
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
+import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
 # === Repo imports ===
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(repo_root)
-from core_files.models import shallownet, deepnet, eegnet, tsconv, conformer
+from core_files.models import shallownet, deepnet, eegnet, tsconv, conformer, glfnet_mlp
 
-# ==========================================
-# Semantic Predictor (single-head)
-# ==========================================
+# -------------------------------------------------
+# Fusion model (frozen for feature extraction)
+# -------------------------------------------------
+class FusionModel(nn.Module):
+    def __init__(self, encoders, num_classes=40):
+        super().__init__()
+        self.encoders = nn.ModuleDict(encoders)
+        total_dim = sum([list(e.modules())[-1].out_features for e in encoders.values()])
+        self.classifier = nn.Linear(total_dim, num_classes)
+        self.total_dim = total_dim
+
+    def forward(self, inputs, return_feats=False):
+        feats = []
+        for name, enc in self.encoders.items():
+            feats.append(enc(inputs[name]))
+        fused = torch.cat(feats, dim=-1)
+        if return_feats:
+            return fused
+        return self.classifier(fused)
+
+# -------------------------------------------------
+# Loader helper
+# -------------------------------------------------
+def load_fusion(subj_name, device):
+    ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoint/fusion_checkpoints"
+    ckpt_path = os.path.join(ckpt_dir, f"fusion_checkpoint_{subj_name}.pt")
+    cfg_path  = os.path.join(ckpt_dir, f"fusion_config_{subj_name}.json")
+
+    with open(cfg_path, "r") as f:
+        cfg = json.load(f)
+
+    feat_types = cfg["features"]
+    encoders = {}
+    for ftype, enc_name in cfg["encoders"].items():
+        if enc_name == "glfnet_mlp":
+            if ftype in ["de", "psd"]:
+                input_dim = 62*5
+            elif ftype == "combo":
+                input_dim = 62*10
+            else:
+                raise ValueError(f"Unsupported {ftype} for MLP")
+            encoders[ftype] = glfnet_mlp(out_dim=128, emb_dim=64, input_dim=input_dim).to(device)
+        elif enc_name == "shallownet":
+            encoders[ftype] = shallownet(out_dim=128, C=62, T=100 if ftype=="windows" else 400).to(device)
+        elif enc_name == "deepnet":
+            encoders[ftype] = deepnet(out_dim=128, C=62, T=400).to(device)
+        elif enc_name == "eegnet":
+            encoders[ftype] = eegnet(out_dim=128, C=62, T=100 if ftype=="windows" else 400).to(device)
+        elif enc_name == "tsconv":
+            encoders[ftype] = tsconv(out_dim=128, C=62, T=100 if ftype=="windows" else 400).to(device)
+        elif enc_name == "conformer":
+            encoders[ftype] = conformer(out_dim=128, C=62, T=100 if ftype=="windows" else 400).to(device)
+        else:
+            raise ValueError(f"Unknown encoder {enc_name}")
+
+    fusion = FusionModel(encoders, num_classes=40).to(device)
+    fusion.load_state_dict(torch.load(ckpt_path, map_location=device))
+    fusion.eval()
+    for p in fusion.parameters():
+        p.requires_grad = False
+    return fusion, feat_types
+
+# -------------------------------------------------
+# Semantic Predictor
+# -------------------------------------------------
 class SemanticPredictor(nn.Module):
-    def __init__(self, input_dim, hidden_dims=[1024, 2048, 1024], out_dim=77*768):
+    def __init__(self, input_dim, hidden=[1024,2048,1024], out_dim=77*768):
         super().__init__()
         layers = []
         prev = input_dim
-        for h in hidden_dims:
-            layers.append(nn.Linear(prev, h))
-            layers.append(nn.ReLU())
+        for h in hidden:
+            layers += [nn.Linear(prev, h), nn.ReLU()]
             prev = h
         layers.append(nn.Linear(prev, out_dim))
         self.net = nn.Sequential(*layers)
@@ -35,180 +91,163 @@ class SemanticPredictor(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-# ==========================================
-# Dual-Head Predictor (semantic + classification)
-# ==========================================
-class DualHeadPredictor(nn.Module):
-    def __init__(self, input_dim=512, hidden_dims=[1024,2048,1024], out_dim=77*768, num_classes=40):
-        super().__init__()
-        layers = []
-        prev = input_dim
-        for h in hidden_dims:
-            layers.append(nn.Linear(prev,h))
-            layers.append(nn.ReLU())
-            prev = h
-        self.shared = nn.Sequential(*layers)
-        self.semantic_head = nn.Linear(prev,out_dim)
-        self.class_head = nn.Linear(prev,num_classes)
-
-    def forward(self,x):
-        feats = self.shared(x)
-        return self.semantic_head(feats), self.class_head(feats)
-
-# ==========================================
-# EEG-BLIP Dataset (subject-specific)
-# ==========================================
+# -------------------------------------------------
+# EEG-Text Dataset
+# -------------------------------------------------
 class EEGTextDataset(Dataset):
-    def __init__(self, bundle_file, subject_id, feature_type="windows", train=True):
-        bundle = np.load(bundle_file, allow_pickle=True)
-        self.eeg_all = bundle["EEG_data"].item()
-        self.blip_emb = bundle["BLIP_embeddings"]
-        self.feature_type = feature_type
-        self.blocks = range(0,6) if train else [6]
-
-        if subject_id not in self.eeg_all:
-            raise ValueError(f"Subject {subject_id} not found in bundle")
-        self.subj = subject_id
-        self.subj_data = self.eeg_all[subject_id]
-
-        self.index = []
-        for b in self.blocks:
-            for c in range(40):
-                for k in range(5):
-                    if feature_type == "windows":
-                        for w in range(7):
-                            self.index.append((b, c, k, w))
-                    else:
-                        self.index.append((b, c, k, None))
-
-    def __len__(self):
-        return len(self.index)
-
+    def __init__(self, eeg_feats, text_embs):
+        self.eeg_feats = eeg_feats
+        self.text_embs = text_embs
+    def __len__(self): return len(self.eeg_feats)
     def __getitem__(self, idx):
-        b, c, k, w = self.index[idx]
-        if self.feature_type == "windows":
-            eeg_clip = self.subj_data["EEG_windows"][b, c, k][w]
-            eeg_clip = torch.tensor(eeg_clip, dtype=torch.float32).unsqueeze(0)
+        return self.eeg_feats[idx], self.text_embs[idx]
+
+# -------------------------------------------------
+# Helper to load subject features based on JSON
+# -------------------------------------------------
+def load_subject_features(subj_name, feat_types):
+    base = "/content/drive/MyDrive/EEG2Video_data/processed"
+    feats = {}
+    for ftype in feat_types:
+        if ftype == "de":
+            feats[ftype] = np.load(os.path.join(base,"EEG_DE_1per1s",f"{subj_name}.npy"))
+        elif ftype == "psd":
+            feats[ftype] = np.load(os.path.join(base,"EEG_PSD_1per1s",f"{subj_name}.npy"))
+        elif ftype == "windows":
+            feats[ftype] = np.load(os.path.join(base,"EEG_windows",f"{subj_name}.npy"))
+        elif ftype == "segments":
+            feats[ftype] = np.load(os.path.join(base,"EEG_segments",f"{subj_name}.npy"))
+        elif ftype == "combo":
+            de = np.load(os.path.join(base,"EEG_DE_1per1s",f"{subj_name}.npy"))
+            psd = np.load(os.path.join(base,"EEG_PSD_1per1s",f"{subj_name}.npy"))
+            feats[ftype] = np.concatenate([de, psd], axis=-1)
         else:
-            eeg_clip = self.subj_data["EEG_segments"][b, c, k]
-            eeg_clip = torch.tensor(eeg_clip, dtype=torch.float32).unsqueeze(0)
+            raise ValueError(f"Unknown feature type {ftype}")
+    return feats
 
-        blip_clip = self.blip_emb[b, c, k].flatten()
-        blip_clip = torch.tensor(blip_clip, dtype=torch.float32)
+# -------------------------------------------------
+# Train + Eval (7-fold CV with tqdm)
+# -------------------------------------------------
+def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device):
+    best_global_loss = float("inf")
+    best_ckpt_path = None
+    save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
+    os.makedirs(save_dir, exist_ok=True)
 
-        return eeg_clip, blip_clip, c  # also return class ID
+    top_losses = []
 
-# ==========================================
-# Main
-# ==========================================
-def main():
-    drive_root = "/content/drive/MyDrive/EEG2Video_data/processed"
-    bundle_file = f"{drive_root}/BLIP_EEG_bundle.npz"
+    for test_block in tqdm(range(7), desc=f"Cross-validation {subj_name}"):
+        val_block = (test_block - 1) % 7
+        train_blocks = [i for i in range(7) if i not in [test_block, val_block]]
 
-    mode_choice = input("Select mode (train/dry): ").strip()
-    feature_type = input("Select feature type (windows/segments): ").strip()
+        # collect splits for each feature
+        Xs, Ys = {ft: {"train": [], "val": [], "test": []} for ft in feat_types}, {"train": [], "val": [], "test": []}
+        for split, blocks in [("train", train_blocks), ("val", [val_block]), ("test", [test_block])]:
+            for b in blocks:
+                for c in range(40):
+                    for k in range(eeg_feats[feat_types[0]].shape[2]):
+                        for ft in feat_types:
+                            Xs[ft][split].append(eeg_feats[ft][b, c, k])
+                        Ys[split].append(text_emb[b*40*eeg_feats[feat_types[0]].shape[2] + c*eeg_feats[feat_types[0]].shape[2] + k])
 
-    encoders_all = {
-        "shallownet": shallownet,
-        "deepnet": deepnet,
-        "eegnet": eegnet,
-        "tsconv": tsconv,
-        "conformer": conformer
-    }
-    if feature_type == "windows":
-        valid_encoders = {k:v for k,v in encoders_all.items() if k != "deepnet"}
-        C, T = 62, 100
-    elif feature_type == "segments":
-        valid_encoders = encoders_all
-        C, T = 62, 400
-    else:
-        raise ValueError("Invalid feature type")
+        # convert to tensors
+        X_train = {ft: torch.tensor(np.array(Xs[ft]["train"]), dtype=torch.float32).to(device) for ft in feat_types}
+        X_val   = {ft: torch.tensor(np.array(Xs[ft]["val"]),   dtype=torch.float32).to(device) for ft in feat_types}
+        X_test  = {ft: torch.tensor(np.array(Xs[ft]["test"]),  dtype=torch.float32).to(device) for ft in feat_types}
+        Y_train = torch.tensor(np.array(Ys["train"]), dtype=torch.float32).to(device)
+        Y_val   = torch.tensor(np.array(Ys["val"]),   dtype=torch.float32).to(device)
+        Y_test  = torch.tensor(np.array(Ys["test"]),  dtype=torch.float32).to(device)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # extract fusion features
+        with torch.no_grad():
+            Feat_train = fusion({ft: X_train[ft] for ft in feat_types}, return_feats=True).cpu()
+            Feat_val   = fusion({ft: X_val[ft]   for ft in feat_types}, return_feats=True).cpu()
+            Feat_test  = fusion({ft: X_test[ft]  for ft in feat_types}, return_feats=True).cpu()
 
-    # === Dry run mode ===
-    if mode_choice == "dry":
-        eeg = torch.randn(1, 1, C, T).to(device)
-        for name, EncoderClass in valid_encoders.items():
-            encoder = EncoderClass(out_dim=512, C=C, T=T).to(device)
-            feats = encoder(eeg)
+        train_loader = DataLoader(EEGTextDataset(Feat_train, Y_train.cpu()), batch_size=32, shuffle=True)
+        val_loader   = DataLoader(EEGTextDataset(Feat_val,   Y_val.cpu()),   batch_size=32, shuffle=False)
+        test_loader  = DataLoader(EEGTextDataset(Feat_test,  Y_test.cpu()),  batch_size=32, shuffle=False)
 
-            # Single-head
-            semantic = SemanticPredictor(input_dim=512).to(device)
-            out_sem = semantic(feats)
-            print(f"[{feature_type}] {name} single-head: EEG {eeg.shape} -> Semantic {out_sem.shape}")
+        predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
+        optimizer = torch.optim.Adam(predictor.parameters(), lr=5e-4)
+        best_val_loss, best_state = float("inf"), None
+        ckpt_path = os.path.join(save_dir, f"semantic_checkpoint_{subj_name}.pt")
 
-            # Dual-head
-            dual = DualHeadPredictor(input_dim=512).to(device)
-            out_sem, out_cls = dual(feats)
-            print(f"[{feature_type}] {name} dual-head: EEG {eeg.shape} -> Semantic {out_sem.shape}, Class {out_cls.shape}")
-
-        print("Dry run completed for all valid encoder-feature combos")
-        return
-
-    # === Training mode ===
-    if mode_choice == "train":
-        subject_id = input("Enter subject ID (e.g. sub1): ").strip()
-        print(f"Available encoders for {feature_type}: {list(valid_encoders.keys())}")
-        encoder_choice = input("Select encoder: ").strip()
-        epochs_choice  = int(input("Enter number of epochs: "))
-        dual_head_flag = input("Use dual-head model with classification loss? (y/n): ").strip().lower() == "y"
-
-        if encoder_choice not in valid_encoders:
-            raise ValueError("Invalid encoder choice")
-
-        EncoderClass = valid_encoders[encoder_choice]
-        encoder = EncoderClass(out_dim=512, C=C, T=T).to(device)
-        if dual_head_flag:
-            model = DualHeadPredictor(input_dim=512).to(device)
-        else:
-            model = SemanticPredictor(input_dim=512).to(device)
-
-        train_ds = EEGTextDataset(bundle_file, subject_id, feature_type=feature_type, train=True)
-        train_loader = DataLoader(train_ds, batch_size=256, shuffle=True)
-
-        mse_loss = nn.MSELoss()
-        ce_loss = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(list(encoder.parameters())+list(model.parameters()), lr=5e-4)
-
-        ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
-        os.makedirs(ckpt_dir, exist_ok=True)
-
-        for epoch in range(epochs_choice):
-            total = 0
-            for eeg, text, cls in tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs_choice}"):
-                eeg, text, cls = eeg.to(device), text.to(device), cls.to(device)
+        for epoch in tqdm(range(50), desc=f"Fold {test_block} training", leave=False):
+            predictor.train()
+            total_loss = 0
+            for eeg, text in train_loader:
+                eeg, text = eeg.to(device), text.to(device)
                 optimizer.zero_grad()
-                feats = encoder(eeg)
-
-                if dual_head_flag:
-                    pred_sem, pred_cls = model(feats)
-                    loss_sem = mse_loss(pred_sem, text)
-                    loss_cls = ce_loss(pred_cls, cls)
-                    loss = loss_sem + 0.1*loss_cls  # weighting factor
-                else:
-                    pred_sem = model(feats)
-                    loss = mse_loss(pred_sem, text)
-
+                pred = predictor(eeg)
+                loss = F.mse_loss(pred, text)
                 loss.backward()
                 optimizer.step()
-                total += loss.item()
-            avg_loss = total/len(train_loader)
-            print(f"Epoch {epoch+1}/{epochs_choice} Loss: {avg_loss:.4f}")
+                total_loss += loss.item()
 
-        ckpt_path = os.path.join(
-            ckpt_dir,
-            f"semantic_{subject_id}_{feature_type}_{encoder_choice}{'_dual' if dual_head_flag else ''}.pt"
-        )
-        torch.save({
-            'epoch': epochs_choice,
-            'encoder_state_dict': encoder.state_dict(),
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'final_loss': avg_loss,
-            'dual_head': dual_head_flag
-        }, ckpt_path)
-        print(f"Final checkpoint saved to {ckpt_path}")
+            predictor.eval()
+            val_loss = 0
+            with torch.no_grad():
+                for eeg, text in val_loader:
+                    eeg, text = eeg.to(device), text.to(device)
+                    pred = predictor(eeg)
+                    val_loss += F.mse_loss(pred, text).item()
+            avg_val = val_loss/len(val_loader)
+
+            if avg_val < best_val_loss:
+                best_val_loss = avg_val
+                best_state = predictor.state_dict()
+                torch.save(best_state, ckpt_path)
+
+        predictor.load_state_dict(torch.load(ckpt_path, map_location=device))
+        predictor.eval()
+        test_loss = 0
+        with torch.no_grad():
+            for eeg, text in test_loader:
+                eeg, text = eeg.to(device), text.to(device)
+                pred = predictor(eeg)
+                test_loss += F.mse_loss(pred, text).item()
+        avg_test = test_loss/len(test_loader)
+        top_losses.append(avg_test)
+
+        if avg_test < best_global_loss:
+            best_global_loss = avg_test
+            best_ckpt_path = ckpt_path
+
+        print(f"Fold {test_block}: val_loss={best_val_loss:.4f}, test_loss={avg_test:.4f}")
+
+    print("\n=== Final Results ===")
+    print(f"Average Test Loss across folds: {np.mean(top_losses):.4f}")
+    print(f"Best checkpoint: {best_ckpt_path} (test_loss={best_global_loss:.4f})")
+
+    return best_ckpt_path
+
+# -------------------------------------------------
+# Main
+# -------------------------------------------------
+def main():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoint/fusion_checkpoints"
+    ckpts = [f for f in os.listdir(ckpt_dir) if f.endswith(".pt")]
+    ckpts = sorted(ckpts)
+    print("Available fusion checkpoints:")
+    for i, ckpt in enumerate(ckpts):
+        print(f"{i}: {ckpt}")
+
+    choice = int(input("Select subject index: ").strip())
+    subj_name = ckpts[choice].replace("fusion_checkpoint_", "").replace(".pt", "")
+    print(f"Selected subject: {subj_name}")
+
+    # load frozen fusion and feature list
+    fusion, feat_types = load_fusion(subj_name, device)
+
+    # load subject features based on JSON
+    eeg_feats = load_subject_features(subj_name, feat_types)
+
+    # load BLIP embeddings
+    text_emb = np.load("/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/BLIP_embeddings.npy").reshape(-1, 77*768)
+
+    run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device)
 
 if __name__ == "__main__":
     main()
