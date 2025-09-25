@@ -136,14 +136,16 @@ def preprocess_for_fusion(batch_dict, feat_types):
     processed = {}
     for ft in feat_types:
         x = batch_dict[ft]
-        if ft in ["de","psd","combo"]:
-            x = x.reshape(x.shape[0], -1)  # flatten
+        if ft in ["de","psd"]:
+            x = x.reshape(x.shape[0], 62, 5)  # keep channels × bands
+        elif ft == "combo":
+            x = x.reshape(x.shape[0], 62, 10)
         elif ft == "windows":
-            if x.ndim == 5:  # (batch,7,62,100)
+            if x.ndim == 5:
                 x = x.mean(1)
-            x = x.unsqueeze(1)  # -> (batch,1,62,100)
+            x = x.unsqueeze(1)  # (batch,1,62,100)
         elif ft == "segments":
-            x = x.unsqueeze(1)  # -> (batch,1,62,400)
+            x = x.unsqueeze(1)  # (batch,1,62,400)
         processed[ft] = x
     return processed
 
