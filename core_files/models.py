@@ -195,3 +195,38 @@ class conformer(nn.Module):
         x = self.patch(x)
         x = self.encoder(x)
         return self.fc(x.view(x.size(0), -1))
+
+# ================================
+# GLMNet-MLP (authors' classifier)
+# ================================
+class mlpnet(nn.Module):
+    def __init__(self, out_dim, input_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(input_dim, 512),
+            nn.GELU(),
+            nn.Linear(512, 256),
+            nn.GELU(),
+            nn.Linear(256, out_dim)
+        )
+    def forward(self, x):   # x: (batch, C, 5)
+        return self.net(x)
+
+class glfnet_mlp(nn.Module):
+    def __init__(self, out_dim=40, emb_dim=64, input_dim=310):
+        super().__init__()
+        # global branch: all 62 channels × 5 bands
+        self.globalnet = mlpnet(emb_dim, input_dim)
+        # local branch: occipital channels only (12×5 features)
+        self.occipital_index = list(range(50, 62))
+        self.occipital_localnet = mlpnet(emb_dim, 12*5)
+        # combine
+        self.out = nn.Linear(emb_dim*2, out_dim)
+
+    def forward(self, x):   # x: (batch, 62, 5)
+        global_feature = self.globalnet(x)
+        occipital_x = x[:, self.occipital_index, :]
+        occipital_feature = self.occipital_localnet(occipital_x)
+        return self.out(torch.cat((global_feature, occipital_feature), dim=1))
+
