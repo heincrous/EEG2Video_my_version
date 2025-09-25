@@ -72,12 +72,12 @@ def load_fusion(subj_name, device):
 # Semantic Predictor (EEG features → BLIP embedding)
 # -------------------------------------------------
 class SemanticPredictor(nn.Module):
-    def __init__(self, input_dim, hidden=[1024,2048,1024], out_dim=77*768):
+    def __init__(self, input_dim, hidden=[512,512], out_dim=77*768, dropout=0.3):
         super().__init__()
         layers = []
         prev = input_dim
         for h in hidden:
-            layers += [nn.Linear(prev, h), nn.ReLU()]
+            layers += [nn.Linear(prev, h), nn.ReLU(), nn.Dropout(dropout)]
             prev = h
         layers.append(nn.Linear(prev, out_dim))
         self.net = nn.Sequential(*layers)
@@ -138,10 +138,30 @@ def preprocess_for_fusion(batch_dict, feat_types):
     return processed
 
 # -------------------------------------------------
+# Loss functions
+# -------------------------------------------------
+def cosine_loss(pred, target):
+    pred_n = F.normalize(pred, p=2, dim=-1)
+    target_n = F.normalize(target, p=2, dim=-1)
+    return 1 - (pred_n * target_n).sum(dim=-1).mean()
+
+def contrastive_loss(pred, target, all_targets, temperature=0.07):
+    pred_n = F.normalize(pred, dim=-1)
+    all_targets_n = F.normalize(all_targets, dim=-1)
+    logits = pred_n @ all_targets_n.t() / temperature
+    # find correct prototype index for each target
+    labels = []
+    for t in target:
+        sim = (t.unsqueeze(0) @ all_targets_n.t()).argmax().item()
+        labels.append(sim)
+    labels = torch.tensor(labels, device=pred.device, dtype=torch.long)
+    return F.cross_entropy(logits, labels)
+
+# -------------------------------------------------
 # Train + Eval (multitask: classification + prototype regression)
 # -------------------------------------------------
 def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
-           lambda_cls=1.0, lambda_sem=0.5):
+           lambda_cls=1.0, lambda_sem=0.5, lambda_ctr=0.1):
 
     save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/prototype_checkpoints"
     os.makedirs(save_dir, exist_ok=True)
@@ -222,11 +242,15 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
             for eeg, proto, label in train_loader:
                 eeg, proto, label = eeg.to(device), proto.to(device), label.to(device)
                 optimizer.zero_grad()
+
                 pred_sem = predictor(eeg)
                 pred_cls = fusion.classifier(eeg)
-                loss_sem = F.mse_loss(pred_sem, proto)
+
+                loss_sem = cosine_loss(pred_sem, proto)
                 loss_cls = ce_loss(pred_cls, label)
-                loss = lambda_sem*loss_sem + lambda_cls*loss_cls
+                loss_ctr = contrastive_loss(pred_sem, proto, prototypes)
+
+                loss = lambda_sem*loss_sem + lambda_cls*loss_cls + lambda_ctr*loss_ctr
                 loss.backward()
                 optimizer.step()
 
@@ -238,7 +262,7 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
                     eeg, proto, label = eeg.to(device), proto.to(device), label.to(device)
                     pred_sem = predictor(eeg)
                     pred_cls = fusion.classifier(eeg)
-                    loss_sem = F.mse_loss(pred_sem, proto)
+                    loss_sem = cosine_loss(pred_sem, proto)
                     loss_cls = ce_loss(pred_cls, label)
                     val_loss += (lambda_sem*loss_sem + lambda_cls*loss_cls).item()
             avg_val = val_loss/len(val_loader)
@@ -265,7 +289,7 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
                 eeg, proto, label = eeg.to(device), proto.to(device), label.to(device)
                 pred_sem = predictor(eeg)
                 pred_cls = fusion.classifier(eeg)
-                loss_sem = F.mse_loss(pred_sem, proto)
+                loss_sem = cosine_loss(pred_sem, proto)
                 loss_cls = ce_loss(pred_cls, label)
                 test_loss += (lambda_sem*loss_sem + lambda_cls*loss_cls).item()
         avg_test = test_loss/len(test_loader)
