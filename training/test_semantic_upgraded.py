@@ -144,7 +144,18 @@ def main():
 
     # load state
     state = torch.load(ckpt_path, map_location=device)
-    hidden_cfg = state.get("hidden", [1024,2048,1024])  # fallback if not stored
+
+    # decide hidden sizes
+    if "hidden" in state:
+        hidden_cfg = state["hidden"]
+    else:
+        # auto-detect from first linear layer weight shape
+        first_weight = list(state["predictor"].values())[0]
+        out_dim = first_weight.shape[0]
+        if out_dim == 512:
+            hidden_cfg = [512,512]
+        else:
+            hidden_cfg = [1024,2048,1024]
 
     # rebuild predictor with correct hidden config
     predictor = SemanticPredictor(input_dim=fusion.total_dim, hidden=hidden_cfg).to(device)
