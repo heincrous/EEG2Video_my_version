@@ -1,5 +1,5 @@
 # ==========================================
-# train_classification.py
+# train_eval_classification.py
 # Subject-specific EEG → Class (40-way)
 # ==========================================
 
@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
+from collections import Counter
 
 # === Repo imports ===
 repo_root = "/content/EEG2Video_my_version"
@@ -75,7 +76,7 @@ def main():
     drive_root="/content/drive/MyDrive/EEG2Video_data/processed"
     bundle_file=f"{drive_root}/BLIP_EEG_bundle.npz"
 
-    mode_choice=input("Select mode (train/dry): ").strip()
+    mode_choice=input("Select mode (train/eval/dry): ").strip()
     feature_type=input("Select feature type (windows/segments): ").strip()
 
     encoders_all={
@@ -159,6 +160,80 @@ def main():
             'final_loss':avg_loss
         },ckpt_path)
         print(f"Final checkpoint saved to {ckpt_path}")
+        return
+
+    # === Evaluation ===
+    if mode_choice=="eval":
+        ckpt_dir="/content/drive/MyDrive/EEG2Video_checkpoints/classification_checkpoints"
+        ckpts=[f for f in os.listdir(ckpt_dir) if f.endswith(".pt")]
+        for i,ck in enumerate(ckpts): print(f"[{i}] {ck}")
+        choice=int(input("\nSelect checkpoint index: ").strip())
+        ckpt_file=ckpts[choice]
+        ckpt_path=os.path.join(ckpt_dir,ckpt_file)
+
+        # Parse filename: classifier_sub1_windows_shallownet.pt
+        parts=ckpt_file.replace(".pt","").split("_")
+        subject_id,feature_type,encoder_choice=parts[1],parts[2],parts[3]
+        print(f"\n[Config] Subject={subject_id}, Feature={feature_type}, Encoder={encoder_choice}")
+
+        data=np.load(bundle_file,allow_pickle=True)
+        eeg_dict=data["EEG_data"].item()
+
+        encoders={
+            "shallownet":shallownet,
+            "deepnet":deepnet,
+            "eegnet":eegnet,
+            "tsconv":tsconv,
+            "conformer":conformer
+        }
+        C,T=(62,100) if feature_type=="windows" else (62,400)
+        encoder=encoders[encoder_choice](out_dim=512,C=C,T=T).cuda()
+        classifier=EEGClassifier(input_dim=512).cuda()
+
+        ckpt=torch.load(ckpt_path,map_location="cuda")
+        encoder.load_state_dict(ckpt["encoder_state_dict"])
+        classifier.load_state_dict(ckpt["classifier_state_dict"])
+        encoder.eval(); classifier.eval()
+
+        feats=eeg_dict[subject_id]
+        eeg=feats[f"EEG_{feature_type}"][6]   # block 6 test
+
+        correct1=correct5=total=0
+        pred_classes=[]; true_classes=[]
+
+        with tqdm(total=40*5,desc=f"Evaluating {subject_id}") as pbar:
+            for ci in range(40):
+                for cj in range(5):
+                    if feature_type=="windows":
+                        windows=torch.tensor(eeg[ci,cj],dtype=torch.float32).unsqueeze(1).cuda()
+                        with torch.no_grad():
+                            enc=encoder(windows)
+                            logits=classifier(enc.mean(0,keepdim=True))
+                    else:
+                        x=torch.tensor(eeg[ci,cj],dtype=torch.float32).unsqueeze(0).unsqueeze(0).cuda()
+                        with torch.no_grad():
+                            enc=encoder(x)
+                            logits=classifier(enc)
+
+                    probs=torch.softmax(logits,dim=-1).cpu().numpy().flatten()
+                    top1=int(np.argmax(probs))
+                    top5=np.argsort(probs)[-5:][::-1]
+
+                    correct1+=int(top1==ci)
+                    correct5+=int(ci in top5)
+                    total+=1
+                    pred_classes.append(top1); true_classes.append(ci)
+                    pbar.update(1)
+
+        print(f"\nTop-1 Acc: {correct1/total:.4f}, Top-5 Acc: {correct5/total:.4f}")
+        from collections import Counter
+        pc,tc=Counter(pred_classes),Counter(true_classes)
+        print("\nPredicted class distribution:")
+        for cls in range(40):
+            print(f"Class {cls}: {pc.get(cls,0)} ({pc.get(cls,0)/total:.2%})")
+        print("\nTrue class distribution:")
+        for cls in range(40):
+            print(f"Class {cls}: {tc.get(cls,0)} ({tc.get(cls,0)/total:.2%})")
 
 if __name__=="__main__":
     main()
