@@ -1,44 +1,58 @@
-# Dataset File Structure
+# EEG2Video_data/
+# └── processed/
+#     ├── EEG_segments/                          # segmented raw EEG
+#     │   ├── sub1.npy        → [7,40,5,400,62]   (7 blocks, 40 classes, 5 clips,
+#     │   ├── sub2.npy           2s segment with 400 samples at 200 Hz × 62 channels)
+#     │   └── ...
+#     │
+#     ├── EEG_windows/                           # EEG windowed features
+#     │   ├── sub1.npy        → [7,40,5,7,62,100] (each 2s segment split into 7 windows
+#     │   ├── sub2.npy           of length 100 with 50 overlap, per channel)
+#     │   └── ...
+#     │
+#     ├── EEG_DE/                                # Differential Entropy features
+#     │   ├── sub1.npy        → [7,40,5,62,5]     (5 frequency bands per channel)
+#     │   ├── sub2.npy
+#     │   └── ...
+#     │
+#     ├── EEG_PSD/                               # Power Spectral Density features
+#     │   ├── sub1.npy        → [7,40,5,62,5]     (same 5 bands per channel)
+#     │   ├── sub2.npy
+#     │   └── ...
+#     │
+#     ├── Video_mp4/                             # raw video stimuli (per block)
+#     │   ├── Block1/class00_clip01.mp4
+#     │   ├── Block1/class00_clip02.mp4
+#     │   └── ...
+#     │
+#     ├── Video_latents/
+#     │   └── Video_latents.npy → [7,40,5,6,4,36,64]
+#     │                           (7 blocks × 40 classes × 5 clips × 6 frames,
+#     │                            each frame latent is [4,36,64] from SD VAE)
+#     │
+#     ├── BLIP_text/
+#     │   └── BLIP_text.npy     → [7,40,5] (string captions aligned to each clip)
+#     │
+#     ├── BLIP_embeddings/
+#     │   └── BLIP_embeddings.npy → [7,40,5,77,768]
+#     │                             (per-caption CLIP embeddings, 77 tokens × 768 dims)
+#     │
+#     ├── BLIP_Video_bundle.npz                  # combined bundle (block-level)
+#     │       keys:
+#     │         "BLIP_text"       → [7,40,5] captions
+#     │         "BLIP_embeddings" → [7,40,5,77,768]
+#     │         "Video_latents"   → [7,40,5,6,4,36,64]
+#     │
+#     └── BLIP_EEG_bundle.npz                    # combined bundle (subject-level)
+#             keys:
+#               "BLIP_text"       → [7,40,5] captions
+#               "BLIP_embeddings" → [7,40,5,77,768]
+#               "EEG_data"        → dict of subjects:
+#                                    EEG_segments[subX] → [7,40,5,400,62]
+#                                    EEG_windows[subX]  → [7,40,5,7,62,100]
+#                                    EEG_DE[subX]       → [7,40,5,62,5]
+#                                    EEG_PSD[subX]      → [7,40,5,62,5]
 
-# BLIP-caption/
-#     1st_10min.txt
-#     2nd_10min.txt
-#     3rd_10min.txt
-#     4th_10min.txt
-#     5th_10min.txt
-#     6th_10min.txt
-#     7th_10min.txt
-#
-# EEG/
-#     sub1.npy
-#     sub1_session2.npy
-#     sub2.npy
-#     sub3.npy
-#     sub4.npy
-#     sub5.npy
-#     ... (21 files total)
-#
-# SEED-DV/
-#     channel-order.xlsx
-#     channel_62_pos.locs
-#
-# Video/
-#     1st_10min.mp4
-#     2nd_10min.mp4
-#     3rd_10min.mp4
-#     4th_10min.mp4
-#     5th_10min.mp4
-#     6th_10min.mp4
-#     7th_10min.mp4
-#     readme.txt
-#
-# meta-info/
-#     All_video_color.npy
-#     All_video_face_apperance.npy
-#     All_video_human_apperance.npy
-#     All_video_label.npy
-#     All_video_obj_number.npy
-#     All_video_optical_flow_score.npy
 
 import os
 
