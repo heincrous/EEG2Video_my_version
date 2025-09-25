@@ -161,14 +161,28 @@ def run_cv(subj_name, drive_root, device, feat_types, encoders, datas):
                 y_dicts["val"].append(c)
                 y_dicts["test"].append(c)
 
-        # normalization per feature per split
-        for split in ["train","val","test"]:
-            for f in feat_types:
+        # # normalization per feature per split
+        # for split in ["train","val","test"]:
+        #     for f in feat_types:
+        #         arr = np.array(X_dicts[split][f])
+        #         shape = arr.shape
+        #         scaler = StandardScaler()
+        #         arr = scaler.fit_transform(arr.reshape(len(arr), -1))
+        #         X_dicts[split][f] = arr.reshape(shape)
+        #     y_dicts[split] = np.array(y_dicts[split])
+
+        # normalization per feature, fit on train only
+        for f in feat_types:
+            train_arr = np.array(X_dicts["train"][f])
+            shape = train_arr.shape
+            scaler = StandardScaler()
+            scaler.fit(train_arr.reshape(len(train_arr), -1))
+
+            for split in ["train", "val", "test"]:
                 arr = np.array(X_dicts[split][f])
-                shape = arr.shape
-                scaler = StandardScaler()
-                arr = scaler.fit_transform(arr.reshape(len(arr), -1))
-                X_dicts[split][f] = arr.reshape(shape)
+                X_dicts[split][f] = scaler.transform(arr.reshape(len(arr), -1)).reshape(arr.shape)
+
+        for split in ["train", "val", "test"]:
             y_dicts[split] = np.array(y_dicts[split])
 
         train_loader = DataLoader(DictDataset(X_dicts["train"], y_dicts["train"], conv_features),batch_size=256,shuffle=True)
