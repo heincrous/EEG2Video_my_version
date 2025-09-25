@@ -50,18 +50,27 @@ print("Semantic tag:", semantic_tag)
 
 parts = semantic_tag.split("_")
 
-# --- Robust parsing of feature/encoder/loss ---
-if parts[-3] in ["DE", "PSD", "windows"]:
-    feature_type = parts[-3]
-    # handle glfnet_mlp explicitly
-    if parts[-2] == "glfnet" and parts[-1].startswith("mlp"):
+# --- Robust parser for feature/encoder/loss ---
+feature_type, encoder_type, loss_type = None, None, None
+if any(ft in parts for ft in ["DE", "PSD", "windows"]):
+    for candidate in ["DE", "PSD", "windows"]:
+        if candidate in parts:
+            feature_type = candidate
+            break
+
+    # Handle glfnet_mlp special case
+    if "glfnet" in parts and "mlp" in parts:
         encoder_type = "glfnet_mlp"
-        loss_type = "_".join(parts[-1:])  # keep full loss string
+        idx = parts.index("mlp")
+        loss_type = "_".join(parts[idx+1:]) if idx+1 < len(parts) else "unknown"
     else:
-        encoder_type = parts[-2]
-        loss_type    = parts[-1]
+        idx = parts.index(feature_type)
+        if idx + 1 < len(parts):
+            encoder_type = parts[idx+1]
+        if idx + 2 < len(parts):
+            loss_type = "_".join(parts[idx+2:])
 else:
-    feature_type, encoder_type, loss_type = parts[-3], parts[-2], parts[-1]
+    raise ValueError(f"Could not parse semantic tag: {semantic_tag}")
 
 print(f"Feature: {feature_type}, Encoder: {encoder_type}, Loss: {loss_type}")
 
