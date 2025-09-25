@@ -110,11 +110,12 @@ if __name__ == "__main__":
     parts = tag.split("_")
     feature_type = parts[0]
     loss_type    = parts[-1]
+
     if feature_type == "windows":
         window_reduce = parts[-2]
         encoder_type = "_".join(parts[1:-2])
     else:
-        window_reduce = "mean"
+        window_reduce = None
         encoder_type = "_".join(parts[1:-1])
 
     print(f"\n[Config] Feature={feature_type}, Encoder={encoder_type}, Loss={loss_type}, WindowReduce={window_reduce}")
