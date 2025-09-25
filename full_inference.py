@@ -49,7 +49,20 @@ print("Using semantic checkpoint:", semantic_ckpt)
 print("Semantic tag:", semantic_tag)
 
 parts = semantic_tag.split("_")
-feature_type, encoder_type, loss_type = parts[-3], parts[-2], parts[-1]
+
+# --- Robust parsing of feature/encoder/loss ---
+if parts[-3] in ["DE", "PSD", "windows"]:
+    feature_type = parts[-3]
+    # handle glfnet_mlp explicitly
+    if parts[-2] == "glfnet" and parts[-1].startswith("mlp"):
+        encoder_type = "glfnet_mlp"
+        loss_type = "_".join(parts[-1:])  # keep full loss string
+    else:
+        encoder_type = parts[-2]
+        loss_type    = parts[-1]
+else:
+    feature_type, encoder_type, loss_type = parts[-3], parts[-2], parts[-1]
+
 print(f"Feature: {feature_type}, Encoder: {encoder_type}, Loss: {loss_type}")
 
 semantic_scaler = joblib.load(os.path.join(semantic_ckpt_dir, f"scaler_{semantic_tag}.pkl"))
