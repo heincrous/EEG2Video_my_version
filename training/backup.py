@@ -67,20 +67,14 @@ def topk_accuracy(output, target, topk=(1,)):
         return res
 
 # -------------------------------------------------
-# Train + Eval (with checkpoint saving)
+# Train + Eval
 # -------------------------------------------------
-def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epochs=50, lr=1e-3, subj_name="subX"):
+def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epochs=50, lr=1e-3):
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     best_val_acc, best_state = 0.0, None
 
-    # prepare save path
-    save_dir = "/content/drive/MyDrive/EEG2Video_checkpoint/fusion_checkpoints"
-    os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, f"fusion_checkpoint_{subj_name}.pt")
-
-    for epoch in range(num_epochs):
-        # training
+    for _ in range(num_epochs):
         model.train()
         for Xs, y in train_loader:
             Xs = {k: v.to(device) for k,v in Xs.items()}
@@ -101,18 +95,13 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
                 out = model(Xs)
                 val_correct += (out.argmax(1) == y).sum().item()
                 val_total += y.size(0)
-        val_acc = val_correct / val_total if val_total > 0 else 0
-
-        # save best checkpoint
+        val_acc = val_correct / val_total if val_total>0 else 0
         if val_acc > best_val_acc:
             best_val_acc, best_state = val_acc, model.state_dict()
-            torch.save(best_state, save_path)
 
-    # load best checkpoint for testing
-    if best_state is not None:
-        model.load_state_dict(best_state)
+    # test
+    model.load_state_dict(best_state)
     model.eval()
-
     top1_list, top5_list = [], []
     with torch.no_grad():
         for Xs, y in test_loader:
@@ -121,7 +110,6 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
             out = model(Xs)
             accs = topk_accuracy(out, y, topk=(1,5))
             top1_list.append(accs[0]); top5_list.append(accs[1])
-
     return np.mean(top1_list), np.mean(top5_list)
 
 # -------------------------------------------------
@@ -129,15 +117,13 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
 # -------------------------------------------------
 def load_feature(feat_type, subj_name, drive_root):
     if feat_type == "de":
-        arr = np.load(os.path.join(drive_root,"EEG_DE_1per1s",f"{subj_name}.npy"))  # (7,40,5,2,62,5)
-        return arr.reshape(7,40,10,62,5)  # collapse 2 windows into trial axis
+        return np.load(os.path.join(drive_root,"EEG_DE",f"{subj_name}.npy"))  # (7,40,5,62,5)
     elif feat_type == "psd":
-        arr = np.load(os.path.join(drive_root,"EEG_PSD_1per1s",f"{subj_name}.npy"))  # (7,40,5,2,62,5)
-        return arr.reshape(7,40,10,62,5)
+        return np.load(os.path.join(drive_root,"EEG_PSD",f"{subj_name}.npy")) # (7,40,5,62,5)
     elif feat_type == "windows":
-        return np.load(os.path.join(drive_root,"EEG_windows",f"{subj_name}.npy"))   # (7,40,5,7,62,100)
+        return np.load(os.path.join(drive_root,"EEG_windows",f"{subj_name}.npy")) # (7,40,5,7,62,100)
     elif feat_type == "segments":
-        return np.load(os.path.join(drive_root,"EEG_segments",f"{subj_name}.npy"))  # (7,40,5,62,400)
+        return np.load(os.path.join(drive_root,"EEG_segments",f"{subj_name}.npy")) # (7,40,5,62,400)
     else:
         raise ValueError(f"Unknown feature {feat_type}")
 
@@ -230,15 +216,12 @@ def main():
 
     # handle combo (early fusion DE+PSD)
     if "combo" in feat_types:
-        de = np.load(os.path.join(drive_root,"EEG_DE_1per1s",f"{subj_name}.npy"))
-        psd = np.load(os.path.join(drive_root,"EEG_PSD_1per1s",f"{subj_name}.npy"))
-        # reshape from (7,40,5,2,62,5) → (7,40,10,62,5)
-        de  = de.reshape(7,40,10,62,5)
-        psd = psd.reshape(7,40,10,62,5)
-        combo = np.concatenate([de, psd], axis=-1)  # (7,40,10,62,10)
+        de = load_feature("de", subj_name, drive_root)
+        psd = load_feature("psd", subj_name, drive_root)
+        combo = np.concatenate([de, psd], axis=-1)  # (7,40,5,62,10)
         datas["combo"] = combo
-        input_dim = 62*10
-        encoders["combo"] = glfnet_mlp(out_dim=128, emb_dim=64, input_dim=input_dim).to(device)
+        input_dim=62*10
+        encoders["combo"]=glfnet_mlp(out_dim=128,emb_dim=64,input_dim=input_dim).to(device)
         feat_types = [f for f in feat_types if f not in ["de","psd"]]
 
     for f in feat_types:
