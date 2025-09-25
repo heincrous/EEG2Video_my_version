@@ -94,53 +94,57 @@ if __name__ == "__main__":
 
     # Dummy shapes for dry run
     dummy_windows = torch.randn(2, 7, 62, 100).cuda()
+    dummy_segments = torch.randn(2, 62, 400).cuda()
     dummy_de = torch.randn(2, 62, 5).cuda()
     dummy_psd = torch.randn(2, 62, 5).cuda()
     dummy_txt = torch.randn(2, 77, 768).cuda()
 
     output_dim = 77*768
     input_dim_windows = 7*62*100
+    input_dim_segments = 62*400
     input_dim_depsd = 62*5
 
     if mode == "dry":
         print("\n--- DRY RUN ---")
 
-        # Windows features
+        print("\n[Segments features]")
+        seg_encoders = {
+            "eegnet": eegnet(out_dim=output_dim, C=62, T=400),
+            "shallownet": shallownet(out_dim=output_dim, C=62, T=400),
+            "deepnet": deepnet(out_dim=output_dim, C=62, T=400),
+            "tsconv": tsconv(out_dim=output_dim, C=62, T=400),
+            "glmnet": glmnet(out_dim=output_dim, emb_dim=256, C=62, T=400),
+            "mlp": mlpnet(out_dim=output_dim, input_dim=input_dim_segments),
+        }
+        for name, base in seg_encoders.items():
+            model = ReshapeWrapper(base.cuda())
+            out = model(dummy_segments)
+            print(f"{name}: {out.shape}")
+
         print("\n[Windows features]")
         win_encoders = {
-            "eegnet": eegnet(out_dim=output_dim, C=62, T=100),
-            "shallownet": shallownet(out_dim=output_dim, C=62, T=100),
-            "deepnet": deepnet(out_dim=output_dim, C=62, T=100),
-            "tsconv": tsconv(out_dim=output_dim, C=62, T=100),
-            "glmnet": glmnet(out_dim=output_dim, emb_dim=256, C=62, T=100),
+            "mlp": mlpnet(out_dim=output_dim, input_dim=input_dim_windows),
             "conformer": conformer(out_dim=output_dim),
-            "mlp": mlpnet(out_dim=output_dim, input_dim=input_dim_windows)
         }
         for name, base in win_encoders.items():
-            for reduce in ["mean", "none"]:
-                if name in ["conformer", "mlp"]:
-                    model = ReshapeWrapper(base.cuda())
-                else:
-                    model = ReshapeWrapper(WindowEncoderWrapper(base.cuda(), out_dim=output_dim, reduce=reduce))
-                out = model(dummy_windows)
-                print(f"{name} ({reduce}): {out.shape}")
+            model = ReshapeWrapper(base.cuda())
+            out = model(dummy_windows)
+            print(f"{name}: {out.shape}")
 
-        # DE features
         print("\n[DE features]")
         de_encoders = {
             "mlp": mlpnet(out_dim=output_dim, input_dim=input_dim_depsd),
-            "glfnet_mlp": glfnet_mlp(out_dim=output_dim, emb_dim=256, input_dim=input_dim_depsd)
+            "glfnet_mlp": glfnet_mlp(out_dim=output_dim, emb_dim=256, input_dim=input_dim_depsd),
         }
         for name, base in de_encoders.items():
             model = ReshapeWrapper(base.cuda())
             out = model(dummy_de)
             print(f"{name}: {out.shape}")
 
-        # PSD features
         print("\n[PSD features]")
         psd_encoders = {
             "mlp": mlpnet(out_dim=output_dim, input_dim=input_dim_depsd),
-            "glfnet_mlp": glfnet_mlp(out_dim=output_dim, emb_dim=256, input_dim=input_dim_depsd)
+            "glfnet_mlp": glfnet_mlp(out_dim=output_dim, emb_dim=256, input_dim=input_dim_depsd),
         }
         for name, base in psd_encoders.items():
             model = ReshapeWrapper(base.cuda())
@@ -151,21 +155,25 @@ if __name__ == "__main__":
         sys.exit(0)
 
     # ---- Training mode ----
-    feature_type = input("\nEnter feature type (windows / DE / PSD): ").strip()
+    feature_type = input("\nEnter feature type (segments / windows / DE / PSD): ").strip()
     bundle_path = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_EEG_bundle.npz"
     save_root   = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
     os.makedirs(save_root, exist_ok=True)
 
-    if feature_type == "windows":
-        print("\nEncoders: mlp / eegnet / shallownet / deepnet / tsconv / conformer / glmnet")
+    if feature_type == "segments":
+        print("\nEncoders: mlp / eegnet / shallownet / deepnet / tsconv / glmnet")
         encoder_type = input("Enter encoder type: ").strip()
-        window_reduce = input("Window reduction (mean / none): ").strip() or "mean"
-    elif feature_type in ["DE", "PSD"]:
+        window_reduce = "mean"
+    elif feature_type == "windows":
+        print("\nEncoders: mlp / conformer")
+        encoder_type = input("Enter encoder type: ").strip()
+        window_reduce = "mean"
+    elif feature_type in ["DE","PSD"]:
         print("\nEncoders: mlp / glfnet_mlp")
         encoder_type = input("Enter encoder type: ").strip()
         window_reduce = "mean"
     else:
-        raise ValueError("feature_type must be windows / DE / PSD")
+        raise ValueError("feature_type must be segments / windows / DE / PSD")
 
     print("\nLoss options: mse / cosine / contrastive / mse+cosine / mse+contrastive / cosine+contrastive / mse+cosine+contrastive")
     loss_type = input("Enter loss type: ").strip()
@@ -196,22 +204,25 @@ if __name__ == "__main__":
     output_dim = 77*768
     input_dim  = train_set.eeg.shape[1] * np.prod(train_set.eeg.shape[2:])
 
-    if feature_type == "windows":
+    if feature_type == "segments":
         if encoder_type == "glmnet":
-            base = glmnet(out_dim=output_dim, emb_dim=256, C=62, T=100).cuda()
-            model = WindowEncoderWrapper(base, out_dim=output_dim, reduce=window_reduce).cuda()
+            base = glmnet(out_dim=output_dim, emb_dim=256, C=62, T=400).cuda()
+            model = base
         elif encoder_type == "eegnet":
-            model = WindowEncoderWrapper(eegnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim, reduce=window_reduce).cuda()
+            model = eegnet(out_dim=output_dim, C=62, T=400).cuda()
         elif encoder_type == "shallownet":
-            model = WindowEncoderWrapper(shallownet(out_dim=output_dim, C=62, T=100), out_dim=output_dim, reduce=window_reduce).cuda()
+            model = shallownet(out_dim=output_dim, C=62, T=400).cuda()
         elif encoder_type == "deepnet":
-            model = WindowEncoderWrapper(deepnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim, reduce=window_reduce).cuda()
+            model = deepnet(out_dim=output_dim, C=62, T=400).cuda()
         elif encoder_type == "tsconv":
-            model = WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim, reduce=window_reduce).cuda()
-        elif encoder_type == "conformer":
-            model = conformer(out_dim=output_dim).cuda()
+            model = tsconv(out_dim=output_dim, C=62, T=400).cuda()
         elif encoder_type == "mlp":
             model = mlpnet(out_dim=output_dim, input_dim=input_dim).cuda()
+    elif feature_type == "windows":
+        if encoder_type == "mlp":
+            model = mlpnet(out_dim=output_dim, input_dim=input_dim).cuda()
+        elif encoder_type == "conformer":
+            model = conformer(out_dim=output_dim).cuda()
     elif feature_type in ["DE","PSD"]:
         if encoder_type == "mlp":
             model = mlpnet(out_dim=output_dim, input_dim=input_dim).cuda()
@@ -247,7 +258,7 @@ if __name__ == "__main__":
                 pbar.update(1)
         print(f"[Epoch {epoch+1}] Avg {loss_type} loss: {total_loss/len(train_loader):.6f}")
 
-    tag = f"{feature_type}_{encoder_type}_{loss_type}_{window_reduce}"
+    tag = f"{feature_type}_{encoder_type}_{loss_type}"
     ckpt_path   = os.path.join(save_root, f"semantic_predictor_{tag}.pt")
     scaler_path = os.path.join(save_root, f"scaler_{tag}.pkl")
     torch.save({"state_dict": model.state_dict()}, ckpt_path)
