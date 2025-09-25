@@ -91,7 +91,8 @@ class ReshapeWrapper(nn.Module):
 
     def forward(self, x):
         out = self.base(x)  # (B, n_tokens*768)
-        return out.view(out.size(0), self.n_tokens, 768)
+        out = out.view(out.size(0), self.n_tokens, 768)
+        return out
 
 # ==========================================
 # Loss functions
@@ -109,6 +110,11 @@ def contrastive_loss(pred, target, temperature=0.07):
     labels = torch.arange(B, device=pred.device)
     return F.cross_entropy(logits, labels)
 
+def mse_cosine_loss(pred, target):
+    mse = F.mse_loss(pred, target)
+    cos = cosine_loss(pred, target)
+    return mse + cos
+
 # ==========================================
 # Training loop
 # ==========================================
@@ -119,14 +125,13 @@ if __name__ == "__main__":
 
     feature_type = input("\nEnter feature type (DE / PSD / windows): ").strip()
 
-    # Only ask for encoder when windows is chosen
     if feature_type == "windows":
         encoder_type = input("\nEnter encoder type (mlp / eegnet / shallownet / deepnet / tsconv / conformer): ").strip()
     else:
         encoder_type = "mlp"
         print("For DE/PSD features, using mlpnet automatically.")
 
-    loss_type    = input("\nEnter loss type (mse / cosine / contrastive): ").strip()
+    loss_type = input("\nEnter loss type (mse / cosine / contrastive / mse+cosine): ").strip()
 
     all_bundles = sorted([f for f in os.listdir(bundle_dir) if f.endswith("_train.npz")])
     subjects    = [f.replace("_train.npz", "") for f in all_bundles]
@@ -234,6 +239,8 @@ if __name__ == "__main__":
                     loss = cosine_loss(pred, text)
                 elif loss_type == "contrastive":
                     loss = contrastive_loss(pred, text)
+                elif loss_type == "mse+cosine":
+                    loss = mse_cosine_loss(pred, text)
                 else:
                     raise ValueError("Unknown loss type")
 
