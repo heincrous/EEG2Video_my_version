@@ -2,7 +2,7 @@
 # Full Inference (Semantic Predictor auto-detection, random samples, all models)
 # ==========================================
 
-import os, sys, gc, glob, random, imageio, torch
+import os, sys, gc, glob, random, imageio, torch, shutil
 import numpy as np
 import joblib
 
@@ -23,6 +23,9 @@ finetuned_model_path  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_
 semantic_ckpt_dir     = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
 
 blip_text_root        = os.path.join(drive_root, "BLIP_text")
+video_mp4_root        = os.path.join(drive_root, "Video_mp4")
+video_gif_root        = os.path.join(drive_root, "Video_gif")
+
 output_dir            = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference"
 os.makedirs(output_dir, exist_ok=True)
 
@@ -126,17 +129,28 @@ eeg_feat = eeg_data[idx]
 key = keys[idx]
 print("Chosen test sample:", test_bundle, key)
 
-# === Find associated BLIP caption ===
+# === Find associated BLIP caption and video paths ===
 parts = key.split("/")
-block, fname = parts[1], parts[2]
-blip_caption_path = os.path.join(blip_text_root, block, fname.replace(".npy", ".txt"))
+if len(parts) == 3:
+    _, block, fname = parts
+elif len(parts) == 2:
+    block, fname = parts
+else:
+    raise ValueError(f"Unexpected key format: {key}")
 
+blip_caption_path = os.path.join(blip_text_root, block, fname.replace(".npy", ".txt"))
 if os.path.exists(blip_caption_path):
     with open(blip_caption_path, "r") as f:
         blip_prompt = f.read().strip()
 else:
     blip_prompt = "[Prompt not found]"
+
+video_mp4_path = os.path.join(video_mp4_root, block, fname.replace(".npy", ".mp4"))
+video_gif_path = os.path.join(video_gif_root, block, fname.replace(".npy", ".gif"))
+
 print("Associated BLIP caption:", blip_prompt)
+print("Associated video (mp4):", video_mp4_path)
+print("Associated video (gif):", video_gif_path)
 
 # === Prepare EEG features ===
 eeg_flat = eeg_feat.reshape(-1)
@@ -181,8 +195,18 @@ def run_inference():
         writer.append_data(f)
     writer.close()
 
+    # Copy ground-truth video for side-by-side comparison
+    if os.path.exists(video_mp4_path):
+        gt_copy_path = os.path.join(output_dir, f"GT_{block}_{fname.replace('.npy','.mp4')}")
+        shutil.copy(video_mp4_path, gt_copy_path)
+        print("Ground-truth copied to:", gt_copy_path)
+    else:
+        print("Ground-truth .mp4 not found")
+
     print("Video saved to:", mp4_path)
     print("EEG sample:", key)
     print("BLIP caption:", blip_prompt)
+    print("Ground-truth clip (mp4):", video_mp4_path)
+    print("Ground-truth clip (gif):", video_gif_path)
 
 run_inference()
