@@ -21,12 +21,15 @@ class FusionModel(nn.Module):
         self.encoders = nn.ModuleDict(encoders)
         total_dim = sum([list(e.modules())[-1].out_features for e in encoders.values()])
         self.classifier = nn.Linear(total_dim, num_classes)
+        self.total_dim = total_dim
 
-    def forward(self, inputs):
+    def forward(self, inputs, return_feats=False):
         feats = []
         for name, enc in self.encoders.items():
             feats.append(enc(inputs[name]))
         fused = torch.cat(feats, dim=-1)
+        if return_feats:
+            return fused
         return self.classifier(fused)
 
 # -------------------------------------------------
