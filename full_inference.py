@@ -8,7 +8,7 @@ import joblib
 
 from core_files.models import (
     eegnet, shallownet, deepnet, tsconv, conformer, mlpnet,
-    glfnet, glfnet_mlp
+    glfnet, glfnet_mlp, glmnet
 )
 from core_files.unet import UNet3DConditionModel
 from training.train_semantic import WindowEncoderWrapper, ReshapeWrapper
@@ -58,10 +58,14 @@ if any(ft in parts for ft in ["DE", "PSD", "windows"]):
             feature_type = candidate
             break
 
-    # Handle glfnet_mlp special case
+    # Handle special cases
     if "glfnet" in parts and "mlp" in parts:
         encoder_type = "glfnet_mlp"
         idx = parts.index("mlp")
+        loss_type = "_".join(parts[idx+1:]) if idx+1 < len(parts) else "unknown"
+    elif "glmnet" in parts:
+        encoder_type = "glmnet"
+        idx = parts.index("glmnet")
         loss_type = "_".join(parts[idx+1:]) if idx+1 < len(parts) else "unknown"
     else:
         idx = parts.index(feature_type)
@@ -118,6 +122,8 @@ elif feature_type == "windows":
         base_model = WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
     elif encoder_type == "conformer":
         base_model = conformer(out_dim=output_dim)
+    elif encoder_type == "glmnet":
+        base_model = WindowEncoderWrapper(glmnet(out_dim=output_dim, emb_dim=256, C=62, T=100), out_dim=output_dim)
     else:
         raise ValueError(f"Unknown encoder type {encoder_type}")
 else:
