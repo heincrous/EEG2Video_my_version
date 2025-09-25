@@ -81,6 +81,7 @@ class SemanticPredictor(nn.Module):
             prev = h
         layers.append(nn.Linear(prev, out_dim))
         self.net = nn.Sequential(*layers)
+        self.hidden = hidden  # keep config for saving
 
     def forward(self, x):
         return self.net(x)
@@ -149,7 +150,6 @@ def contrastive_loss(pred, target, all_targets, temperature=0.07):
     pred_n = F.normalize(pred, dim=-1)
     all_targets_n = F.normalize(all_targets, dim=-1)
     logits = pred_n @ all_targets_n.t() / temperature
-    # find correct prototype index for each target
     labels = []
     for t in target:
         sim = (t.unsqueeze(0) @ all_targets_n.t()).argmax().item()
@@ -186,7 +186,6 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
         val_block = (test_block - 1) % 7
         train_blocks = [i for i in range(7) if i not in [test_block, val_block]]
 
-        # data splits
         Xs, Ys, Ls = {ft: {"train": [], "val": [], "test": []} for ft in feat_types}, {"train": [], "val": [], "test": []}, {"train": [], "val": [], "test": []}
         for split, blocks in [("train", train_blocks), ("val", [val_block]), ("test", [test_block])]:
             for b in blocks:
@@ -194,10 +193,9 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
                     for k in range(trial_count):
                         for ft in feat_types:
                             Xs[ft][split].append(eeg_feats[ft][b, c, k])
-                        Ys[split].append(prototypes[c].cpu().numpy())  # prototype target
+                        Ys[split].append(prototypes[c].cpu().numpy())
                         Ls[split].append(c)
 
-        # tensors
         X_train = {ft: torch.tensor(np.array(Xs[ft]["train"]), dtype=torch.float32) for ft in feat_types}
         X_val   = {ft: torch.tensor(np.array(Xs[ft]["val"]),   dtype=torch.float32) for ft in feat_types}
         X_test  = {ft: torch.tensor(np.array(Xs[ft]["test"]),  dtype=torch.float32) for ft in feat_types}
@@ -208,18 +206,15 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
         L_val   = torch.tensor(np.array(Ls["val"]),   dtype=torch.long)
         L_test  = torch.tensor(np.array(Ls["test"]),  dtype=torch.long)
 
-        # preprocess
         X_train_proc = preprocess_for_fusion(X_train, feat_types)
         X_val_proc   = preprocess_for_fusion(X_val, feat_types)
         X_test_proc  = preprocess_for_fusion(X_test, feat_types)
 
-        # extract fusion features
         with torch.no_grad():
             Feat_train = fusion({ft: X_train_proc[ft].to(device) for ft in feat_types}, return_feats=True).cpu().numpy()
             Feat_val   = fusion({ft: X_val_proc[ft].to(device)   for ft in feat_types}, return_feats=True).cpu().numpy()
             Feat_test  = fusion({ft: X_test_proc[ft].to(device)  for ft in feat_types}, return_feats=True).cpu().numpy()
 
-        # scale
         scaler = StandardScaler()
         scaler.fit(Feat_train)
         Feat_train = torch.tensor(scaler.transform(Feat_train), dtype=torch.float32)
@@ -230,31 +225,26 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
         val_loader   = DataLoader(EEGMultiDataset(Feat_val,   Y_val,   L_val),   batch_size=256, shuffle=False)
         test_loader  = DataLoader(EEGMultiDataset(Feat_test,  Y_test,  L_test),  batch_size=256, shuffle=False)
 
-        predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
+        predictor = SemanticPredictor(input_dim=fusion.total_dim, hidden=[512,512]).to(device)
         optimizer = torch.optim.Adam(list(predictor.parameters())+list(fusion.classifier.parameters()), lr=5e-4)
 
         best_val_loss, best_state = float("inf"), None
         ckpt_path = os.path.join(save_dir, f"prototype_checkpoint_{subj_name}.pt")
 
-        # epochs
         for epoch in range(50):
             predictor.train(); fusion.classifier.train()
             for eeg, proto, label in train_loader:
                 eeg, proto, label = eeg.to(device), proto.to(device), label.to(device)
                 optimizer.zero_grad()
-
                 pred_sem = predictor(eeg)
                 pred_cls = fusion.classifier(eeg)
-
                 loss_sem = cosine_loss(pred_sem, proto)
                 loss_cls = ce_loss(pred_cls, label)
                 loss_ctr = contrastive_loss(pred_sem, proto, prototypes)
-
                 loss = lambda_sem*loss_sem + lambda_cls*loss_cls + lambda_ctr*loss_ctr
                 loss.backward()
                 optimizer.step()
 
-            # validation
             predictor.eval(); fusion.classifier.eval()
             val_loss = 0
             with torch.no_grad():
@@ -271,13 +261,14 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
                 best_val_loss = avg_val
                 best_state = {
                     "predictor": predictor.state_dict(),
-                    "classifier": fusion.classifier.state_dict()
+                    "classifier": fusion.classifier.state_dict(),
+                    "hidden": predictor.hidden
                 }
                 torch.save(best_state, ckpt_path)
                 joblib.dump(scaler, ckpt_path.replace(".pt","_scaler.pkl"))
 
-        # test
         state = torch.load(ckpt_path, map_location=device)
+        predictor = SemanticPredictor(input_dim=fusion.total_dim, hidden=state["hidden"]).to(device)
         predictor.load_state_dict(state["predictor"])
         fusion.classifier.load_state_dict(state["classifier"])
         scaler = joblib.load(ckpt_path.replace(".pt","_scaler.pkl"))
