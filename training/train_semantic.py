@@ -36,7 +36,7 @@ class FusionModel(nn.Module):
 # Loader helper
 # -------------------------------------------------
 def load_fusion(subj_name, device):
-    ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoint/fusion_checkpoints"
+    ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints"
     ckpt_path = os.path.join(ckpt_dir, f"fusion_checkpoint_{subj_name}.pt")
     cfg_path  = os.path.join(ckpt_dir, f"fusion_config_{subj_name}.json")
 
