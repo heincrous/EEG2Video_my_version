@@ -99,31 +99,26 @@ def preprocess_for_fusion(batch_dict, feat_types):
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    sem_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
     proto_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/prototype_checkpoints"
 
-    # collect checkpoints from both dirs
-    candidates = []
-    for d, tag in [(sem_dir,"S"), (proto_dir,"P")]:
-        if os.path.isdir(d):
-            for f in sorted(os.listdir(d)):
-                if f.endswith(".pt"):
-                    candidates.append((f, d, tag))
-
+    # collect checkpoints
+    if not os.path.isdir(proto_dir):
+        print("No prototype_checkpoints directory found.")
+        return
+    candidates = [f for f in sorted(os.listdir(proto_dir)) if f.endswith(".pt")]
     if not candidates:
-        print("No checkpoints found in semantic_checkpoints or prototype_checkpoints.")
+        print("No checkpoints found in prototype_checkpoints.")
         return
 
     print("Available checkpoints:")
-    for i, (f, d, tag) in enumerate(candidates):
-        print(f"{i}: [{tag}] {f}")
+    for i, f in enumerate(candidates):
+        print(f"{i}: [P] {f}")
     choice = int(input("Select checkpoint index: ").strip())
 
-    fname, ckpt_dir, tag = candidates[choice]
-    ckpt_path = os.path.join(ckpt_dir, fname)
-
-    subj_name = fname.replace("semantic_checkpoint_","").replace("prototype_checkpoint_","").replace(".pt","")
-    print(f"Selected subject: {subj_name} ({'semantic' if tag=='S' else 'prototype'})")
+    fname = candidates[choice]
+    ckpt_path = os.path.join(proto_dir, fname)
+    subj_name = fname.replace("prototype_checkpoint_","").replace(".pt","")
+    print(f"Selected subject: {subj_name} (prototype)")
 
     # load fusion config + checkpoint
     fusion_cfg = json.load(open(f"/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints/fusion_config_{subj_name}.json"))
@@ -160,6 +155,14 @@ def main():
     # load EEG + BLIP
     eeg_feats = load_subject_features(subj_name, feat_types)
     text_emb = np.load("/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/BLIP_embeddings.npy").reshape(-1,77*768)
+    text_tensor = torch.tensor(text_emb, dtype=torch.float32).to(device)
+
+    # quick check on BLIP embeddings
+    print("\n=== BLIP Embeddings Check ===")
+    blip_var = text_tensor.var(dim=0).mean().item()
+    cos_blip = F.cosine_similarity(text_tensor[0].unsqueeze(0), text_tensor[1:], dim=-1).mean().item()
+    print("BLIP variance:", blip_var)
+    print("Mean cosine similarity between BLIP embeddings:", cos_blip)
 
     trial_count = min([eeg_feats[f].shape[2] for f in feat_types])
     Xs, Ys = {ft: [] for ft in feat_types}, []
