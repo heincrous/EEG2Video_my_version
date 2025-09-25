@@ -88,20 +88,6 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
     return np.mean(top1_list), np.mean(top5_list), np.array(all_preds), np.array(all_labels)
 
 # -------------------------------------------------
-# Per-class stats
-# -------------------------------------------------
-def per_class_stats(conf_matrix, sort=False):
-    stats = []
-    for i in range(conf_matrix.shape[0]):
-        total = conf_matrix[i].sum()
-        correct = conf_matrix[i, i]
-        acc = correct / total if total > 0 else 0.0
-        stats.append((i, acc))
-    if sort:
-        stats.sort(key=lambda x: x[1], reverse=True)
-    return stats
-
-# -------------------------------------------------
 # Main routine
 # -------------------------------------------------
 def main():
@@ -193,22 +179,10 @@ def main():
         model = glfnet_mlp(out_dim=40, emb_dim=64, input_dim=input_dim).to(device)
         top1, top5, preds, labels = train_and_eval(model, train_loader, val_loader, test_loader, device)
 
-        print("Test Top-1:", top1)
-        print("Test Top-5:", top5)
+        print("\n=== Overall summary ===")
+        print(f"Test Top-1 Accuracy: {top1:.3f}")
+        print(f"Test Top-5 Accuracy: {top5:.3f}")
         print(classification_report(labels, preds))
-
-        conf = np.zeros((40,40), dtype=int)
-        for t,p in zip(labels, preds):
-            conf[t][p] += 1
-        stats = per_class_stats(conf, sort=True)
-
-        print("\n=== Concise summary ===")
-        print(f"Overall Top-1 Accuracy: {top1:.3f}")
-        print(f"Overall Top-5 Accuracy: {top5:.3f}")
-        best_cls, best_acc = max(stats, key=lambda x: x[1])
-        worst_cls, worst_acc = min(stats, key=lambda x: x[1])
-        print(f"Best class: {best_cls} with {best_acc:.3f}")
-        print(f"Worst class: {worst_cls} with {worst_acc:.3f}")
 
     else:
         # cross-validation
@@ -244,22 +218,9 @@ def main():
 
         mean_top1, mean_top5 = np.mean(top1_scores), np.mean(top5_scores)
         print("\n=== Cross-validation summary ===")
-        print("Mean Top-1:", mean_top1, "Std:", np.std(top1_scores))
-        print("Mean Top-5:", mean_top5, "Std:", np.std(top5_scores))
+        print(f"Mean Top-1 Accuracy: {mean_top1:.3f} ± {np.std(top1_scores):.3f}")
+        print(f"Mean Top-5 Accuracy: {mean_top5:.3f} ± {np.std(top5_scores):.3f}")
         print(classification_report(all_labels, all_preds))
-
-        conf = np.zeros((40,40), dtype=int)
-        for t,p in zip(all_labels, all_preds):
-            conf[t][p] += 1
-        stats = per_class_stats(conf, sort=True)
-
-        print("\n=== Concise summary ===")
-        print(f"Overall Top-1 Accuracy: {mean_top1:.3f}")
-        print(f"Overall Top-5 Accuracy: {mean_top5:.3f}")
-        best_cls, best_acc = max(stats, key=lambda x: x[1])
-        worst_cls, worst_acc = min(stats, key=lambda x: x[1])
-        print(f"Best class: {best_cls} with {best_acc:.3f}")
-        print(f"Worst class: {worst_cls} with {worst_acc:.3f}")
 
 if __name__ == "__main__":
     main()
