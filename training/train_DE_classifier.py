@@ -1,4 +1,5 @@
 import os
+import sys
 import numpy as np
 import torch
 import torch.nn as nn
@@ -8,6 +9,9 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report
 from tqdm import tqdm
 
+# === Repo imports ===
+repo_root = "/content/EEG2Video_my_version"
+sys.path.append(repo_root)
 from core_files.models import glfnet_mlp
 
 # -------------------------------------------------
@@ -105,15 +109,23 @@ def main():
 
     # ---- mode ----
     mode = input("Select mode (1per2s / 1per1s): ").strip().lower()
-    if mode == "1per2s":
-        eeg_dir = os.path.join(drive_root, "EEG_DE")
-    elif mode == "1per1s":
-        eeg_dir = os.path.join(drive_root, "EEG_DE_1per1s")
-    else:
+    if mode not in ["1per2s", "1per1s"]:
         raise ValueError("Invalid mode.")
 
+    # ---- feature type ----
+    feat_type = input("Select feature type (de/psd/combo): ").strip().lower()
+    if feat_type == "de":
+        eeg_dir = os.path.join(drive_root, "EEG_DE" if mode == "1per2s" else "EEG_DE_1per1s")
+    elif feat_type == "psd":
+        eeg_dir = os.path.join(drive_root, "EEG_PSD" if mode == "1per2s" else "EEG_PSD_1per1s")
+    elif feat_type == "combo":
+        eeg_dir_de  = os.path.join(drive_root, "EEG_DE"  if mode == "1per2s" else "EEG_DE_1per1s")
+        eeg_dir_psd = os.path.join(drive_root, "EEG_PSD" if mode == "1per2s" else "EEG_PSD_1per1s")
+    else:
+        raise ValueError("Invalid feature type.")
+
     # ---- subject ----
-    subjects = [f.replace(".npy", "") for f in sorted(os.listdir(eeg_dir)) if f.endswith(".npy")]
+    subjects = [f.replace(".npy", "") for f in sorted(os.listdir(eeg_dir if feat_type!="combo" else eeg_dir_de)) if f.endswith(".npy")]
     print("\nAvailable subjects:")
     for idx, subj in enumerate(subjects):
         print(f"{idx}: {subj}")
@@ -121,15 +133,41 @@ def main():
     subj_name = subjects[subj_idx]
 
     # ---- load data ----
-    data = np.load(os.path.join(eeg_dir, f"{subj_name}.npy"))
-    if mode == "1per1s":
-        data = data.reshape(7, 40, 10, 62, 5)  # flatten windows
-    print(f"\nLoaded {subj_name} ({mode}): {data.shape}")
+    if feat_type == "combo":
+        data_de  = np.load(os.path.join(eeg_dir_de,  f"{subj_name}.npy"))
+        data_psd = np.load(os.path.join(eeg_dir_psd, f"{subj_name}.npy"))
+        if mode == "1per1s":
+            data_de  = data_de.reshape(7, 40, 10, 62, 5)
+            data_psd = data_psd.reshape(7, 40, 10, 62, 5)
+        data = np.concatenate([data_de, data_psd], axis=-1)
+    else:
+        data = np.load(os.path.join(eeg_dir, f"{subj_name}.npy"))
+        if mode == "1per1s":
+            data = data.reshape(7, 40, 10, 62, 5)
+
+    print(f"\nLoaded {subj_name} ({mode}, {feat_type}): {data.shape}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # ---- split mode ----
     split_mode = input("Use fixed split (y/n)? ").strip().lower()
+
+    def build_loaders(train_x, train_y, val_x, val_y, test_x, test_y):
+        scaler = StandardScaler()
+        train_x = scaler.fit_transform(train_x.reshape(len(train_x), -1)).reshape(len(train_x), *train_x.shape[1:])
+        val_x   = scaler.transform(val_x.reshape(len(val_x), -1)).reshape(len(val_x), *val_x.shape[1:])
+        test_x  = scaler.transform(test_x.reshape(len(test_x), -1)).reshape(len(test_x), *test_x.shape[1:])
+        batch_size = 256
+        train_loader = DataLoader(TensorDataset(torch.tensor(train_x, dtype=torch.float32),
+                                                torch.tensor(train_y, dtype=torch.long)),
+                                                batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(TensorDataset(torch.tensor(val_x, dtype=torch.float32),
+                                              torch.tensor(val_y, dtype=torch.long)),
+                                              batch_size=batch_size, shuffle=False)
+        test_loader = DataLoader(TensorDataset(torch.tensor(test_x, dtype=torch.float32),
+                                               torch.tensor(test_y, dtype=torch.long)),
+                                               batch_size=batch_size, shuffle=False)
+        return train_loader, val_loader, test_loader
 
     if split_mode == "y":
         # fixed split
@@ -149,23 +187,10 @@ def main():
         train_x, val_x, test_x = np.array(train_x), np.array(val_x), np.array(test_x)
         train_y, val_y, test_y = np.array(train_y), np.array(val_y), np.array(test_y)
 
-        scaler = StandardScaler()
-        train_x = scaler.fit_transform(train_x.reshape(len(train_x), -1)).reshape(len(train_x), 62, 5)
-        val_x   = scaler.transform(val_x.reshape(len(val_x), -1)).reshape(len(val_x), 62, 5)
-        test_x  = scaler.transform(test_x.reshape(len(test_x), -1)).reshape(len(test_x), 62, 5)
+        train_loader, val_loader, test_loader = build_loaders(train_x, train_y, val_x, val_y, test_x, test_y)
 
-        batch_size = 256
-        train_loader = DataLoader(TensorDataset(torch.tensor(train_x, dtype=torch.float32),
-                                                torch.tensor(train_y, dtype=torch.long)),
-                                                batch_size=batch_size, shuffle=True)
-        val_loader = DataLoader(TensorDataset(torch.tensor(val_x, dtype=torch.float32),
-                                              torch.tensor(val_y, dtype=torch.long)),
-                                              batch_size=batch_size, shuffle=False)
-        test_loader = DataLoader(TensorDataset(torch.tensor(test_x, dtype=torch.float32),
-                                               torch.tensor(test_y, dtype=torch.long)),
-                                               batch_size=batch_size, shuffle=False)
-
-        model = glfnet_mlp(out_dim=40, emb_dim=64, input_dim=310).to(device)
+        input_dim = data.shape[-1] * data.shape[-2]
+        model = glfnet_mlp(out_dim=40, emb_dim=64, input_dim=input_dim).to(device)
         top1, top5, preds, labels = train_and_eval(model, train_loader, val_loader, test_loader, device)
 
         print("Test Top-1:", top1)
@@ -205,23 +230,10 @@ def main():
             train_x, val_x, test_x = np.array(train_x), np.array(val_x), np.array(test_x)
             train_y, val_y, test_y = np.array(train_y), np.array(val_y), np.array(test_y)
 
-            scaler = StandardScaler()
-            train_x = scaler.fit_transform(train_x.reshape(len(train_x), -1)).reshape(len(train_x), 62, 5)
-            val_x   = scaler.transform(val_x.reshape(len(val_x), -1)).reshape(len(val_x), 62, 5)
-            test_x  = scaler.transform(test_x.reshape(len(test_x), -1)).reshape(len(test_x), 62, 5)
+            train_loader, val_loader, test_loader = build_loaders(train_x, train_y, val_x, val_y, test_x, test_y)
 
-            batch_size = 256
-            train_loader = DataLoader(TensorDataset(torch.tensor(train_x, dtype=torch.float32),
-                                                    torch.tensor(train_y, dtype=torch.long)),
-                                                    batch_size=batch_size, shuffle=True)
-            val_loader = DataLoader(TensorDataset(torch.tensor(val_x, dtype=torch.float32),
-                                                  torch.tensor(val_y, dtype=torch.long)),
-                                                  batch_size=batch_size, shuffle=False)
-            test_loader = DataLoader(TensorDataset(torch.tensor(test_x, dtype=torch.float32),
-                                                   torch.tensor(test_y, dtype=torch.long)),
-                                                   batch_size=batch_size, shuffle=False)
-
-            model = glfnet_mlp(out_dim=40, emb_dim=64, input_dim=310).to(device)
+            input_dim = data.shape[-1] * data.shape[-2]
+            model = glfnet_mlp(out_dim=40, emb_dim=64, input_dim=input_dim).to(device)
             top1, top5, preds, labels = train_and_eval(model, train_loader, val_loader, test_loader, device)
             top1_scores.append(top1); top5_scores.append(top5)
             all_preds.extend(preds); all_labels.extend(labels)
