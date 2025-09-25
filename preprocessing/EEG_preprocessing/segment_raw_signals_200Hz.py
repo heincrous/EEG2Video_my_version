@@ -32,7 +32,7 @@ clips_per_class = 5
 # paths
 raw_dir = "/content/drive/MyDrive/EEG2Video_data/raw/EEG/"
 out_dir = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments/"
-os.makedirs(out_dir, exist_ok=True)
+os.makedirs(out_dir, exist_ok=True)  # ensure directory exists
 
 # import GT_LABEL
 repo_root = "/content/EEG2Video_my_version"
@@ -80,11 +80,12 @@ for subj_file in selected_files:
                 subj_array[block_id, true_class, clip_id] = eeg_slice
                 l = end_idx
 
-        # sanity check: ensure consumed exactly 40*(3s+5*2s) = 20800 samples
-        assert l == (hint_len + clips_per_class*segment_len) * 40, \
-            f"Block {block_id+1} length mismatch: got {l}"
+        # sanity check
+        expected_len = (hint_len + clips_per_class*segment_len) * 40
+        assert l == expected_len, f"Block {block_id+1} length mismatch: got {l}, expected {expected_len}"
 
     # save subject-level array
     out_path = os.path.join(out_dir, f"{subj_name}.npy")
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
     np.save(out_path, subj_array)
     print(f"Saved {subj_name} → {out_path}, shape {subj_array.shape}")
