@@ -184,7 +184,7 @@ def main():
     for i,s in enumerate(subjects): print(f"{i}: {s}")
     subj_name=subjects[int(input("Enter subject index: ").strip())]
 
-    feat_types=input("Enter features (comma separated: de,psd,windows,segments): ").strip().lower().split(",")
+    feat_types=[f.strip().lower() for f in input("Enter features (comma separated: de,psd,windows,segments): ").split(",")]
 
     encoders={}
     for f in feat_types:
