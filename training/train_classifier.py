@@ -48,22 +48,28 @@ class EEGClassDataset(Dataset):
         b,c,k,w = self.index[idx]
         if self.feature_type == "windows":
             eeg_clip = self.subj_data["EEG_windows"][b,c,k][w]
-            eeg_clip = torch.tensor(eeg_clip, dtype=torch.float32).unsqueeze(0)
         else:
             eeg_clip = self.subj_data["EEG_segments"][b,c,k]
-            eeg_clip = torch.tensor(eeg_clip, dtype=torch.float32).unsqueeze(0)
-        return eeg_clip, c  # return EEG + class ID
+
+        eeg_clip = torch.tensor(eeg_clip, dtype=torch.float32).unsqueeze(0)
+
+        # z-score normalize per channel
+        mean = eeg_clip.mean(dim=-1, keepdim=True)
+        std = eeg_clip.std(dim=-1, keepdim=True) + 1e-6
+        eeg_clip = (eeg_clip - mean) / std
+
+        return eeg_clip, c
 
 # ==========================================
 # Classifier Head
 # ==========================================
 class EEGClassifier(nn.Module):
-    def __init__(self, input_dim=512, hidden_dims=[1024,512], num_classes=40):
+    def __init__(self, input_dim=512, hidden_dims=[1024,512], num_classes=40, drop_p=0.5):
         super().__init__()
         layers=[]
         prev=input_dim
         for h in hidden_dims:
-            layers += [nn.Linear(prev,h), nn.ReLU()]
+            layers += [nn.Linear(prev,h), nn.ReLU(), nn.Dropout(drop_p)]
             prev=h
         layers.append(nn.Linear(prev,num_classes))
         self.net = nn.Sequential(*layers)
@@ -77,7 +83,6 @@ def main():
     bundle_file=f"{drive_root}/BLIP_EEG_bundle.npz"
 
     mode_choice=input("Select mode (train/eval/dry): ").strip()
-    feature_type=input("Select feature type (windows/segments): ").strip()
 
     encoders_all={
         "shallownet": shallownet,
@@ -86,48 +91,51 @@ def main():
         "tsconv": tsconv,
         "conformer": conformer
     }
-    if feature_type=="windows":
-        valid_encoders={k:v for k,v in encoders_all.items() if k!="deepnet"}
-        C,T=62,100
-    elif feature_type=="segments":
-        valid_encoders=encoders_all
-        C,T=62,400
-    else:
-        raise ValueError("Invalid feature type")
 
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # === Dry run ===
     if mode_choice=="dry":
-        eeg=torch.randn(1,1,C,T).to(device)
-        for name,EncoderClass in valid_encoders.items():
-            encoder=EncoderClass(out_dim=512,C=C,T=T).to(device)
-            feats=encoder(eeg)
-            clf=EEGClassifier(input_dim=512).to(device)
-            out=clf(feats)
-            print(f"[{feature_type}] {name}: EEG {eeg.shape} -> Class logits {out.shape}")
+        for feature_type,(C,T) in [("windows",(62,100)),("segments",(62,400))]:
+            eeg=torch.randn(1,1,C,T).to(device)
+            valid_encoders = {k:v for k,v in encoders_all.items()} if feature_type=="segments" \
+                             else {k:v for k,v in encoders_all.items() if k!="deepnet"}
+            for name,EncoderClass in valid_encoders.items():
+                encoder=EncoderClass(out_dim=512,C=C,T=T).to(device)
+                feats=encoder(eeg)
+                clf=EEGClassifier(input_dim=512).to(device)
+                out=clf(feats)
+                print(f"[{feature_type}] {name}: EEG {eeg.shape} -> Class logits {out.shape}")
         print("Dry run completed")
         return
 
     # === Training ===
     if mode_choice=="train":
         subject_id=input("Enter subject ID (e.g. sub1): ").strip()
-        print(f"Available encoders for {feature_type}: {list(valid_encoders.keys())}")
+        print("Available encoders: ", list(encoders_all.keys()))
         encoder_choice=input("Select encoder: ").strip()
         epochs_choice=int(input("Enter number of epochs: "))
 
-        if encoder_choice not in valid_encoders:
+        if encoder_choice not in encoders_all:
             raise ValueError("Invalid encoder choice")
 
-        EncoderClass=valid_encoders[encoder_choice]
+        # infer feature type from encoder choice (deepnet only supports segments)
+        feature_type="segments" if encoder_choice=="deepnet" else "windows"
+        C,T=(62,400) if feature_type=="segments" else (62,100)
+
+        EncoderClass=encoders_all[encoder_choice]
         encoder=EncoderClass(out_dim=512,C=C,T=T).to(device)
         classifier=EEGClassifier(input_dim=512).to(device)
 
         train_ds=EEGClassDataset(bundle_file,subject_id,feature_type=feature_type,train=True)
-        train_loader=DataLoader(train_ds,batch_size=256,shuffle=True)
+        train_loader=DataLoader(train_ds,batch_size=128,shuffle=True)
 
         criterion=nn.CrossEntropyLoss()
-        optimizer=optim.Adam(list(encoder.parameters())+list(classifier.parameters()),lr=5e-4)
+        optimizer=optim.Adam(list(encoder.parameters())+list(classifier.parameters()),lr=1e-4)
+
+        # sanity check: label distribution
+        labels=[c for _,c in [train_ds[i] for i in np.random.choice(len(train_ds),200)]]
+        print("Sanity check (sampled labels):", Counter(labels))
 
         ckpt_dir="/content/drive/MyDrive/EEG2Video_checkpoints/classification_checkpoints"
         os.makedirs(ckpt_dir,exist_ok=True)
@@ -179,15 +187,8 @@ def main():
         data=np.load(bundle_file,allow_pickle=True)
         eeg_dict=data["EEG_data"].item()
 
-        encoders={
-            "shallownet":shallownet,
-            "deepnet":deepnet,
-            "eegnet":eegnet,
-            "tsconv":tsconv,
-            "conformer":conformer
-        }
         C,T=(62,100) if feature_type=="windows" else (62,400)
-        encoder=encoders[encoder_choice](out_dim=512,C=C,T=T).cuda()
+        encoder=encoders_all[encoder_choice](out_dim=512,C=C,T=T).cuda()
         classifier=EEGClassifier(input_dim=512).cuda()
 
         ckpt=torch.load(ckpt_path,map_location="cuda")
@@ -226,7 +227,6 @@ def main():
                     pbar.update(1)
 
         print(f"\nTop-1 Acc: {correct1/total:.4f}, Top-5 Acc: {correct5/total:.4f}")
-        from collections import Counter
         pc,tc=Counter(pred_classes),Counter(true_classes)
         print("\nPredicted class distribution:")
         for cls in range(40):
