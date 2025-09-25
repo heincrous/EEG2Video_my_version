@@ -138,7 +138,10 @@ def main():
 
     # load semantic predictor + scaler
     predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
-    predictor.load_state_dict(torch.load(ckpt_path,map_location=device))
+    state = torch.load(ckpt_path, map_location=device)
+    predictor.load_state_dict(state["predictor"])
+    fusion.classifier.load_state_dict(state["classifier"])
+
     predictor.eval()
     scaler = joblib.load(ckpt_path.replace(".pt","_scaler.pkl"))
 
