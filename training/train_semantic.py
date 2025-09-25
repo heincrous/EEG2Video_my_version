@@ -6,6 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
+from sklearn.preprocessing import StandardScaler
+import joblib
 
 # === Repo imports ===
 repo_root = "/content/EEG2Video_my_version"
@@ -111,12 +113,10 @@ def load_subject_features(subj_name, feat_types):
     for ftype in feat_types:
         if ftype == "de":
             arr = np.load(os.path.join(base,"EEG_DE_1per1s",f"{subj_name}.npy"))  # (7,40,5,2,62,5)
-            arr = arr.reshape(7,40,10,62,5)   # -> (7,40,10,62,5)
-            feats[ftype] = arr
+            feats[ftype] = arr.reshape(7,40,10,62,5)
         elif ftype == "psd":
             arr = np.load(os.path.join(base,"EEG_PSD_1per1s",f"{subj_name}.npy"))
-            arr = arr.reshape(7,40,10,62,5)
-            feats[ftype] = arr
+            feats[ftype] = arr.reshape(7,40,10,62,5)
         elif ftype == "windows":
             feats[ftype] = np.load(os.path.join(base,"EEG_windows",f"{subj_name}.npy"))  # (7,40,5,7,62,100)
         elif ftype == "segments":
@@ -137,21 +137,18 @@ def preprocess_for_fusion(batch_dict, feat_types):
     for ft in feat_types:
         x = batch_dict[ft]
         if ft in ["de","psd","combo"]:
-            # flatten (62,5) or (62,10)
-            x = x.reshape(x.shape[0], -1)
+            x = x.reshape(x.shape[0], -1)  # flatten
         elif ft == "windows":
-            # average across 7 subwindows
             if x.ndim == 5:  # (batch,7,62,100)
                 x = x.mean(1)
             x = x.unsqueeze(1)  # -> (batch,1,62,100)
         elif ft == "segments":
-            # already (batch,62,400)
             x = x.unsqueeze(1)  # -> (batch,1,62,400)
         processed[ft] = x
     return processed
 
 # -------------------------------------------------
-# Train + Eval (7-fold CV with tqdm)
+# Train + Eval (7-fold CV with scaler saving)
 # -------------------------------------------------
 def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device):
     best_global_loss = float("inf")
@@ -161,7 +158,9 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device):
 
     top_losses = []
 
-    trial_count = eeg_feats[feat_types[0]].shape[2]
+    # align trial count across features
+    trial_count = min([eeg_feats[ft].shape[2] for ft in feat_types])
+    print(f"Trial counts per feature: {[ (f,eeg_feats[f].shape[2]) for f in feat_types ]}, using {trial_count}")
 
     for test_block in tqdm(range(7), desc=f"Cross-validation {subj_name}"):
         val_block = (test_block - 1) % 7
@@ -178,12 +177,12 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device):
                         Ys[split].append(text_emb[b*40*trial_count + c*trial_count + k])
 
         # convert to tensors
-        X_train = {ft: torch.tensor(np.array(Xs[ft]["train"]), dtype=torch.float32).to(device) for ft in feat_types}
-        X_val   = {ft: torch.tensor(np.array(Xs[ft]["val"]),   dtype=torch.float32).to(device) for ft in feat_types}
-        X_test  = {ft: torch.tensor(np.array(Xs[ft]["test"]),  dtype=torch.float32).to(device) for ft in feat_types}
-        Y_train = torch.tensor(np.array(Ys["train"]), dtype=torch.float32).to(device)
-        Y_val   = torch.tensor(np.array(Ys["val"]),   dtype=torch.float32).to(device)
-        Y_test  = torch.tensor(np.array(Ys["test"]),  dtype=torch.float32).to(device)
+        X_train = {ft: torch.tensor(np.array(Xs[ft]["train"]), dtype=torch.float32) for ft in feat_types}
+        X_val   = {ft: torch.tensor(np.array(Xs[ft]["val"]),   dtype=torch.float32) for ft in feat_types}
+        X_test  = {ft: torch.tensor(np.array(Xs[ft]["test"]),  dtype=torch.float32) for ft in feat_types}
+        Y_train = torch.tensor(np.array(Ys["train"]), dtype=torch.float32)
+        Y_val   = torch.tensor(np.array(Ys["val"]),   dtype=torch.float32)
+        Y_test  = torch.tensor(np.array(Ys["test"]),  dtype=torch.float32)
 
         # preprocess into correct shapes for fusion
         X_train_proc = preprocess_for_fusion(X_train, feat_types)
@@ -192,13 +191,22 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device):
 
         # extract fusion features
         with torch.no_grad():
-            Feat_train = fusion(X_train_proc, return_feats=True).cpu()
-            Feat_val   = fusion(X_val_proc,   return_feats=True).cpu()
-            Feat_test  = fusion(X_test_proc,  return_feats=True).cpu()
+            Feat_train = fusion({ft: X_train_proc[ft].to(device) for ft in feat_types}, return_feats=True).cpu().numpy()
+            Feat_val   = fusion({ft: X_val_proc[ft].to(device)   for ft in feat_types}, return_feats=True).cpu().numpy()
+            Feat_test  = fusion({ft: X_test_proc[ft].to(device)  for ft in feat_types}, return_feats=True).cpu().numpy()
 
-        train_loader = DataLoader(EEGTextDataset(Feat_train, Y_train.cpu()), batch_size=32, shuffle=True)
-        val_loader   = DataLoader(EEGTextDataset(Feat_val,   Y_val.cpu()),   batch_size=32, shuffle=False)
-        test_loader  = DataLoader(EEGTextDataset(Feat_test,  Y_test.cpu()),  batch_size=32, shuffle=False)
+        # fit scaler on training features
+        scaler = StandardScaler()
+        scaler.fit(Feat_train)
+
+        # transform splits
+        Feat_train = torch.tensor(scaler.transform(Feat_train), dtype=torch.float32)
+        Feat_val   = torch.tensor(scaler.transform(Feat_val),   dtype=torch.float32)
+        Feat_test  = torch.tensor(scaler.transform(Feat_test),  dtype=torch.float32)
+
+        train_loader = DataLoader(EEGTextDataset(Feat_train, Y_train), batch_size=32, shuffle=True)
+        val_loader   = DataLoader(EEGTextDataset(Feat_val,   Y_val),   batch_size=32, shuffle=False)
+        test_loader  = DataLoader(EEGTextDataset(Feat_test,  Y_test),  batch_size=32, shuffle=False)
 
         predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
         optimizer = torch.optim.Adam(predictor.parameters(), lr=5e-4)
@@ -229,8 +237,11 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device):
                 best_val_loss = avg_val
                 best_state = predictor.state_dict()
                 torch.save(best_state, ckpt_path)
+                joblib.dump(scaler, ckpt_path.replace(".pt", "_scaler.pkl"))
 
+        # test with best
         predictor.load_state_dict(torch.load(ckpt_path, map_location=device))
+        scaler = joblib.load(ckpt_path.replace(".pt", "_scaler.pkl"))
         predictor.eval()
         test_loss = 0
         with torch.no_grad():
@@ -269,13 +280,8 @@ def main():
     subj_name = ckpts[choice].replace("fusion_checkpoint_", "").replace(".pt", "")
     print(f"Selected subject: {subj_name}")
 
-    # load frozen fusion and feature list
     fusion, feat_types = load_fusion(subj_name, device)
-
-    # load subject features based on JSON
     eeg_feats = load_subject_features(subj_name, feat_types)
-
-    # load BLIP embeddings
     text_emb = np.load("/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/BLIP_embeddings.npy").reshape(-1, 77*768)
 
     run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device)
