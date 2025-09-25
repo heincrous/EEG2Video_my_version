@@ -55,8 +55,7 @@ def load_fusion(subj_name, device):
             encoders[ftype] = conformer(out_dim=128, C=62, T=100 if ftype=="windows" else 400).to(device)
     fusion = FusionModel(encoders, num_classes=40).to(device)
     fusion.load_state_dict(torch.load(ckpt_path, map_location=device))
-    # freeze encoders only
-    for _, p in fusion.encoders.named_parameters():
+    for _, p in fusion.encoders.named_parameters():  # freeze encoders
         p.requires_grad = False
     return fusion, feat_types
 
@@ -103,7 +102,7 @@ def contrastive_loss(pred, target, all_targets, temperature=0.07):
     return F.cross_entropy(logits, labels)
 
 # -------------------------------------------------
-# Subject features loader (reuse your existing)
+# Feature utilities
 # -------------------------------------------------
 def load_subject_features(subj_name, feat_types):
     base = "/content/drive/MyDrive/EEG2Video_data/processed"
@@ -145,7 +144,7 @@ def preprocess_for_fusion(batch_dict, feat_types):
 # Training wrapper
 # -------------------------------------------------
 def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
-           lambda_cls=1.0, lambda_sem=0.1, lambda_ctr=0.05):
+           lambda_cls=1.0, lambda_sem=0.2, lambda_ctr=0.05):
 
     save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/prototype_checkpoints"
     os.makedirs(save_dir, exist_ok=True)
@@ -161,10 +160,12 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
     ce_loss = nn.CrossEntropyLoss()
     best_global_loss, best_ckpt_path = float("inf"), None
 
-    for test_block in range(7):
+    fold_bar = tqdm(range(7), desc="Cross-validation folds")
+    for test_block in fold_bar:
         val_block = (test_block - 1) % 7
         train_blocks = [i for i in range(7) if i not in [test_block,val_block]]
 
+        # prepare data
         Xs, Ys, Ls = {ft: {"train": [], "val": [], "test": []} for ft in feat_types}, {"train": [], "val": [], "test": []}, {"train": [], "val": [], "test": []}
         for split, blocks in [("train", train_blocks), ("val", [val_block]), ("test", [test_block])]:
             for b in blocks:
@@ -208,13 +209,13 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
         best_val_loss, best_state = float("inf"), None
         ckpt_path = os.path.join(save_dir, f"prototype_checkpoint_{subj_name}.pt")
 
-        for epoch in range(50):
+        epoch_bar = tqdm(range(50), desc=f"Fold {test_block} training", leave=False)
+        for epoch in epoch_bar:
             predictor.train(); fusion.classifier.train()
             for eeg, proto, label in train_loader:
                 eeg, proto, label = eeg.to(device), proto.to(device), label.to(device)
                 optimizer.zero_grad()
-                pred_sem = predictor(eeg)
-                pred_cls = fusion.classifier(eeg)
+                pred_sem = predictor(eeg); pred_cls = fusion.classifier(eeg)
                 loss = lambda_sem*cosine_loss(pred_sem, proto) + lambda_cls*ce_loss(pred_cls, label) + lambda_ctr*contrastive_loss(pred_sem, proto, prototypes)
                 loss.backward(); optimizer.step()
 
@@ -226,6 +227,7 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
                     pred_sem = predictor(eeg); pred_cls = fusion.classifier(eeg)
                     val_loss += (lambda_sem*cosine_loss(pred_sem, proto) + lambda_cls*ce_loss(pred_cls, label)).item()
             avg_val = val_loss/len(val_loader)
+            epoch_bar.set_postfix(val_loss=avg_val)
 
             if avg_val < best_val_loss:
                 best_val_loss, best_state = avg_val, {
@@ -236,9 +238,7 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
                 torch.save(best_state, ckpt_path)
                 joblib.dump(scaler, ckpt_path.replace(".pt","_scaler.pkl"))
 
-        if best_state:
-            torch.save(best_state, ckpt_path)
-        if best_val_loss < best_global_loss:
+        if best_state and best_val_loss < best_global_loss:
             best_global_loss, best_ckpt_path = best_val_loss, ckpt_path
 
     print("\n=== Final Results ===")
@@ -261,7 +261,7 @@ def main():
     eeg_feats = load_subject_features(subj_name, feat_types)
     text_emb = np.load("/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/BLIP_embeddings.npy").reshape(-1,77*768)
     run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
-           lambda_cls=1.0, lambda_sem=0.1, lambda_ctr=0.05)
+           lambda_cls=1.0, lambda_sem=0.2, lambda_ctr=0.05)
 
 if __name__ == "__main__":
     main()
