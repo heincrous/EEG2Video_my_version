@@ -141,9 +141,11 @@ def preprocess_for_fusion(batch_dict, feat_types):
         elif ft == "combo":
             x = x.reshape(x.shape[0], 62, 10)
         elif ft == "windows":
-            if x.ndim == 5:
-                x = x.mean(1)
-            x = x.unsqueeze(1)  # (batch,1,62,100)
+            if x.ndim == 3 and x.shape[0] == 7:   # single sample case
+                x = x.mean(0)                     # -> (62,100)
+            elif x.ndim == 4:                     # batch case (batch,7,62,100)
+                x = x.mean(1)                     # -> (batch,62,100)
+            x = x.unsqueeze(1)                    # -> (batch,1,62,100)
         elif ft == "segments":
             x = x.unsqueeze(1)  # (batch,1,62,400)
         processed[ft] = x
