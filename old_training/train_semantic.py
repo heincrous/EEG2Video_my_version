@@ -174,7 +174,7 @@ if __name__ == "__main__":
     print(f"Train EEG scaled mean: {train_set.eeg.mean():.4f}, std: {train_set.eeg.std():.4f}")
     print(f"Test EEG scaled mean: {test_set.eeg.mean():.4f}, std: {test_set.eeg.std():.4f}")
 
-    train_loader = DataLoader(train_set, batch_size=128, shuffle=True, num_workers=2, pin_memory=True)
+    train_loader = DataLoader(train_set, batch_size=64, shuffle=True, num_workers=2, pin_memory=True)
 
     output_dim = 77*768
 
