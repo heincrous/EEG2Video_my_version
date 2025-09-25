@@ -1,4 +1,5 @@
 import os, sys
+import json
 import numpy as np
 import torch
 import torch.nn as nn
@@ -70,9 +71,11 @@ def topk_accuracy(output, target, topk=(1,)):
         return res
 
 # -------------------------------------------------
-# Train + Eval (with checkpoint saving)
+# Train + Eval (with checkpoint + config saving)
 # -------------------------------------------------
-def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epochs=50, lr=1e-3, subj_name="subX"):
+def train_and_eval(model, train_loader, val_loader, test_loader, device,
+                   num_epochs=50, lr=1e-3, subj_name="subX",
+                   feat_types=None, encoders=None):
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     best_val_acc, best_state = 0.0, None
@@ -81,6 +84,7 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
     save_dir = "/content/drive/MyDrive/EEG2Video_checkpoint/fusion_checkpoints"
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, f"fusion_checkpoint_{subj_name}.pt")
+    cfg_path  = os.path.join(save_dir, f"fusion_config_{subj_name}.json")
 
     for epoch in range(num_epochs):
         # training
@@ -106,10 +110,17 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
                 val_total += y.size(0)
         val_acc = val_correct / val_total if val_total > 0 else 0
 
-        # save best checkpoint
+        # save best checkpoint + config
         if val_acc > best_val_acc:
             best_val_acc, best_state = val_acc, model.state_dict()
             torch.save(best_state, save_path)
+            if feat_types is not None and encoders is not None:
+                config = {
+                    "features": feat_types,
+                    "encoders": {k: type(v).__name__ for k,v in encoders.items()}
+                }
+                with open(cfg_path, "w") as f:
+                    json.dump(config, f, indent=2)
 
     # load best checkpoint for testing
     if best_state is not None:
@@ -133,14 +144,14 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
 def load_feature(feat_type, subj_name, drive_root):
     if feat_type == "de":
         arr = np.load(os.path.join(drive_root,"EEG_DE_1per1s",f"{subj_name}.npy"))  # (7,40,5,2,62,5)
-        return arr.reshape(7,40,10,62,5)  # collapse 2 windows into trial axis
+        return arr.reshape(7,40,10,62,5)
     elif feat_type == "psd":
         arr = np.load(os.path.join(drive_root,"EEG_PSD_1per1s",f"{subj_name}.npy"))  # (7,40,5,2,62,5)
         return arr.reshape(7,40,10,62,5)
     elif feat_type == "windows":
-        return np.load(os.path.join(drive_root,"EEG_windows",f"{subj_name}.npy"))   # (7,40,5,7,62,100)
+        return np.load(os.path.join(drive_root,"EEG_windows",f"{subj_name}.npy"))
     elif feat_type == "segments":
-        return np.load(os.path.join(drive_root,"EEG_segments",f"{subj_name}.npy"))  # (7,40,5,62,400)
+        return np.load(os.path.join(drive_root,"EEG_segments",f"{subj_name}.npy"))
     else:
         raise ValueError(f"Unknown feature {feat_type}")
 
@@ -178,23 +189,11 @@ def run_cv(subj_name, drive_root, device, feat_types, encoders, datas):
                 y_dicts["val"].append(c)
                 y_dicts["test"].append(c)
 
-        # # normalization per feature per split
-        # for split in ["train","val","test"]:
-        #     for f in feat_types:
-        #         arr = np.array(X_dicts[split][f])
-        #         shape = arr.shape
-        #         scaler = StandardScaler()
-        #         arr = scaler.fit_transform(arr.reshape(len(arr), -1))
-        #         X_dicts[split][f] = arr.reshape(shape)
-        #     y_dicts[split] = np.array(y_dicts[split])
-
         # normalization per feature, fit on train only
         for f in feat_types:
             train_arr = np.array(X_dicts["train"][f])
-            shape = train_arr.shape
             scaler = StandardScaler()
             scaler.fit(train_arr.reshape(len(train_arr), -1))
-
             for split in ["train", "val", "test"]:
                 arr = np.array(X_dicts[split][f])
                 X_dicts[split][f] = scaler.transform(arr.reshape(len(arr), -1)).reshape(arr.shape)
@@ -207,7 +206,9 @@ def run_cv(subj_name, drive_root, device, feat_types, encoders, datas):
         test_loader  = DataLoader(DictDataset(X_dicts["test"],  y_dicts["test"],  conv_features),batch_size=256,shuffle=False)
 
         model = FusionModel(encoders,num_classes=40).to(device)
-        top1, top5 = train_and_eval(model, train_loader, val_loader, test_loader, device)
+        top1, top5 = train_and_eval(model, train_loader, val_loader, test_loader,
+                                    device, subj_name=subj_name,
+                                    feat_types=feat_types, encoders=encoders)
         top1_scores.append(top1); top5_scores.append(top5)
         overall.update(1)
 
@@ -221,7 +222,7 @@ def main():
     drive_root="/content/drive/MyDrive/EEG2Video_data/processed"
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    eeg_dir=os.path.join(drive_root,"EEG_DE")
+    eeg_dir=os.path.join(drive_root,"EEG_DE_1per1s")
     subjects=[f.replace(".npy","") for f in sorted(os.listdir(eeg_dir)) if f.endswith(".npy")]
     for i,s in enumerate(subjects): print(f"{i}: {s}")
     subj_name=subjects[int(input("Enter subject index: ").strip())]
@@ -235,7 +236,6 @@ def main():
     if "combo" in feat_types:
         de = np.load(os.path.join(drive_root,"EEG_DE_1per1s",f"{subj_name}.npy"))
         psd = np.load(os.path.join(drive_root,"EEG_PSD_1per1s",f"{subj_name}.npy"))
-        # reshape from (7,40,5,2,62,5) → (7,40,10,62,5)
         de  = de.reshape(7,40,10,62,5)
         psd = psd.reshape(7,40,10,62,5)
         combo = np.concatenate([de, psd], axis=-1)  # (7,40,10,62,10)
