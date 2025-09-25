@@ -67,12 +67,13 @@ def topk_accuracy(output, target, topk=(1,)):
         return res
 
 # -------------------------------------------------
-# Train + Eval
+# Train + Eval (with checkpoint saving)
 # -------------------------------------------------
 def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epochs=50, lr=1e-3):
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     best_val_acc, best_state = 0.0, None
+    ckpt_path = "fusion_checkpoint.pt"
 
     for _ in range(num_epochs):
         model.train()
@@ -95,12 +96,13 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
                 out = model(Xs)
                 val_correct += (out.argmax(1) == y).sum().item()
                 val_total += y.size(0)
-        val_acc = val_correct / val_total if val_total>0 else 0
+        val_acc = val_correct / val_total if val_total > 0 else 0
         if val_acc > best_val_acc:
             best_val_acc, best_state = val_acc, model.state_dict()
+            torch.save(best_state, ckpt_path)   # save checkpoint
 
     # test
-    model.load_state_dict(best_state)
+    model.load_state_dict(torch.load(ckpt_path))  # load best checkpoint
     model.eval()
     top1_list, top5_list = [], []
     with torch.no_grad():
@@ -160,16 +162,6 @@ def run_cv(subj_name, drive_root, device, feat_types, encoders, datas):
                     X_dicts["test"][f].append(datas[f][test_block,c,k])
                 y_dicts["val"].append(c)
                 y_dicts["test"].append(c)
-
-        # # normalization per feature per split
-        # for split in ["train","val","test"]:
-        #     for f in feat_types:
-        #         arr = np.array(X_dicts[split][f])
-        #         shape = arr.shape
-        #         scaler = StandardScaler()
-        #         arr = scaler.fit_transform(arr.reshape(len(arr), -1))
-        #         X_dicts[split][f] = arr.reshape(shape)
-        #     y_dicts[split] = np.array(y_dicts[split])
 
         # normalization per feature, fit on train only
         for f in feat_types:
