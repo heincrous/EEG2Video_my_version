@@ -78,37 +78,33 @@ output_dim = 77 * 768
 if feature_type in ["DE", "PSD"]:
     input_dim = 62 * 5
     if encoder_type == "mlp":
-        model = mlpnet(out_dim=output_dim, input_dim=input_dim).to(device)
+        base_model = mlpnet(out_dim=output_dim, input_dim=input_dim)
     elif encoder_type == "glfnet":
-        model = glfnet(out_dim=output_dim, emb_dim=256, C=62, T=5).to(device)
+        base_model = glfnet(out_dim=output_dim, emb_dim=256, C=62, T=5)
     elif encoder_type == "glfnet_mlp":
-        model = glfnet_mlp(out_dim=output_dim, emb_dim=256, input_dim=input_dim).to(device)
+        base_model = glfnet_mlp(out_dim=output_dim, emb_dim=256, input_dim=input_dim)
     else:
         raise ValueError(f"Unknown encoder type {encoder_type}")
 elif feature_type == "windows":
     if encoder_type == "mlp":
         input_dim = 7 * 62 * 100
-        model = mlpnet(out_dim=output_dim, input_dim=input_dim).to(device)
+        base_model = mlpnet(out_dim=output_dim, input_dim=input_dim)
     elif encoder_type == "eegnet":
-        model = WindowEncoderWrapper(eegnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim).to(device)
+        base_model = WindowEncoderWrapper(eegnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
     elif encoder_type == "shallownet":
-        model = WindowEncoderWrapper(shallownet(out_dim=output_dim, C=62, T=100), out_dim=output_dim).to(device)
+        base_model = WindowEncoderWrapper(shallownet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
     elif encoder_type == "deepnet":
-        model = WindowEncoderWrapper(deepnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim).to(device)
+        base_model = WindowEncoderWrapper(deepnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
     elif encoder_type == "tsconv":
-        model = WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim).to(device)
+        base_model = WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
     elif encoder_type == "conformer":
-        model = WindowEncoderWrapper(conformer(out_dim=output_dim), out_dim=output_dim).to(device)
+        base_model = conformer(out_dim=output_dim)  # NOTE: no WindowEncoderWrapper
     else:
         raise ValueError(f"Unknown encoder type {encoder_type}")
 else:
     raise ValueError(f"Invalid feature type {feature_type}")
 
-model = ReshapeWrapper(model).to(device)
-ckpt = torch.load(semantic_ckpt, map_location=device)
-model.load_state_dict(ckpt["state_dict"])
-model.eval()
-print("Semantic predictor rebuilt and loaded.")
+model = ReshapeWrapper(base_model, n_tokens=77).to(device)
 
 # === Diffusion wrapper ===
 dana_diffusion = Diffusion(time_steps=500)
