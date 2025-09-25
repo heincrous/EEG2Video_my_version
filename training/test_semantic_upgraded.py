@@ -29,7 +29,7 @@ class WindowEncoderWrapper(torch.nn.Module):
         x = x.view(B*W, 1, C, T)
         feats = self.base(x)
         feats = feats.view(B, W, -1)
-        return feats.mean(1)
+        return feats.mean(1)  # (B, out_dim)
 
 # === Reshape wrapper (flat -> (77,768)) ===
 class ReshapeWrapper(torch.nn.Module):
@@ -113,10 +113,13 @@ if __name__ == "__main__":
     ckpt_path = os.path.join(ckpt_root, ckpt_file)
     scaler_path = os.path.join(ckpt_root, f"scaler_{tag}.pkl")
 
+    # === Smarter parsing ===
     parts = tag.split("_")
-    feature_type = parts[-3]
-    encoder_type = parts[-2]
-    loss_type    = parts[-1]
+    # drop "all" or subject names at the front
+    parts = parts[1:]
+    feature_type = parts[0]
+    loss_type = parts[-1]
+    encoder_type = "_".join(parts[1:-1])  # handles glfnet_mlp etc.
 
     print(f"\n[Config] Feature={feature_type}, Encoder={encoder_type}, Loss={loss_type}")
 
