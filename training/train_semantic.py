@@ -208,9 +208,9 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device):
         Feat_val   = torch.tensor(scaler.transform(Feat_val),   dtype=torch.float32)
         Feat_test  = torch.tensor(scaler.transform(Feat_test),  dtype=torch.float32)
 
-        train_loader = DataLoader(EEGTextDataset(Feat_train, Y_train), batch_size=32, shuffle=True)
-        val_loader   = DataLoader(EEGTextDataset(Feat_val,   Y_val),   batch_size=32, shuffle=False)
-        test_loader  = DataLoader(EEGTextDataset(Feat_test,  Y_test),  batch_size=32, shuffle=False)
+        train_loader = DataLoader(EEGTextDataset(Feat_train, Y_train), batch_size=256, shuffle=True)
+        val_loader   = DataLoader(EEGTextDataset(Feat_val,   Y_val),   batch_size=256, shuffle=False)
+        test_loader  = DataLoader(EEGTextDataset(Feat_test,  Y_test),  batch_size=256, shuffle=False)
 
         predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
         optimizer = torch.optim.Adam(predictor.parameters(), lr=5e-4)
