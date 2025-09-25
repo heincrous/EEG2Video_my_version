@@ -103,27 +103,52 @@ class EEGTextDataset(Dataset):
         return self.eeg_feats[idx], self.text_embs[idx]
 
 # -------------------------------------------------
-# Helper to load subject features based on JSON
+# Helper to load and reshape subject features
 # -------------------------------------------------
 def load_subject_features(subj_name, feat_types):
     base = "/content/drive/MyDrive/EEG2Video_data/processed"
     feats = {}
     for ftype in feat_types:
         if ftype == "de":
-            feats[ftype] = np.load(os.path.join(base,"EEG_DE_1per1s",f"{subj_name}.npy"))
+            arr = np.load(os.path.join(base,"EEG_DE_1per1s",f"{subj_name}.npy"))  # (7,40,5,2,62,5)
+            arr = arr.reshape(7,40,10,62,5)   # -> (7,40,10,62,5)
+            feats[ftype] = arr
         elif ftype == "psd":
-            feats[ftype] = np.load(os.path.join(base,"EEG_PSD_1per1s",f"{subj_name}.npy"))
+            arr = np.load(os.path.join(base,"EEG_PSD_1per1s",f"{subj_name}.npy"))
+            arr = arr.reshape(7,40,10,62,5)
+            feats[ftype] = arr
         elif ftype == "windows":
-            feats[ftype] = np.load(os.path.join(base,"EEG_windows",f"{subj_name}.npy"))
+            feats[ftype] = np.load(os.path.join(base,"EEG_windows",f"{subj_name}.npy"))  # (7,40,5,7,62,100)
         elif ftype == "segments":
-            feats[ftype] = np.load(os.path.join(base,"EEG_segments",f"{subj_name}.npy"))
+            feats[ftype] = np.load(os.path.join(base,"EEG_segments",f"{subj_name}.npy")) # (7,40,5,62,400)
         elif ftype == "combo":
-            de = np.load(os.path.join(base,"EEG_DE_1per1s",f"{subj_name}.npy"))
-            psd = np.load(os.path.join(base,"EEG_PSD_1per1s",f"{subj_name}.npy"))
-            feats[ftype] = np.concatenate([de, psd], axis=-1)
+            de = np.load(os.path.join(base,"EEG_DE_1per1s",f"{subj_name}.npy")).reshape(7,40,10,62,5)
+            psd = np.load(os.path.join(base,"EEG_PSD_1per1s",f"{subj_name}.npy")).reshape(7,40,10,62,5)
+            feats[ftype] = np.concatenate([de, psd], axis=-1)  # (7,40,10,62,10)
         else:
             raise ValueError(f"Unknown feature type {ftype}")
     return feats
+
+# -------------------------------------------------
+# Preprocess a batch for fusion input
+# -------------------------------------------------
+def preprocess_for_fusion(batch_dict, feat_types):
+    processed = {}
+    for ft in feat_types:
+        x = batch_dict[ft]
+        if ft in ["de","psd","combo"]:
+            # flatten (62,5) or (62,10)
+            x = x.reshape(x.shape[0], -1)
+        elif ft == "windows":
+            # average across 7 subwindows
+            if x.ndim == 5:  # (batch,7,62,100)
+                x = x.mean(1)
+            x = x.unsqueeze(1)  # -> (batch,1,62,100)
+        elif ft == "segments":
+            # already (batch,62,400)
+            x = x.unsqueeze(1)  # -> (batch,1,62,400)
+        processed[ft] = x
+    return processed
 
 # -------------------------------------------------
 # Train + Eval (7-fold CV with tqdm)
@@ -136,19 +161,21 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device):
 
     top_losses = []
 
+    trial_count = eeg_feats[feat_types[0]].shape[2]
+
     for test_block in tqdm(range(7), desc=f"Cross-validation {subj_name}"):
         val_block = (test_block - 1) % 7
         train_blocks = [i for i in range(7) if i not in [test_block, val_block]]
 
-        # collect splits for each feature
+        # collect splits
         Xs, Ys = {ft: {"train": [], "val": [], "test": []} for ft in feat_types}, {"train": [], "val": [], "test": []}
         for split, blocks in [("train", train_blocks), ("val", [val_block]), ("test", [test_block])]:
             for b in blocks:
                 for c in range(40):
-                    for k in range(eeg_feats[feat_types[0]].shape[2]):
+                    for k in range(trial_count):
                         for ft in feat_types:
                             Xs[ft][split].append(eeg_feats[ft][b, c, k])
-                        Ys[split].append(text_emb[b*40*eeg_feats[feat_types[0]].shape[2] + c*eeg_feats[feat_types[0]].shape[2] + k])
+                        Ys[split].append(text_emb[b*40*trial_count + c*trial_count + k])
 
         # convert to tensors
         X_train = {ft: torch.tensor(np.array(Xs[ft]["train"]), dtype=torch.float32).to(device) for ft in feat_types}
@@ -158,11 +185,16 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device):
         Y_val   = torch.tensor(np.array(Ys["val"]),   dtype=torch.float32).to(device)
         Y_test  = torch.tensor(np.array(Ys["test"]),  dtype=torch.float32).to(device)
 
+        # preprocess into correct shapes for fusion
+        X_train_proc = preprocess_for_fusion(X_train, feat_types)
+        X_val_proc   = preprocess_for_fusion(X_val, feat_types)
+        X_test_proc  = preprocess_for_fusion(X_test, feat_types)
+
         # extract fusion features
         with torch.no_grad():
-            Feat_train = fusion({ft: X_train[ft] for ft in feat_types}, return_feats=True).cpu()
-            Feat_val   = fusion({ft: X_val[ft]   for ft in feat_types}, return_feats=True).cpu()
-            Feat_test  = fusion({ft: X_test[ft]  for ft in feat_types}, return_feats=True).cpu()
+            Feat_train = fusion(X_train_proc, return_feats=True).cpu()
+            Feat_val   = fusion(X_val_proc,   return_feats=True).cpu()
+            Feat_test  = fusion(X_test_proc,  return_feats=True).cpu()
 
         train_loader = DataLoader(EEGTextDataset(Feat_train, Y_train.cpu()), batch_size=32, shuffle=True)
         val_loader   = DataLoader(EEGTextDataset(Feat_val,   Y_val.cpu()),   batch_size=32, shuffle=False)
@@ -175,7 +207,6 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device):
 
         for epoch in tqdm(range(50), desc=f"Fold {test_block} training", leave=False):
             predictor.train()
-            total_loss = 0
             for eeg, text in train_loader:
                 eeg, text = eeg.to(device), text.to(device)
                 optimizer.zero_grad()
@@ -183,8 +214,8 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device):
                 loss = F.mse_loss(pred, text)
                 loss.backward()
                 optimizer.step()
-                total_loss += loss.item()
 
+            # validation
             predictor.eval()
             val_loss = 0
             with torch.no_grad():
