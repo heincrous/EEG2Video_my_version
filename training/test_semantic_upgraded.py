@@ -8,6 +8,8 @@ import pickle
 import numpy as np
 import torch
 import torch.nn.functional as F
+from collections import Counter
+from tqdm import tqdm
 
 # === Repo imports ===
 repo_root = "/content/EEG2Video_my_version"
@@ -144,53 +146,79 @@ if __name__ == "__main__":
     # === Evaluation on block 6 (test = block 7) ===
     correct_top1 = correct_top5 = total = 0
     mse_vals, cos_vals, token_cos_vals, corr_vals = [], [], [], []
+    pred_classes, true_classes = [], []
 
-    for subj, feats in eeg_dict.items():
-        eeg = feats[f"EEG_{feature_type}"][6]   # (40,5,...)
-        txt = blip_emb[6]                       # (40,5,77,768)
+    num_subjects = len(eeg_dict)
+    total_iters = num_subjects * 40 * 5
 
-        for ci in range(40):
-            for cj in range(5):
-                eeg_flat = eeg[ci,cj].reshape(-1)
-                eeg_scaled = scaler.transform([eeg_flat])[0]
+    with tqdm(total=total_iters, desc="Evaluating", ncols=100) as pbar:
+        for subj, feats in eeg_dict.items():
+            eeg = feats[f"EEG_{feature_type}"][6]   # (40,5,...)
+            txt = blip_emb[6]                       # (40,5,77,768)
 
-                if feature_type == "windows":
-                    eeg_tensor = torch.tensor(eeg_scaled.reshape(7,62,100),dtype=torch.float32).unsqueeze(0).cuda()
-                elif feature_type == "segments":
-                    eeg_tensor = torch.tensor(eeg_scaled.reshape(1,62,400),dtype=torch.float32).unsqueeze(0).cuda()
-                elif feature_type in ["DE","PSD"]:
-                    eeg_tensor = torch.tensor(eeg_scaled.reshape(62,5),dtype=torch.float32).unsqueeze(0).cuda()
+            for ci in range(40):
+                for cj in range(5):
+                    eeg_flat = eeg[ci,cj].reshape(-1)
+                    eeg_scaled = scaler.transform([eeg_flat])[0]
 
-                true_class = ci
-                true_emb = txt[ci,cj]
+                    if feature_type == "windows":
+                        eeg_tensor = torch.tensor(eeg_scaled.reshape(7,62,100),dtype=torch.float32).unsqueeze(0).cuda()
+                    elif feature_type == "segments":
+                        eeg_tensor = torch.tensor(eeg_scaled.reshape(1,62,400),dtype=torch.float32).unsqueeze(0).cuda()
+                    elif feature_type in ["DE","PSD"]:
+                        eeg_tensor = torch.tensor(eeg_scaled.reshape(62,5),dtype=torch.float32).unsqueeze(0).cuda()
 
-                with torch.no_grad():
-                    pred_emb = model(eeg_tensor).squeeze(0).cpu().numpy()
+                    true_class = ci
+                    true_emb = txt[ci,cj]
 
-                if "cosine" in loss_type:
-                    pred_emb = pred_emb / (np.linalg.norm(pred_emb,axis=-1,keepdims=True)+1e-8)
+                    with torch.no_grad():
+                        pred_emb = model(eeg_tensor).squeeze(0).cpu().numpy()
 
-                # classification
-                sims = {cid: tokenwise_cosine(pred_emb, proto) for cid,proto in prototypes.items()}
-                ranked = sorted(sims.items(), key=lambda x:x[1], reverse=True)
-                top1, top5 = ranked[0][0],[cid for cid,_ in ranked[:5]]
-                correct_top1 += int(top1==true_class)
-                correct_top5 += int(true_class in top5)
-                total += 1
+                    if "cosine" in loss_type:
+                        pred_emb = pred_emb / (np.linalg.norm(pred_emb,axis=-1,keepdims=True)+1e-8)
 
-                # metrics
-                mse_vals.append(np.mean((pred_emb-true_emb)**2))
-                cos = np.dot(pred_emb.flatten(),true_emb.flatten()) / (
-                    np.linalg.norm(pred_emb.flatten())*np.linalg.norm(true_emb.flatten())+1e-8)
-                cos_vals.append(cos)
-                a = pred_emb/(np.linalg.norm(pred_emb,axis=-1,keepdims=True)+1e-8)
-                b = true_emb/(np.linalg.norm(true_emb,axis=-1,keepdims=True)+1e-8)
-                token_cos_vals.append((a*b).sum(-1).mean())
-                corr_vals.append(np.corrcoef(pred_emb.flatten(),true_emb.flatten())[0,1])
+                    # classification
+                    sims = {cid: tokenwise_cosine(pred_emb, proto) for cid,proto in prototypes.items()}
+                    ranked = sorted(sims.items(), key=lambda x:x[1], reverse=True)
+                    top1, top5 = ranked[0][0],[cid for cid,_ in ranked[:5]]
 
+                    pred_classes.append(top1)
+                    true_classes.append(true_class)
+
+                    correct_top1 += int(top1==true_class)
+                    correct_top5 += int(true_class in top5)
+                    total += 1
+
+                    # metrics
+                    mse_vals.append(np.mean((pred_emb-true_emb)**2))
+                    cos = np.dot(pred_emb.flatten(),true_emb.flatten()) / (
+                        np.linalg.norm(pred_emb.flatten())*np.linalg.norm(true_emb.flatten())+1e-8)
+                    cos_vals.append(cos)
+                    a = pred_emb/(np.linalg.norm(pred_emb,axis=-1,keepdims=True)+1e-8)
+                    b = true_emb/(np.linalg.norm(true_emb,axis=-1,keepdims=True)+1e-8)
+                    token_cos_vals.append((a*b).sum(-1).mean())
+                    corr_vals.append(np.corrcoef(pred_emb.flatten(),true_emb.flatten())[0,1])
+
+                    pbar.update(1)
+
+    # === Print summary ===
     print(f"\nTop-1 Accuracy: {correct_top1/total:.4f}")
     print(f"Top-5 Accuracy: {correct_top5/total:.4f}")
     print(f"Mean MSE: {np.mean(mse_vals):.6f}")
     print(f"Mean Cosine similarity: {np.mean(cos_vals):.4f}")
     print(f"Mean Token-wise cosine: {np.mean(token_cos_vals):.4f}")
     print(f"Mean Pearson correlation: {np.mean(corr_vals):.4f}")
+
+    # Class distributions
+    pred_counts = Counter(pred_classes)
+    true_counts = Counter(true_classes)
+
+    print("\nPredicted class distribution:")
+    for cls in range(40):
+        cnt = pred_counts.get(cls, 0)
+        print(f"Class {cls}: {cnt} ({cnt/total:.2%})")
+
+    print("\nTrue class distribution:")
+    for cls in range(40):
+        cnt = true_counts.get(cls, 0)
+        print(f"Class {cls}: {cnt} ({cnt/total:.2%})")
