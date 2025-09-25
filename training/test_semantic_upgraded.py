@@ -29,7 +29,7 @@ class WindowEncoderWrapper(torch.nn.Module):
         x = x.view(B*W, 1, C, T)
         feats = self.base(x)
         feats = feats.view(B, W, -1)
-        return feats.mean(1)  # (B, out_dim)
+        return feats.mean(1)
 
 # === Reshape wrapper (flat -> (77,768)) ===
 class ReshapeWrapper(torch.nn.Module):
@@ -46,16 +46,18 @@ def build_class_prototypes(bundle_path, loss_type):
     data = np.load(bundle_path, allow_pickle=True)
     blip_embeddings = data["BLIP_embeddings"]  # (N,77,768)
     keys = data["keys"]
+
     class_groups = defaultdict(list)
     for i, key in enumerate(keys):
         parts = key.split("/")
         class_token = next(p for p in parts if p.startswith("class"))
         class_id = int(class_token.replace("class", "").split("_")[0])
         class_groups[class_id].append(blip_embeddings[i])
+
     prototypes = {}
     for cid, embs in class_groups.items():
         avg_emb = np.mean(np.stack(embs), axis=0)  # (77,768)
-        if loss_type == "cosine":
+        if "cosine" in loss_type:
             norms = np.linalg.norm(avg_emb, axis=-1, keepdims=True) + 1e-8
             avg_emb = avg_emb / norms
         prototypes[cid] = avg_emb
@@ -166,7 +168,7 @@ if __name__ == "__main__":
         with torch.no_grad():
             pred_emb = model(eeg_tensor).squeeze(0).cpu().numpy()
 
-        if loss_type == "cosine":
+        if "cosine" in loss_type:
             pred_emb = pred_emb / (np.linalg.norm(pred_emb, axis=-1, keepdims=True) + 1e-8)
 
         sims = {cid: tokenwise_cosine(pred_emb, proto) for cid, proto in prototypes.items()}
