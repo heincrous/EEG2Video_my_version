@@ -1,5 +1,5 @@
 # ==========================================
-# check_collapse.py
+# test_semantic_upgraded.py
 # ==========================================
 import os, sys, json
 import numpy as np
@@ -46,6 +46,7 @@ class SemanticPredictor(nn.Module):
             prev = h
         layers.append(nn.Linear(prev, out_dim))
         self.net = nn.Sequential(*layers)
+        print(f"[SemanticPredictor] Built with hidden={hidden}, out_dim={out_dim}")
 
     def forward(self, x):
         return self.net(x)
@@ -100,8 +101,6 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     proto_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/prototype_checkpoints"
-
-    # collect checkpoints
     if not os.path.isdir(proto_dir):
         print("No prototype_checkpoints directory found.")
         return
@@ -112,13 +111,13 @@ def main():
 
     print("Available checkpoints:")
     for i, f in enumerate(candidates):
-        print(f"{i}: [P] {f}")
+        print(f"{i}: {f}")
     choice = int(input("Select checkpoint index: ").strip())
 
     fname = candidates[choice]
     ckpt_path = os.path.join(proto_dir, fname)
     subj_name = fname.replace("prototype_checkpoint_","").replace(".pt","")
-    print(f"Selected subject: {subj_name} (prototype)")
+    print(f"Selected subject: {subj_name}")
 
     # load fusion config + checkpoint
     fusion_cfg = json.load(open(f"/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints/fusion_config_{subj_name}.json"))
@@ -143,9 +142,12 @@ def main():
     fusion.load_state_dict(torch.load(f"/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints/fusion_checkpoint_{subj_name}.pt", map_location=device))
     fusion.eval()
 
-    # load predictor + classifier
-    predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
+    # load state
     state = torch.load(ckpt_path, map_location=device)
+    hidden_cfg = state.get("hidden", [1024,2048,1024])  # fallback if not stored
+
+    # rebuild predictor with correct hidden config
+    predictor = SemanticPredictor(input_dim=fusion.total_dim, hidden=hidden_cfg).to(device)
     predictor.load_state_dict(state["predictor"])
     fusion.classifier.load_state_dict(state["classifier"])
     predictor.eval(); fusion.classifier.eval()
@@ -157,7 +159,7 @@ def main():
     text_emb = np.load("/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/BLIP_embeddings.npy").reshape(-1,77*768)
     text_tensor = torch.tensor(text_emb, dtype=torch.float32).to(device)
 
-    # quick check on BLIP embeddings
+    # BLIP embedding sanity check
     print("\n=== BLIP Embeddings Check ===")
     blip_var = text_tensor.var(dim=0).mean().item()
     cos_blip = F.cosine_similarity(text_tensor[0].unsqueeze(0), text_tensor[1:], dim=-1).mean().item()
