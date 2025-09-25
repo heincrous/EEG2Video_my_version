@@ -200,13 +200,15 @@ def main():
         conf = np.zeros((40,40), dtype=int)
         for t,p in zip(labels, preds):
             conf[t][p] += 1
-        print("Confusion matrix:\n", conf)
+        stats = per_class_stats(conf, sort=True)
 
-        sort_choice = input("Sort per-class accuracies? (y/n): ").strip().lower()
-        stats = per_class_stats(conf, sort=(sort_choice=="y"))
-        print("\nPer-class accuracies:")
-        for cid, acc in stats:
-            print(f"Class {cid}: {acc:.3f}")
+        print("\n=== Concise summary ===")
+        print(f"Overall Top-1 Accuracy: {top1:.3f}")
+        print(f"Overall Top-5 Accuracy: {top5:.3f}")
+        best_cls, best_acc = max(stats, key=lambda x: x[1])
+        worst_cls, worst_acc = min(stats, key=lambda x: x[1])
+        print(f"Best class: {best_cls} with {best_acc:.3f}")
+        print(f"Worst class: {worst_cls} with {worst_acc:.3f}")
 
     else:
         # cross-validation
@@ -240,21 +242,24 @@ def main():
 
             print(f"Fold {test_block}: top1={top1:.3f}, top5={top5:.3f}")
 
+        mean_top1, mean_top5 = np.mean(top1_scores), np.mean(top5_scores)
         print("\n=== Cross-validation summary ===")
-        print("Mean Top-1:", np.mean(top1_scores), "Std:", np.std(top1_scores))
-        print("Mean Top-5:", np.mean(top5_scores), "Std:", np.std(top5_scores))
+        print("Mean Top-1:", mean_top1, "Std:", np.std(top1_scores))
+        print("Mean Top-5:", mean_top5, "Std:", np.std(top5_scores))
         print(classification_report(all_labels, all_preds))
 
         conf = np.zeros((40,40), dtype=int)
         for t,p in zip(all_labels, all_preds):
             conf[t][p] += 1
-        print("Confusion matrix:\n", conf)
+        stats = per_class_stats(conf, sort=True)
 
-        sort_choice = input("Sort per-class accuracies? (y/n): ").strip().lower()
-        stats = per_class_stats(conf, sort=(sort_choice=="y"))
-        print("\nPer-class accuracies:")
-        for cid, acc in stats:
-            print(f"Class {cid}: {acc:.3f}")
+        print("\n=== Concise summary ===")
+        print(f"Overall Top-1 Accuracy: {mean_top1:.3f}")
+        print(f"Overall Top-5 Accuracy: {mean_top5:.3f}")
+        best_cls, best_acc = max(stats, key=lambda x: x[1])
+        worst_cls, worst_acc = min(stats, key=lambda x: x[1])
+        print(f"Best class: {best_cls} with {best_acc:.3f}")
+        print(f"Worst class: {worst_cls} with {worst_acc:.3f}")
 
 if __name__ == "__main__":
     main()
