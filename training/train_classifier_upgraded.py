@@ -45,7 +45,9 @@ class DictDataset(Dataset):
         for k in self.keys:
             x = torch.tensor(self.Xs[k][idx], dtype=torch.float32)
             if k in self.conv_features:
-                x = x.unsqueeze(0)  # add channel dimension
+                if x.ndim == 3 and x.shape[0] == 7:   # windows: (7,62,100)
+                    x = x.mean(0)                    # -> (62,100)
+                x = x.unsqueeze(0)                    # -> (1,62,T)
             out[k] = x
         return out, torch.tensor(self.y[idx], dtype=torch.long)
 
@@ -115,25 +117,20 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
 # -------------------------------------------------
 def load_feature(feat_type, subj_name, drive_root):
     if feat_type == "de":
-        arr = np.load(os.path.join(drive_root,"EEG_DE_1per1s",f"{subj_name}.npy"))
-        return arr.reshape(7,40,10,62,5)
+        return np.load(os.path.join(drive_root,"EEG_DE",f"{subj_name}.npy"))  # (7,40,5,62,5)
     elif feat_type == "psd":
-        arr = np.load(os.path.join(drive_root,"EEG_PSD_1per1s",f"{subj_name}.npy"))
-        return arr.reshape(7,40,10,62,5)
+        return np.load(os.path.join(drive_root,"EEG_PSD",f"{subj_name}.npy")) # (7,40,5,62,5)
     elif feat_type == "windows":
-        arr = np.load(os.path.join(drive_root,"EEG_windows",f"{subj_name}.npy"))
-        return arr  # (7,40,trials,62,100)
+        return np.load(os.path.join(drive_root,"EEG_windows",f"{subj_name}.npy")) # (7,40,5,7,62,100)
     elif feat_type == "segments":
-        arr = np.load(os.path.join(drive_root,"EEG_segments",f"{subj_name}.npy"))
-        return arr  # (7,40,trials,62,400)
+        return np.load(os.path.join(drive_root,"EEG_segments",f"{subj_name}.npy")) # (7,40,5,62,400)
     else:
         raise ValueError(f"Unknown feature {feat_type}")
 
 # -------------------------------------------------
 # Cross-validation
 # -------------------------------------------------
-def run_cv(subj_name, drive_root, device, feat_types, encoders):
-    datas = {f: load_feature(f, subj_name, drive_root) for f in feat_types}
+def run_cv(subj_name, drive_root, device, feat_types, encoders, datas):
     trial_count = min([datas[f].shape[2] for f in feat_types])  # align trials
     print(f"Trial counts per feature: {[ (f,datas[f].shape[2]) for f in feat_types ]}, using {trial_count}")
 
@@ -193,26 +190,43 @@ def main():
     drive_root="/content/drive/MyDrive/EEG2Video_data/processed"
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    eeg_dir=os.path.join(drive_root,"EEG_DE_1per1s")
+    eeg_dir=os.path.join(drive_root,"EEG_DE")
     subjects=[f.replace(".npy","") for f in sorted(os.listdir(eeg_dir)) if f.endswith(".npy")]
     for i,s in enumerate(subjects): print(f"{i}: {s}")
     subj_name=subjects[int(input("Enter subject index: ").strip())]
 
-    feat_types=[f.strip().lower() for f in input("Enter features (comma separated: de,psd,windows,segments): ").split(",")]
+    feat_types=[f.strip().lower() for f in input("Enter features (comma separated: de,psd,combo,windows,segments): ").split(",")]
 
+    datas = {}
     encoders={}
+
+    # handle combo (early fusion DE+PSD)
+    if "combo" in feat_types:
+        de = load_feature("de", subj_name, drive_root)
+        psd = load_feature("psd", subj_name, drive_root)
+        combo = np.concatenate([de, psd], axis=-1)  # (7,40,5,62,10)
+        datas["combo"] = combo
+        input_dim=62*10
+        encoders["combo"]=glfnet_mlp(out_dim=128,emb_dim=64,input_dim=input_dim).to(device)
+        feat_types = [f for f in feat_types if f not in ["de","psd"]]
+
     for f in feat_types:
-        if f in ["de","psd"]:
-            input_dim=62*5
-            encoders[f]=glfnet_mlp(out_dim=128,emb_dim=64,input_dim=input_dim).to(device)
+        if f=="de":
+            datas[f]=load_feature("de",subj_name,drive_root)
+            encoders[f]=glfnet_mlp(out_dim=128,emb_dim=64,input_dim=62*5).to(device)
+        elif f=="psd":
+            datas[f]=load_feature("psd",subj_name,drive_root)
+            encoders[f]=glfnet_mlp(out_dim=128,emb_dim=64,input_dim=62*5).to(device)
         elif f=="windows":
+            datas[f]=load_feature("windows",subj_name,drive_root)
             enc_choice=input("Encoder for windows (shallownet/eegnet/tsconv/conformer): ").strip().lower()
             encoders[f]={"shallownet":shallownet,"eegnet":eegnet,"tsconv":tsconv,"conformer":conformer}[enc_choice](out_dim=128,C=62,T=100).to(device)
         elif f=="segments":
+            datas[f]=load_feature("segments",subj_name,drive_root)
             enc_choice=input("Encoder for segments (shallownet/deepnet/eegnet/tsconv/conformer): ").strip().lower()
             encoders[f]={"shallownet":shallownet,"deepnet":deepnet,"eegnet":eegnet,"tsconv":tsconv,"conformer":conformer}[enc_choice](out_dim=128,C=62,T=400).to(device)
 
-    top1, top5=run_cv(subj_name,drive_root,device,feat_types,encoders)
+    top1, top5=run_cv(subj_name,drive_root,device,feat_types,encoders,datas)
     print("\n=== Final Results ===")
     print(f"Features: {feat_types}")
     print(f"Top-1 Accuracy: {top1:.3f}")
