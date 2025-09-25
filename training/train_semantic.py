@@ -15,14 +15,14 @@ sys.path.append(repo_root)
 from core_files.models import shallownet, deepnet, eegnet, tsconv, conformer, glfnet_mlp
 
 # -------------------------------------------------
-# Fusion model (frozen for feature extraction)
+# Fusion model (frozen encoders, but classifier trainable)
 # -------------------------------------------------
 class FusionModel(nn.Module):
     def __init__(self, encoders, num_classes=40):
         super().__init__()
         self.encoders = nn.ModuleDict(encoders)
         total_dim = sum([list(e.modules())[-1].out_features for e in encoders.values()])
-        self.classifier = nn.Linear(total_dim, num_classes)
+        self.classifier = nn.Linear(total_dim, num_classes)  # trainable head
         self.total_dim = total_dim
 
     def forward(self, inputs, return_feats=False):
@@ -49,12 +49,7 @@ def load_fusion(subj_name, device):
     encoders = {}
     for ftype, enc_name in cfg["encoders"].items():
         if enc_name == "glfnet_mlp":
-            if ftype in ["de", "psd"]:
-                input_dim = 62*5
-            elif ftype == "combo":
-                input_dim = 62*10
-            else:
-                raise ValueError(f"Unsupported {ftype} for MLP")
+            input_dim = 62*5 if ftype in ["de","psd"] else 62*10
             encoders[ftype] = glfnet_mlp(out_dim=128, emb_dim=64, input_dim=input_dim).to(device)
         elif enc_name == "shallownet":
             encoders[ftype] = shallownet(out_dim=128, C=62, T=100 if ftype=="windows" else 400).to(device)
@@ -66,13 +61,11 @@ def load_fusion(subj_name, device):
             encoders[ftype] = tsconv(out_dim=128, C=62, T=100 if ftype=="windows" else 400).to(device)
         elif enc_name == "conformer":
             encoders[ftype] = conformer(out_dim=128, C=62, T=100 if ftype=="windows" else 400).to(device)
-        else:
-            raise ValueError(f"Unknown encoder {enc_name}")
 
     fusion = FusionModel(encoders, num_classes=40).to(device)
     fusion.load_state_dict(torch.load(ckpt_path, map_location=device))
-    fusion.eval()
-    for p in fusion.parameters():
+    # freeze encoders, keep classifier trainable
+    for name, p in fusion.encoders.named_parameters():
         p.requires_grad = False
     return fusion, feat_types
 
@@ -94,75 +87,71 @@ class SemanticPredictor(nn.Module):
         return self.net(x)
 
 # -------------------------------------------------
-# EEG-Text Dataset
+# EEG Dataset for multitask (class + BLIP)
 # -------------------------------------------------
-class EEGTextDataset(Dataset):
-    def __init__(self, eeg_feats, text_embs):
+class EEGMultiDataset(Dataset):
+    def __init__(self, eeg_feats, text_embs, labels):
         self.eeg_feats = eeg_feats
         self.text_embs = text_embs
+        self.labels = labels
     def __len__(self): return len(self.eeg_feats)
     def __getitem__(self, idx):
-        return self.eeg_feats[idx], self.text_embs[idx]
+        return self.eeg_feats[idx], self.text_embs[idx], self.labels[idx]
 
 # -------------------------------------------------
-# Helper to load and reshape subject features
+# Helper to load subject features
 # -------------------------------------------------
 def load_subject_features(subj_name, feat_types):
     base = "/content/drive/MyDrive/EEG2Video_data/processed"
     feats = {}
     for ftype in feat_types:
         if ftype == "de":
-            arr = np.load(os.path.join(base,"EEG_DE_1per1s",f"{subj_name}.npy"))  # (7,40,5,2,62,5)
+            arr = np.load(os.path.join(base,"EEG_DE_1per1s",f"{subj_name}.npy"))
             feats[ftype] = arr.reshape(7,40,10,62,5)
         elif ftype == "psd":
             arr = np.load(os.path.join(base,"EEG_PSD_1per1s",f"{subj_name}.npy"))
             feats[ftype] = arr.reshape(7,40,10,62,5)
         elif ftype == "windows":
-            feats[ftype] = np.load(os.path.join(base,"EEG_windows",f"{subj_name}.npy"))  # (7,40,5,7,62,100)
+            feats[ftype] = np.load(os.path.join(base,"EEG_windows",f"{subj_name}.npy"))
         elif ftype == "segments":
-            feats[ftype] = np.load(os.path.join(base,"EEG_segments",f"{subj_name}.npy")) # (7,40,5,62,400)
+            feats[ftype] = np.load(os.path.join(base,"EEG_segments",f"{subj_name}.npy"))
         elif ftype == "combo":
             de = np.load(os.path.join(base,"EEG_DE_1per1s",f"{subj_name}.npy")).reshape(7,40,10,62,5)
             psd = np.load(os.path.join(base,"EEG_PSD_1per1s",f"{subj_name}.npy")).reshape(7,40,10,62,5)
-            feats[ftype] = np.concatenate([de, psd], axis=-1)  # (7,40,10,62,10)
-        else:
-            raise ValueError(f"Unknown feature type {ftype}")
+            feats[ftype] = np.concatenate([de, psd], axis=-1)
     return feats
 
 # -------------------------------------------------
-# Preprocess a batch for fusion input
+# Preprocess batch
 # -------------------------------------------------
 def preprocess_for_fusion(batch_dict, feat_types):
     processed = {}
     for ft in feat_types:
         x = batch_dict[ft]
         if ft in ["de","psd"]:
-            x = x.reshape(x.shape[0], 62, 5)  # keep channels × bands
+            x = x.reshape(x.shape[0], 62, 5)
         elif ft == "combo":
             x = x.reshape(x.shape[0], 62, 10)
         elif ft == "windows":
-            if x.ndim == 3 and x.shape[0] == 7:   # single sample case
-                x = x.mean(0)                     # -> (62,100)
-            elif x.ndim == 4:                     # batch case (batch,7,62,100)
-                x = x.mean(1)                     # -> (batch,62,100)
-            x = x.unsqueeze(1)                    # -> (batch,1,62,100)
+            if x.ndim == 4:
+                x = x.mean(1)
+            x = x.unsqueeze(1)  # (batch,1,62,100)
         elif ft == "segments":
             x = x.unsqueeze(1)  # (batch,1,62,400)
         processed[ft] = x
     return processed
 
 # -------------------------------------------------
-# Train + Eval (7-fold CV with scaler saving)
+# Train + Eval with multitask loss
 # -------------------------------------------------
-def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device):
-    best_global_loss = float("inf")
-    best_ckpt_path = None
+def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
+           lambda_cls=1.0, lambda_sem=0.5):
+
     save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
     os.makedirs(save_dir, exist_ok=True)
+    best_global_loss = float("inf")
+    best_ckpt_path = None
 
-    top_losses = []
-
-    # align trial count across features
     trial_count = min([eeg_feats[ft].shape[2] for ft in feat_types])
     print(f"Trial counts per feature: {[ (f,eeg_feats[f].shape[2]) for f in feat_types ]}, using {trial_count}")
 
@@ -170,8 +159,7 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device):
         val_block = (test_block - 1) % 7
         train_blocks = [i for i in range(7) if i not in [test_block, val_block]]
 
-        # collect splits
-        Xs, Ys = {ft: {"train": [], "val": [], "test": []} for ft in feat_types}, {"train": [], "val": [], "test": []}
+        Xs, Ys, Ls = {ft: {"train": [], "val": [], "test": []} for ft in feat_types}, {"train": [], "val": [], "test": []}, {"train": [], "val": [], "test": []}
         for split, blocks in [("train", train_blocks), ("val", [val_block]), ("test", [test_block])]:
             for b in blocks:
                 for c in range(40):
@@ -179,6 +167,7 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device):
                         for ft in feat_types:
                             Xs[ft][split].append(eeg_feats[ft][b, c, k])
                         Ys[split].append(text_emb[b*40*trial_count + c*trial_count + k])
+                        Ls[split].append(c)
 
         # convert to tensors
         X_train = {ft: torch.tensor(np.array(Xs[ft]["train"]), dtype=torch.float32) for ft in feat_types}
@@ -187,8 +176,11 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device):
         Y_train = torch.tensor(np.array(Ys["train"]), dtype=torch.float32)
         Y_val   = torch.tensor(np.array(Ys["val"]),   dtype=torch.float32)
         Y_test  = torch.tensor(np.array(Ys["test"]),  dtype=torch.float32)
+        L_train = torch.tensor(np.array(Ls["train"]), dtype=torch.long)
+        L_val   = torch.tensor(np.array(Ls["val"]),   dtype=torch.long)
+        L_test  = torch.tensor(np.array(Ls["test"]),  dtype=torch.long)
 
-        # preprocess into correct shapes for fusion
+        # preprocess into shapes
         X_train_proc = preprocess_for_fusion(X_train, feat_types)
         X_val_proc   = preprocess_for_fusion(X_val, feat_types)
         X_test_proc  = preprocess_for_fusion(X_test, feat_types)
@@ -199,73 +191,84 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device):
             Feat_val   = fusion({ft: X_val_proc[ft].to(device)   for ft in feat_types}, return_feats=True).cpu().numpy()
             Feat_test  = fusion({ft: X_test_proc[ft].to(device)  for ft in feat_types}, return_feats=True).cpu().numpy()
 
-        # fit scaler on training features
+        # scaler
         scaler = StandardScaler()
         scaler.fit(Feat_train)
-
-        # transform splits
         Feat_train = torch.tensor(scaler.transform(Feat_train), dtype=torch.float32)
         Feat_val   = torch.tensor(scaler.transform(Feat_val),   dtype=torch.float32)
         Feat_test  = torch.tensor(scaler.transform(Feat_test),  dtype=torch.float32)
 
-        train_loader = DataLoader(EEGTextDataset(Feat_train, Y_train), batch_size=256, shuffle=True)
-        val_loader   = DataLoader(EEGTextDataset(Feat_val,   Y_val),   batch_size=256, shuffle=False)
-        test_loader  = DataLoader(EEGTextDataset(Feat_test,  Y_test),  batch_size=256, shuffle=False)
+        train_loader = DataLoader(EEGMultiDataset(Feat_train, Y_train, L_train), batch_size=256, shuffle=True)
+        val_loader   = DataLoader(EEGMultiDataset(Feat_val,   Y_val,   L_val),   batch_size=256, shuffle=False)
+        test_loader  = DataLoader(EEGMultiDataset(Feat_test,  Y_test,  L_test),  batch_size=256, shuffle=False)
 
         predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
-        optimizer = torch.optim.Adam(predictor.parameters(), lr=5e-4)
+        optimizer = torch.optim.Adam(list(predictor.parameters())+list(fusion.classifier.parameters()), lr=5e-4)
+
+        ce_loss = nn.CrossEntropyLoss()
         best_val_loss, best_state = float("inf"), None
         ckpt_path = os.path.join(save_dir, f"semantic_checkpoint_{subj_name}.pt")
 
         for epoch in tqdm(range(50), desc=f"Fold {test_block} training", leave=False):
-            predictor.train()
-            for eeg, text in train_loader:
-                eeg, text = eeg.to(device), text.to(device)
+            predictor.train(); fusion.classifier.train()
+            for eeg, text, label in train_loader:
+                eeg, text, label = eeg.to(device), text.to(device), label.to(device)
                 optimizer.zero_grad()
-                pred = predictor(eeg)
-                loss = F.mse_loss(pred, text)
+                pred_sem = predictor(eeg)
+                pred_cls = fusion.classifier(eeg)
+                loss_sem = F.mse_loss(pred_sem, text)
+                loss_cls = ce_loss(pred_cls, label)
+                loss = lambda_sem*loss_sem + lambda_cls*loss_cls
                 loss.backward()
                 optimizer.step()
 
             # validation
-            predictor.eval()
+            predictor.eval(); fusion.classifier.eval()
             val_loss = 0
             with torch.no_grad():
-                for eeg, text in val_loader:
-                    eeg, text = eeg.to(device), text.to(device)
-                    pred = predictor(eeg)
-                    val_loss += F.mse_loss(pred, text).item()
+                for eeg, text, label in val_loader:
+                    eeg, text, label = eeg.to(device), text.to(device), label.to(device)
+                    pred_sem = predictor(eeg)
+                    pred_cls = fusion.classifier(eeg)
+                    loss_sem = F.mse_loss(pred_sem, text)
+                    loss_cls = ce_loss(pred_cls, label)
+                    val_loss += (lambda_sem*loss_sem + lambda_cls*loss_cls).item()
             avg_val = val_loss/len(val_loader)
 
             if avg_val < best_val_loss:
                 best_val_loss = avg_val
-                best_state = predictor.state_dict()
+                best_state = {
+                    "predictor": predictor.state_dict(),
+                    "classifier": fusion.classifier.state_dict()
+                }
                 torch.save(best_state, ckpt_path)
-                joblib.dump(scaler, ckpt_path.replace(".pt", "_scaler.pkl"))
+                joblib.dump(scaler, ckpt_path.replace(".pt","_scaler.pkl"))
 
-        # test with best
-        predictor.load_state_dict(torch.load(ckpt_path, map_location=device))
-        scaler = joblib.load(ckpt_path.replace(".pt", "_scaler.pkl"))
-        predictor.eval()
+        # test
+        state = torch.load(ckpt_path, map_location=device)
+        predictor.load_state_dict(state["predictor"])
+        fusion.classifier.load_state_dict(state["classifier"])
+        scaler = joblib.load(ckpt_path.replace(".pt","_scaler.pkl"))
+        predictor.eval(); fusion.classifier.eval()
+
         test_loss = 0
         with torch.no_grad():
-            for eeg, text in test_loader:
-                eeg, text = eeg.to(device), text.to(device)
-                pred = predictor(eeg)
-                test_loss += F.mse_loss(pred, text).item()
+            for eeg, text, label in test_loader:
+                eeg, text, label = eeg.to(device), text.to(device), label.to(device)
+                pred_sem = predictor(eeg)
+                pred_cls = fusion.classifier(eeg)
+                loss_sem = F.mse_loss(pred_sem, text)
+                loss_cls = ce_loss(pred_cls, label)
+                test_loss += (lambda_sem*loss_sem + lambda_cls*loss_cls).item()
         avg_test = test_loss/len(test_loader)
-        top_losses.append(avg_test)
+        print(f"Fold {test_block}: val_loss={best_val_loss:.4f}, test_loss={avg_test:.4f}")
 
         if avg_test < best_global_loss:
             best_global_loss = avg_test
             best_ckpt_path = ckpt_path
 
-        print(f"Fold {test_block}: val_loss={best_val_loss:.4f}, test_loss={avg_test:.4f}")
-
     print("\n=== Final Results ===")
-    print(f"Average Test Loss across folds: {np.mean(top_losses):.4f}")
     print(f"Best checkpoint: {best_ckpt_path} (test_loss={best_global_loss:.4f})")
-
     return best_ckpt_path
 
 # -------------------------------------------------
@@ -281,7 +284,7 @@ def main():
         print(f"{i}: {ckpt}")
 
     choice = int(input("Select subject index: ").strip())
-    subj_name = ckpts[choice].replace("fusion_checkpoint_", "").replace(".pt", "")
+    subj_name = ckpts[choice].replace("fusion_checkpoint_","").replace(".pt","")
     print(f"Selected subject: {subj_name}")
 
     fusion, feat_types = load_fusion(subj_name, device)
