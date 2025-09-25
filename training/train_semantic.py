@@ -70,10 +70,7 @@ def main():
     eeg_file   = f"{drive_root}/BLIP_EEG_bundle.npz"
     blip_file  = f"{drive_root}/BLIP_Video_bundle.npz"
 
-    # === Interactive user input ===
-    encoder_choice = input("Select encoder (shallownet, deepnet, eegnet, tsconv, conformer): ").strip()
-    mode_choice    = input("Select mode (train/dry): ").strip()
-    epochs_choice  = int(input("Enter number of epochs: "))
+    mode_choice = input("Select mode (train/dry): ").strip()
 
     encoders = {
         "shallownet": shallownet,
@@ -82,34 +79,40 @@ def main():
         "tsconv": tsconv,
         "conformer": conformer
     }
-    if encoder_choice not in encoders:
-        raise ValueError("Invalid encoder choice")
-
-    EncoderClass = encoders[encoder_choice]
-    encoder = EncoderClass(out_dim=512, C=62, T=100)
-    semantic = SemanticPredictor(input_dim=512)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    encoder, semantic = encoder.to(device), semantic.to(device)
 
     if mode_choice == "dry":
         ds = EEGTextDataset(eeg_file, blip_file, train=True)
         eeg, text = ds[0]
         eeg, text = eeg.unsqueeze(0).to(device), text.unsqueeze(0).to(device)
-        out = semantic(encoder(eeg))
-        print("Dry run OK")
-        print("EEG input:", eeg.shape)
-        print("Predicted output:", out.shape)
+
+        for name, EncoderClass in encoders.items():
+            encoder = EncoderClass(out_dim=512, C=62, T=100).to(device)
+            semantic = SemanticPredictor(input_dim=512).to(device)
+            out = semantic(encoder(eeg))
+            print(f"[{name}] EEG input: {eeg.shape} -> Predicted output: {out.shape}")
+
+        print("Dry run completed for all encoders")
         return
 
     if mode_choice == "train":
+        encoder_choice = input("Select encoder (shallownet, deepnet, eegnet, tsconv, conformer): ").strip()
+        epochs_choice  = int(input("Enter number of epochs: "))
+
+        if encoder_choice not in encoders:
+            raise ValueError("Invalid encoder choice")
+
+        EncoderClass = encoders[encoder_choice]
+        encoder = EncoderClass(out_dim=512, C=62, T=100).to(device)
+        semantic = SemanticPredictor(input_dim=512).to(device)
+
         train_ds = EEGTextDataset(eeg_file, blip_file, train=True)
         train_loader = DataLoader(train_ds, batch_size=16, shuffle=True)
 
         criterion = nn.MSELoss()
         optimizer = optim.Adam(list(encoder.parameters())+list(semantic.parameters()), lr=1e-3)
 
-        # === Checkpoint directory ===
         ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
         os.makedirs(ckpt_dir, exist_ok=True)
 
@@ -126,7 +129,6 @@ def main():
             avg_loss = total/len(train_loader)
             print(f"Epoch {epoch+1}/{epochs_choice} Loss: {avg_loss:.4f}")
 
-        # === Save only the final checkpoint ===
         ckpt_path = os.path.join(ckpt_dir, "semantic_final.pt")
         torch.save({
             'epoch': epochs_choice,
@@ -136,6 +138,3 @@ def main():
             'final_loss': avg_loss
         }, ckpt_path)
         print(f"Final checkpoint saved to {ckpt_path}")
-
-if __name__ == "__main__":
-    main()
