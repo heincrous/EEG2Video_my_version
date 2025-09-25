@@ -91,7 +91,6 @@ def mse_cosine_contrastive_loss(pred, target): return F.mse_loss(pred, target) +
 # ==========================================
 if __name__ == "__main__":
     mode = input("\nMode (train / dry): ").strip()
-    feature_type = input("\nEnter feature type (windows / DE / PSD): ").strip()
 
     # Dummy shapes for dry run
     dummy_windows = torch.randn(2, 7, 62, 100).cuda()
@@ -152,6 +151,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     # ---- Training mode ----
+    feature_type = input("\nEnter feature type (windows / DE / PSD): ").strip()
     bundle_path = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_EEG_bundle.npz"
     save_root   = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
     os.makedirs(save_root, exist_ok=True)
