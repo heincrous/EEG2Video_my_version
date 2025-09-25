@@ -40,7 +40,8 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
     for epoch in range(num_epochs):
         # ---- train ----
         model.train()
-        for X, y in train_loader:
+        loop = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs} [train]", leave=False)
+        for X, y in loop:
             X, y = X.to(device), y.to(device)
             optimizer.zero_grad()
             out = model(X)
@@ -52,12 +53,12 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
         model.eval()
         val_correct, val_total = 0, 0
         with torch.no_grad():
-            for X, y in val_loader:
+            for X, y in tqdm(val_loader, desc=f"Epoch {epoch+1}/{num_epochs} [val]", leave=False):
                 X, y = X.to(device), y.to(device)
                 out = model(X)
                 val_correct += (out.argmax(1) == y).sum().item()
                 val_total += y.size(0)
-        val_acc = val_correct / val_total
+        val_acc = val_correct / val_total if val_total > 0 else 0
 
         if val_acc > best_val_acc:
             best_val_acc = val_acc
@@ -68,7 +69,7 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
     model.eval()
     top1_list, top5_list = [], []
     with torch.no_grad():
-        for X, y in test_loader:
+        for X, y in tqdm(test_loader, desc="Testing", leave=False):
             X, y = X.to(device), y.to(device)
             out = model(X)
             accs = topk_accuracy(out, y, topk=(1, 5))
@@ -77,23 +78,28 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
     return np.mean(top1_list), np.mean(top5_list)
 
 # -------------------------------------------------
-# Helper to build loaders
+# Helper to build loaders with split-wise normalization
 # -------------------------------------------------
 def build_loaders(train_x, train_y, val_x, val_y, test_x, test_y):
-    scaler = StandardScaler()
-    train_x = scaler.fit_transform(train_x.reshape(len(train_x), -1)).reshape(len(train_x), *train_x.shape[1:])
-    val_x   = scaler.transform(val_x.reshape(len(val_x), -1)).reshape(len(val_x), *val_x.shape[1:])
-    test_x  = scaler.transform(test_x.reshape(len(test_x), -1)).reshape(len(test_x), *test_x.shape[1:])
+    def normalize_split(x):
+        scaler = StandardScaler()
+        x = scaler.fit_transform(x.reshape(len(x), -1))
+        return x.reshape(len(x), *train_x.shape[1:])
+
+    train_x = normalize_split(train_x)
+    val_x   = normalize_split(val_x)
+    test_x  = normalize_split(test_x)
+
     batch_size = 256
     train_loader = DataLoader(TensorDataset(torch.tensor(train_x, dtype=torch.float32),
                                             torch.tensor(train_y, dtype=torch.long)),
-                                            batch_size=batch_size, shuffle=True)
+                              batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(TensorDataset(torch.tensor(val_x, dtype=torch.float32),
                                           torch.tensor(val_y, dtype=torch.long)),
-                                          batch_size=batch_size, shuffle=False)
+                            batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(TensorDataset(torch.tensor(test_x, dtype=torch.float32),
                                            torch.tensor(test_y, dtype=torch.long)),
-                                           batch_size=batch_size, shuffle=False)
+                             batch_size=batch_size, shuffle=False)
     return train_loader, val_loader, test_loader
 
 # -------------------------------------------------
