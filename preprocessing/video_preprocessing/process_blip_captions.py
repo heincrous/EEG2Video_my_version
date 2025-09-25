@@ -5,7 +5,7 @@ Generates embeddings for each caption using the Stable Diffusion v1-4
 tokenizer + text_encoder. Each embedding has shape [77,768].
 
 Output:
-  processed/BLIP_text/BLIP_text.npy         shape [7,40,5] (captions as strings)
+  processed/BLIP_text/BLIP_text.npy             shape [7,40,5] (captions as strings)
   processed/BLIP_embeddings/BLIP_embeddings.npy shape [7,40,5,77,768]
 """
 
@@ -81,8 +81,13 @@ for block_id in range(7):
             all_embs[block_id, true_class, clip_id]  = emb[j]
 
 # save subject-level arrays
-np.save(os.path.join(out_text_dir,  "BLIP_text.npy"), all_texts)
-np.save(os.path.join(out_embed_dir, "BLIP_embeddings.npy"), all_embs)
+out_text_path  = os.path.join(out_text_dir,  "BLIP_text.npy")
+out_embed_path = os.path.join(out_embed_dir, "BLIP_embeddings.npy")
+os.makedirs(os.path.dirname(out_text_path), exist_ok=True)
+os.makedirs(os.path.dirname(out_embed_path), exist_ok=True)
+
+np.save(out_text_path, all_texts)
+np.save(out_embed_path, all_embs)
 
 print(f"\nFinished all blocks →")
 print(f"Saved BLIP_text.npy shape {all_texts.shape}")

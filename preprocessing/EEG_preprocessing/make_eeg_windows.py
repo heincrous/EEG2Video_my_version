@@ -28,7 +28,7 @@ num_windows = (400 - window_size) // step + 1  # 7
 # paths
 in_dir = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments/"
 out_dir = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_windows/"
-os.makedirs(out_dir, exist_ok=True)
+os.makedirs(out_dir, exist_ok=True)  # ensure directory exists
 
 def make_windows(seg):
     """
@@ -49,11 +49,14 @@ for idx, subj in enumerate(subjects):
     print(f"{idx}: {subj}")
 
 # ask user
-choices = input("\nEnter subject indices to process (comma separated): ")
-choices = [int(c.strip()) for c in choices.split(",") if c.strip().isdigit()]
+choices = input("\nEnter subject indices to process (comma separated, 'all' for all): ").strip()
+if choices.lower() == "all":
+    selected_idxs = list(range(len(subjects)))
+else:
+    selected_idxs = [int(c.strip()) for c in choices.split(",") if c.strip().isdigit()]
 
 # process selected subjects
-for idx in choices:
+for idx in selected_idxs:
     subj_file = subjects[idx]
     subj_name = subj_file.replace(".npy", "")
     subj_path = os.path.join(in_dir, subj_file)
@@ -71,6 +74,7 @@ for idx in choices:
                 out_array[b,c,k] = windows
 
     out_path = os.path.join(out_dir, f"{subj_name}.npy")
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
     np.save(out_path, out_array)
     print(f"Saved {subj_name} → {out_path}, shape {out_array.shape}")
 

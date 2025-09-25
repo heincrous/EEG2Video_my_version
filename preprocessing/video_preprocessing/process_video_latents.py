@@ -58,16 +58,14 @@ for i, b in enumerate(all_blocks):
 all_latents = np.zeros((7,40,5,6,4,36,64), dtype=np.float16)
 
 # -------------------------------------------------
-# Process all 7 blocks
+# Process all blocks
 # -------------------------------------------------
 for block_id, block in enumerate(all_blocks):
     block_path = os.path.join(in_dir, block)
     print(f"\nProcessing {block}...")
 
-    for fname in tqdm(sorted(os.listdir(block_path)), desc=f"Encoding {block}"):
-        if not fname.endswith(".mp4"):
-            continue
-
+    mp4_files = sorted([f for f in os.listdir(block_path) if f.endswith(".mp4")])
+    for fname in tqdm(mp4_files, desc=f"Encoding {block}"):
         # parse class and clip indices
         parts = fname.replace(".mp4","").split("_")
         cls = int(parts[0].replace("class",""))
@@ -116,5 +114,6 @@ for block_id, block in enumerate(all_blocks):
 # Save subject-level array
 # -------------------------------------------------
 save_path = os.path.join(out_dir, "Video_latents.npy")
+os.makedirs(os.path.dirname(save_path), exist_ok=True)
 np.save(save_path, all_latents)
 print(f"\nSaved subject-level latents → {save_path}, shape {all_latents.shape}")

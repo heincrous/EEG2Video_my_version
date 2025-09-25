@@ -36,10 +36,13 @@ print("\nAvailable subjects:")
 for idx, subj in enumerate(subjects):
     print(f"{idx}: {subj}")
 
-choices = input("\nEnter subject indices to process (comma separated): ")
-choices = [int(c.strip()) for c in choices.split(",") if c.strip().isdigit()]
+choices = input("\nEnter subject indices to process (comma separated, 'all' for all): ").strip()
+if choices.lower() == "all":
+    selected_idxs = list(range(len(subjects)))
+else:
+    selected_idxs = [int(c.strip()) for c in choices.split(",") if c.strip().isdigit()]
 
-for idx in choices:
+for idx in selected_idxs:
     subj_file = subjects[idx]
     subj_name = subj_file.replace(".npy", "")
     subj_path = os.path.join(in_dir, subj_file)
@@ -63,10 +66,15 @@ for idx in choices:
                 psd_array[b,c,k] = psd   # [62,5]
 
     # save subject-level arrays
-    np.save(os.path.join(out_de_dir,  f"{subj_name}.npy"), de_array)
-    np.save(os.path.join(out_psd_dir, f"{subj_name}.npy"), psd_array)
+    out_de_path  = os.path.join(out_de_dir,  f"{subj_name}.npy")
+    out_psd_path = os.path.join(out_psd_dir, f"{subj_name}.npy")
+    os.makedirs(os.path.dirname(out_de_path), exist_ok=True)
+    os.makedirs(os.path.dirname(out_psd_path), exist_ok=True)
 
-    print(f"Saved DE → {os.path.join(out_de_dir,  subj_name+'.npy')} {de_array.shape}")
-    print(f"Saved PSD → {os.path.join(out_psd_dir, subj_name+'.npy')} {psd_array.shape}")
+    np.save(out_de_path, de_array)
+    np.save(out_psd_path, psd_array)
+
+    print(f"Saved DE  → {out_de_path} {de_array.shape}")
+    print(f"Saved PSD → {out_psd_path} {psd_array.shape}")
 
 print("\nProcessing complete. Subject-level DE/PSD files saved.")
