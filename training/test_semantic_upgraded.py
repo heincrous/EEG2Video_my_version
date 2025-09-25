@@ -141,8 +141,8 @@ def main():
     state = torch.load(ckpt_path, map_location=device)
     predictor.load_state_dict(state["predictor"])
     fusion.classifier.load_state_dict(state["classifier"])
+    predictor.eval(); fusion.classifier.eval()
 
-    predictor.eval()
     scaler = joblib.load(ckpt_path.replace(".pt","_scaler.pkl"))
 
     # load EEG + BLIP embeddings
