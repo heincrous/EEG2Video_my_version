@@ -1,180 +1,176 @@
 # ==========================================
-# Semantic Predictor Evaluation (Block 7 Test, subject-specific + dual-head support)
+# check_collapse.py
 # ==========================================
-
-import os, sys
+import os, sys, json
 import numpy as np
 import torch
 import torch.nn as nn
-from tqdm import tqdm
-from collections import Counter
+import torch.nn.functional as F
+import joblib
 
 # === Repo imports ===
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(repo_root)
-from core_files.models import shallownet, deepnet, eegnet, tsconv, conformer
+from core_files.models import shallownet, deepnet, eegnet, tsconv, conformer, glfnet_mlp
 
-# === Models ===
+# -------------------------------------------------
+# Fusion model (frozen)
+# -------------------------------------------------
+class FusionModel(nn.Module):
+    def __init__(self, encoders, num_classes=40):
+        super().__init__()
+        self.encoders = nn.ModuleDict(encoders)
+        total_dim = sum([list(e.modules())[-1].out_features for e in encoders.values()])
+        self.classifier = nn.Linear(total_dim, num_classes)
+        self.total_dim = total_dim
+
+    def forward(self, inputs, return_feats=False):
+        feats = []
+        for name, enc in self.encoders.items():
+            feats.append(enc(inputs[name]))
+        fused = torch.cat(feats, dim=-1)
+        if return_feats:
+            return fused
+        return self.classifier(fused)
+
+# -------------------------------------------------
+# Semantic predictor
+# -------------------------------------------------
 class SemanticPredictor(nn.Module):
-    def __init__(self, input_dim=512, hidden_dims=[1024,2048,1024], out_dim=77*768):
+    def __init__(self, input_dim, hidden=[1024,2048,1024], out_dim=77*768):
         super().__init__()
         layers = []
         prev = input_dim
-        for h in hidden_dims:
-            layers += [nn.Linear(prev,h), nn.ReLU()]
+        for h in hidden:
+            layers += [nn.Linear(prev, h), nn.ReLU()]
             prev = h
-        layers.append(nn.Linear(prev,out_dim))
+        layers.append(nn.Linear(prev, out_dim))
         self.net = nn.Sequential(*layers)
-    def forward(self,x): return self.net(x)
 
-class DualHeadPredictor(nn.Module):
-    def __init__(self, input_dim=512, hidden_dims=[1024,2048,1024], out_dim=77*768, num_classes=40):
-        super().__init__()
-        layers = []
-        prev = input_dim
-        for h in hidden_dims:
-            layers += [nn.Linear(prev,h), nn.ReLU()]
-            prev = h
-        self.shared = nn.Sequential(*layers)
-        self.semantic_head = nn.Linear(prev,out_dim)
-        self.class_head = nn.Linear(prev,num_classes)
-    def forward(self,x):
-        feats = self.shared(x)
-        return self.semantic_head(feats), self.class_head(feats)
+    def forward(self, x):
+        return self.net(x)
 
-# === Similarity helpers ===
-def tokenwise_cosine(a,b):
-    a = a/(np.linalg.norm(a,axis=-1,keepdims=True)+1e-8)
-    b = b/(np.linalg.norm(b,axis=-1,keepdims=True)+1e-8)
-    return float((a*b).sum(-1).mean())
+# -------------------------------------------------
+# Load subject EEG features
+# -------------------------------------------------
+def load_subject_features(subj_name, feat_types):
+    base = "/content/drive/MyDrive/EEG2Video_data/processed"
+    feats = {}
+    for ftype in feat_types:
+        if ftype == "de":
+            arr = np.load(os.path.join(base,"EEG_DE_1per1s",f"{subj_name}.npy"))
+            feats[ftype] = arr.reshape(7,40,10,62,5)
+        elif ftype == "psd":
+            arr = np.load(os.path.join(base,"EEG_PSD_1per1s",f"{subj_name}.npy"))
+            feats[ftype] = arr.reshape(7,40,10,62,5)
+        elif ftype == "windows":
+            feats[ftype] = np.load(os.path.join(base,"EEG_windows",f"{subj_name}.npy"))
+        elif ftype == "segments":
+            feats[ftype] = np.load(os.path.join(base,"EEG_segments",f"{subj_name}.npy"))
+        elif ftype == "combo":
+            de = np.load(os.path.join(base,"EEG_DE_1per1s",f"{subj_name}.npy")).reshape(7,40,10,62,5)
+            psd = np.load(os.path.join(base,"EEG_PSD_1per1s",f"{subj_name}.npy")).reshape(7,40,10,62,5)
+            feats[ftype] = np.concatenate([de, psd], axis=-1)
+    return feats
 
-def build_prototypes(blip_emb):
-    protos = {}
-    for class_id in range(40):
-        clips = blip_emb[:6,class_id]       # blocks 0–5
-        clips = clips.reshape(-1,77,768)    # (30,77,768)
-        protos[class_id] = clips.mean(0)
-    return protos
+# -------------------------------------------------
+# Preprocess for fusion
+# -------------------------------------------------
+def preprocess_for_fusion(batch_dict, feat_types):
+    processed = {}
+    for ft in feat_types:
+        x = batch_dict[ft]
+        if ft in ["de","psd"]:
+            x = x.reshape(x.shape[0], 62, 5)
+        elif ft == "combo":
+            x = x.reshape(x.shape[0], 62, 10)
+        elif ft == "windows":
+            if x.ndim == 4:  # (batch,7,62,100)
+                x = x.mean(1)
+            x = x.unsqueeze(1)  # (batch,1,62,100)
+        elif ft == "segments":
+            x = x.unsqueeze(1)  # (batch,1,62,400)
+        processed[ft] = x
+    return processed
 
-# === Main ===
+# -------------------------------------------------
+# Main
+# -------------------------------------------------
+def main():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    sem_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
+
+    # list semantic checkpoints
+    ckpts = [f for f in os.listdir(sem_dir) if f.endswith(".pt")]
+    ckpts = sorted(ckpts)
+    print("Available semantic checkpoints:")
+    for i, c in enumerate(ckpts):
+        print(f"{i}: {c}")
+    choice = int(input("Select checkpoint index: ").strip())
+    ckpt_path = os.path.join(sem_dir, ckpts[choice])
+
+    # infer subject
+    subj_name = ckpts[choice].replace("semantic_checkpoint_","").replace(".pt","")
+    print(f"Selected subject: {subj_name}")
+
+    # load fusion config + checkpoint
+    fusion_cfg = json.load(open(f"/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints/fusion_config_{subj_name}.json"))
+    feat_types = fusion_cfg["features"]
+    encoders = {}
+    for ftype, enc_name in fusion_cfg["encoders"].items():
+        if enc_name == "glfnet_mlp":
+            input_dim = 62*5 if ftype in ["de","psd"] else 62*10
+            encoders[ftype] = glfnet_mlp(out_dim=128, emb_dim=64, input_dim=input_dim).to(device)
+        elif enc_name == "shallownet":
+            encoders[ftype] = shallownet(out_dim=128,C=62,T=100 if ftype=="windows" else 400).to(device)
+        elif enc_name == "deepnet":
+            encoders[ftype] = deepnet(out_dim=128,C=62,T=400).to(device)
+        elif enc_name == "eegnet":
+            encoders[ftype] = eegnet(out_dim=128,C=62,T=100 if ftype=="windows" else 400).to(device)
+        elif enc_name == "tsconv":
+            encoders[ftype] = tsconv(out_dim=128,C=62,T=100 if ftype=="windows" else 400).to(device)
+        elif enc_name == "conformer":
+            encoders[ftype] = conformer(out_dim=128,C=62,T=100 if ftype=="windows" else 400).to(device)
+
+    fusion = FusionModel(encoders, num_classes=40).to(device)
+    fusion.load_state_dict(torch.load(f"/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints/fusion_checkpoint_{subj_name}.pt", map_location=device))
+    fusion.eval()
+
+    # load semantic predictor + scaler
+    predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
+    predictor.load_state_dict(torch.load(ckpt_path,map_location=device))
+    predictor.eval()
+    scaler = joblib.load(ckpt_path.replace(".pt","_scaler.pkl"))
+
+    # load EEG + BLIP embeddings
+    eeg_feats = load_subject_features(subj_name, feat_types)
+    text_emb = np.load("/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/BLIP_embeddings.npy").reshape(-1,77*768)
+
+    # take block 0 for testing
+    trial_count = min([eeg_feats[f].shape[2] for f in feat_types])
+    Xs, Ys = {ft: [] for ft in feat_types}, []
+    for c in range(40):
+        for k in range(trial_count):
+            for ft in feat_types:
+                Xs[ft].append(eeg_feats[ft][0,c,k])
+            Ys.append(text_emb[c*trial_count+k])
+    Xs = {ft: torch.tensor(np.array(Xs[ft]),dtype=torch.float32) for ft in feat_types}
+    Ys = torch.tensor(np.array(Ys),dtype=torch.float32).to(device)
+
+    proc = preprocess_for_fusion(Xs, feat_types)
+    with torch.no_grad():
+        Feat = fusion({ft: proc[ft].to(device) for ft in feat_types}, return_feats=True).cpu().numpy()
+    Feat = torch.tensor(scaler.transform(Feat),dtype=torch.float32).to(device)
+
+    with torch.no_grad():
+        pred = predictor(Feat)
+
+    # collapse checks
+    print("Prediction variance:", pred.var(dim=0).mean().item())
+    cos_preds = F.cosine_similarity(pred[0].unsqueeze(0), pred[1:], dim=-1)
+    print("Mean cosine similarity between predictions:", cos_preds.mean().item())
+    cos_gt = F.cosine_similarity(pred, Ys, dim=-1)
+    print("Mean cosine(pred, target):", cos_gt.mean().item())
+
 if __name__=="__main__":
-    bundle_path = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_EEG_bundle.npz"
-    ckpt_dir    = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
-
-    # Pick checkpoint
-    ckpts = [f for f in os.listdir(ckpt_dir) if f.endswith(".pt")]
-    for i,ck in enumerate(ckpts): print(f"[{i}] {ck}")
-    choice = int(input("\nSelect checkpoint index: ").strip())
-    ckpt_file = ckpts[choice]
-    ckpt_path = os.path.join(ckpt_dir, ckpt_file)
-
-    # Parse filename: semantic_sub1_windows_shallownet[_dual].pt
-    parts = ckpt_file.replace(".pt","").split("_")
-    subject_id, feature_type, encoder_choice = parts[1], parts[2], parts[3]
-    is_dual = "dual" in parts
-    print(f"\n[Config] Subject={subject_id}, Feature={feature_type}, Encoder={encoder_choice}, Dual={is_dual}")
-
-    # Load data
-    data = np.load(bundle_path, allow_pickle=True)
-    blip_emb = data["BLIP_embeddings"]   # (7,40,5,77,768)
-    eeg_dict = data["EEG_data"].item()
-
-    # Build encoder+predictor
-    encoders = {
-        "shallownet": shallownet,
-        "deepnet": deepnet,
-        "eegnet": eegnet,
-        "tsconv": tsconv,
-        "conformer": conformer
-    }
-    C,T = (62,100) if feature_type=="windows" else (62,400)
-    encoder = encoders[encoder_choice](out_dim=512,C=C,T=T).cuda()
-    predictor = DualHeadPredictor(input_dim=512).cuda() if is_dual else SemanticPredictor(input_dim=512).cuda()
-
-    # Load weights
-    ckpt = torch.load(ckpt_path,map_location="cuda")
-    encoder.load_state_dict(ckpt["encoder_state_dict"])
-    if is_dual:
-        predictor.load_state_dict(ckpt["model_state_dict"])
-    else:
-        predictor.load_state_dict(ckpt["semantic_state_dict"])
-    encoder.eval(); predictor.eval()
-
-    # Build BLIP prototypes (blocks 0–5)
-    prototypes = build_prototypes(blip_emb)
-
-    # Eval only this subject on block 6
-    feats = eeg_dict[subject_id]
-    eeg = feats[f"EEG_{feature_type}"][6]   # block 6 test
-    txt = blip_emb[6]
-
-    correct1=correct5=total=0
-    mse_vals=[]; cos_vals=[]; token_cos_vals=[]
-    pred_classes=[]; true_classes=[]
-    cls_correct=0
-
-    with tqdm(total=40*5, desc=f"Evaluating {subject_id}") as pbar:
-        for ci in range(40):
-            for cj in range(5):
-                if feature_type=="windows":
-                    windows = torch.tensor(eeg[ci,cj],dtype=torch.float32).unsqueeze(1).cuda()
-                    with torch.no_grad():
-                        enc = encoder(windows)
-                        if is_dual:
-                            sem, cls_logits = predictor(enc.mean(0,keepdim=True))
-                        else:
-                            sem = predictor(enc.mean(0,keepdim=True))
-                            cls_logits = None
-                        pred_emb = sem.view(77,768).cpu().numpy()
-                else:
-                    x = torch.tensor(eeg[ci,cj],dtype=torch.float32).unsqueeze(0).unsqueeze(0).cuda()
-                    with torch.no_grad():
-                        enc = encoder(x)
-                        if is_dual:
-                            sem, cls_logits = predictor(enc)
-                        else:
-                            sem = predictor(enc)
-                            cls_logits = None
-                        pred_emb = sem.view(77,768).cpu().numpy()
-
-                true_emb = txt[ci,cj]
-
-                # BLIP prototype classification
-                sims={cid:tokenwise_cosine(pred_emb,proto) for cid,proto in prototypes.items()}
-                ranked=sorted(sims.items(), key=lambda x:x[1], reverse=True)
-                top1,top5 = ranked[0][0],[cid for cid,_ in ranked[:5]]
-                correct1 += int(top1==ci); correct5 += int(ci in top5); total+=1
-                pred_classes.append(top1); true_classes.append(ci)
-
-                # Metrics
-                mse_vals.append(np.mean((pred_emb-true_emb)**2))
-                cos=np.dot(pred_emb.flatten(),true_emb.flatten())/(np.linalg.norm(pred_emb.flatten())*np.linalg.norm(true_emb.flatten())+1e-8)
-                cos_vals.append(cos)
-                a=pred_emb/(np.linalg.norm(pred_emb,axis=-1,keepdims=True)+1e-8)
-                b=true_emb/(np.linalg.norm(true_emb,axis=-1,keepdims=True)+1e-8)
-                token_cos_vals.append((a*b).sum(-1).mean())
-
-                # Direct class accuracy (dual-head only)
-                if is_dual and cls_logits is not None:
-                    pred_cls = cls_logits.argmax(dim=-1).item()
-                    if pred_cls == ci: cls_correct+=1
-
-                pbar.update(1)
-
-    print(f"\n[BLIP Prototype Eval]")
-    print(f"Top-1 Acc: {correct1/total:.4f}, Top-5 Acc: {correct5/total:.4f}")
-    print(f"Mean MSE: {np.mean(mse_vals):.6f}")
-    print(f"Mean Cosine: {np.mean(cos_vals):.4f}")
-    print(f"Mean Token-wise cosine: {np.mean(token_cos_vals):.4f}")
-
-    if is_dual:
-        print(f"\n[Direct Classification Eval]")
-        print(f"Classification Accuracy: {cls_correct/total:.4f}")
-
-    pc,tc = Counter(pred_classes), Counter(true_classes)
-    print("\nPredicted class distribution (via prototypes):")
-    for cls in range(40):
-        print(f"Class {cls}: {pc.get(cls,0)} ({pc.get(cls,0)/total:.2%})")
-    print("\nTrue class distribution:")
-    for cls in range(40):
-        print(f"Class {cls}: {tc.get(cls,0)} ({tc.get(cls,0)/total:.2%})")
+    main()
