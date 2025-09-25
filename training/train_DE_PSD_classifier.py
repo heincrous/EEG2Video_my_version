@@ -6,7 +6,6 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import classification_report
 from tqdm import tqdm
 
 # === Repo imports ===
@@ -41,7 +40,6 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
     for epoch in range(num_epochs):
         # ---- train ----
         model.train()
-        correct, total = 0, 0
         for X, y in train_loader:
             X, y = X.to(device), y.to(device)
             optimizer.zero_grad()
@@ -49,9 +47,6 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
             loss = criterion(out, y)
             loss.backward()
             optimizer.step()
-            correct += (out.argmax(1) == y).sum().item()
-            total += y.size(0)
-        train_acc = correct / total
 
         # ---- val ----
         model.eval()
@@ -72,17 +67,14 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
     model.load_state_dict(best_state)
     model.eval()
     top1_list, top5_list = [], []
-    all_preds, all_labels = [], []
     with torch.no_grad():
         for X, y in test_loader:
             X, y = X.to(device), y.to(device)
             out = model(X)
             accs = topk_accuracy(out, y, topk=(1, 5))
             top1_list.append(accs[0]); top5_list.append(accs[1])
-            all_preds.extend(out.argmax(1).cpu().numpy())
-            all_labels.extend(y.cpu().numpy())
 
-    return np.mean(top1_list), np.mean(top5_list), np.array(all_preds), np.array(all_labels)
+    return np.mean(top1_list), np.mean(top5_list)
 
 # -------------------------------------------------
 # Helper to build loaders
@@ -145,10 +137,9 @@ def run_variation(mode, feat_type, split_mode, subj_name, drive_root, device):
         train_x, val_x, test_x = np.array(train_x), np.array(val_x), np.array(test_x)
         train_y, val_y, test_y = np.array(train_y), np.array(val_y), np.array(test_y)
         train_loader, val_loader, test_loader = build_loaders(train_x, train_y, val_x, val_y, test_x, test_y)
-
         input_dim = data.shape[-1] * data.shape[-2]
         model = glfnet_mlp(out_dim=40, emb_dim=64, input_dim=input_dim).to(device)
-        top1, top5, preds, labels = train_and_eval(model, train_loader, val_loader, test_loader, device)
+        top1, top5 = train_and_eval(model, train_loader, val_loader, test_loader, device)
         return top1, top5
 
     else:  # cross-validation
@@ -170,7 +161,7 @@ def run_variation(mode, feat_type, split_mode, subj_name, drive_root, device):
             train_loader, val_loader, test_loader = build_loaders(train_x, train_y, val_x, val_y, test_x, test_y)
             input_dim = data.shape[-1] * data.shape[-2]
             model = glfnet_mlp(out_dim=40, emb_dim=64, input_dim=input_dim).to(device)
-            top1, top5, _, _ = train_and_eval(model, train_loader, val_loader, test_loader, device)
+            top1, top5 = train_and_eval(model, train_loader, val_loader, test_loader, device)
             top1_scores.append(top1); top5_scores.append(top5)
         return np.mean(top1_scores), np.mean(top5_scores)
 
