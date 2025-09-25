@@ -1,5 +1,5 @@
 # ==========================================
-# train_semantic_strong_cls.py
+# train_semantic_strong_cls.py (final update)
 # ==========================================
 import os, sys, json, numpy as np, torch
 import torch.nn as nn
@@ -55,7 +55,7 @@ def load_fusion(subj_name, device):
             encoders[ftype] = conformer(out_dim=128, C=62, T=100 if ftype=="windows" else 400).to(device)
     fusion = FusionModel(encoders, num_classes=40).to(device)
     fusion.load_state_dict(torch.load(ckpt_path, map_location=device))
-    for _, p in fusion.encoders.named_parameters():  # freeze encoders
+    for _, p in fusion.encoders.named_parameters():
         p.requires_grad = False
     return fusion, feat_types
 
@@ -150,29 +150,26 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
     os.makedirs(save_dir, exist_ok=True)
 
     trial_count = min([eeg_feats[ft].shape[2] for ft in feat_types])
-    prototypes = []
-    for c in range(40):
-        inds = [b*40*trial_count + c*trial_count + k for b in range(7) for k in range(trial_count)]
-        proto = text_emb[inds].mean(0)
-        prototypes.append(proto)
-    prototypes = torch.tensor(np.array(prototypes), dtype=torch.float32).to(device)
+
+    # class prototypes
+    prototypes = text_emb.mean(axis=(0,2))  # (40, 77*768)
+    prototypes = torch.tensor(prototypes, dtype=torch.float32).to(device)
 
     ce_loss = nn.CrossEntropyLoss()
     best_global_loss, best_ckpt_path = float("inf"), None
 
-    fold_bar = tqdm(range(7), desc="Cross-validation folds")
-    for test_block in fold_bar:
+    for test_block in tqdm(range(7), desc="Cross-validation folds", position=0):
         val_block = (test_block - 1) % 7
         train_blocks = [i for i in range(7) if i not in [test_block,val_block]]
 
-        # prepare data
         Xs, Ys, Ls = {ft: {"train": [], "val": [], "test": []} for ft in feat_types}, {"train": [], "val": [], "test": []}, {"train": [], "val": [], "test": []}
         for split, blocks in [("train", train_blocks), ("val", [val_block]), ("test", [test_block])]:
             for b in blocks:
                 for c in range(40):
                     for k in range(trial_count):
-                        for ft in feat_types: Xs[ft][split].append(eeg_feats[ft][b,c,k])
-                        Ys[split].append(prototypes[c].cpu().numpy())
+                        for ft in feat_types:
+                            Xs[ft][split].append(eeg_feats[ft][b,c,k])
+                        Ys[split].append(text_emb[b,c,k])
                         Ls[split].append(c)
 
         X_train = {ft: torch.tensor(np.array(Xs[ft]["train"]),dtype=torch.float32) for ft in feat_types}
@@ -209,8 +206,7 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
         best_val_loss, best_state = float("inf"), None
         ckpt_path = os.path.join(save_dir, f"prototype_checkpoint_{subj_name}.pt")
 
-        epoch_bar = tqdm(range(50), desc=f"Fold {test_block} training", leave=False)
-        for epoch in epoch_bar:
+        for epoch in tqdm(range(50), desc=f"Fold {test_block}", leave=False, position=1):
             predictor.train(); fusion.classifier.train()
             for eeg, proto, label in train_loader:
                 eeg, proto, label = eeg.to(device), proto.to(device), label.to(device)
@@ -219,6 +215,7 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
                 loss = lambda_sem*cosine_loss(pred_sem, proto) + lambda_cls*ce_loss(pred_cls, label) + lambda_ctr*contrastive_loss(pred_sem, proto, prototypes)
                 loss.backward(); optimizer.step()
 
+            # validation
             predictor.eval(); fusion.classifier.eval()
             val_loss = 0
             with torch.no_grad():
@@ -227,7 +224,6 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
                     pred_sem = predictor(eeg); pred_cls = fusion.classifier(eeg)
                     val_loss += (lambda_sem*cosine_loss(pred_sem, proto) + lambda_cls*ce_loss(pred_cls, label)).item()
             avg_val = val_loss/len(val_loader)
-            epoch_bar.set_postfix(val_loss=avg_val)
 
             if avg_val < best_val_loss:
                 best_val_loss, best_state = avg_val, {
@@ -237,6 +233,23 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
                 }
                 torch.save(best_state, ckpt_path)
                 joblib.dump(scaler, ckpt_path.replace(".pt","_scaler.pkl"))
+
+        # reload best state and evaluate on test
+        state = torch.load(ckpt_path, map_location=device)
+        predictor.load_state_dict(state["predictor"])
+        fusion.classifier.load_state_dict(state["classifier"])
+        predictor.eval(); fusion.classifier.eval()
+        scaler = joblib.load(ckpt_path.replace(".pt","_scaler.pkl"))
+
+        test_loss = 0
+        with torch.no_grad():
+            for eeg, proto, label in test_loader:
+                eeg, proto, label = eeg.to(device), proto.to(device), label.to(device)
+                pred_sem = predictor(eeg); pred_cls = fusion.classifier(eeg)
+                test_loss += (lambda_sem*cosine_loss(pred_sem, proto) + lambda_cls*ce_loss(pred_cls, label)).item()
+        avg_test = test_loss/len(test_loader)
+
+        print(f"Fold {test_block}: best val_loss={best_val_loss:.4f}, test_loss={avg_test:.4f}")
 
         if best_state and best_val_loss < best_global_loss:
             best_global_loss, best_ckpt_path = best_val_loss, ckpt_path
@@ -259,7 +272,10 @@ def main():
 
     fusion, feat_types = load_fusion(subj_name, device)
     eeg_feats = load_subject_features(subj_name, feat_types)
-    text_emb = np.load("/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/BLIP_embeddings.npy").reshape(-1,77*768)
+
+    # load BLIP embeddings in [7,40,5,77*768]
+    text_emb = np.load("/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/BLIP_embeddings.npy")
+
     run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
            lambda_cls=1.0, lambda_sem=0.2, lambda_ctr=0.05)
 
