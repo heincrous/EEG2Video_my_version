@@ -139,13 +139,17 @@ def run_cv(subj_name, drive_root, device, feat_types, encoders):
                        "test":{f:[] for f in feat_types}}
             y_dicts = {"train":[], "val":[], "test":[]}
 
+            trial_count = min([datas[f].shape[2] for f in feat_types])
+
             for b in train_blocks:
                 for c in range(40):
-                    for k in range(datas[feat_types[0]].shape[2]):
-                        for f in feat_types: X_dicts["train"][f].append(datas[f][b,c,k])
+                    for k in range(trial_count):
+                        for f in feat_types:
+                            X_dicts["train"][f].append(datas[f][b,c,k])
                         y_dicts["train"].append(c)
+
             for c in range(40):
-                for k in range(datas[feat_types[0]].shape[2]):
+                for k in range(trial_count):
                     for f in feat_types:
                         X_dicts["val"][f].append(datas[f][val_block,c,k])
                         X_dicts["test"][f].append(datas[f][test_block,c,k])
