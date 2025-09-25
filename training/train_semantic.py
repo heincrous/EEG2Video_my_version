@@ -195,6 +195,12 @@ if __name__ == "__main__":
 
     train_set = EEGTextDataset(train_eeg, train_txt, fit_scaler=True)
     test_set  = EEGTextDataset(test_eeg, test_txt, scaler=train_set.scaler, fit_scaler=False)
+
+    # === Diagnostics: check scaling ===
+    print("\n[Scaler diagnostics]")
+    print(f"Train EEG scaled mean: {train_set.eeg.mean():.4f}, std: {train_set.eeg.std():.4f}")
+    print(f"Test EEG scaled mean: {test_set.eeg.mean():.4f}, std: {test_set.eeg.std():.4f}")
+
     train_loader = DataLoader(train_set, batch_size=32, shuffle=True, num_workers=2, pin_memory=True)
 
     input_dim = train_set.eeg.shape[1] * np.prod(train_set.eeg.shape[2:])
