@@ -3,17 +3,14 @@
 # ==========================================
 
 import os
-import sys
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 
-# === Repo imports ===
-repo_root = "/content/EEG2Video_my_version"
-sys.path.append(repo_root)
-from core_files.models import shallownet, deepnet, eegnet, tsconv, conformer
+# === Imports for encoders ===
+from braindecode.models import ShallowFBCSPNet, Deep4Net, EEGNetv4
 
 # ==========================================
 # Semantic Predictor (MLP)
@@ -56,7 +53,8 @@ class EEGTextDataset(Dataset):
                             X.append(eeg_clip[w])         # (62,100)
                             Y.append(blip_clip.flatten()) # (77*768,)
 
-        self.X = torch.tensor(np.array(X), dtype=torch.float32).unsqueeze(1)  # (N,1,62,100)
+        # final tensor: (N,62,100)
+        self.X = torch.tensor(np.array(X), dtype=torch.float32)
         self.Y = torch.tensor(np.array(Y), dtype=torch.float32)
 
     def __len__(self):
@@ -75,37 +73,47 @@ def main():
     mode_choice = input("Select mode (train/dry): ").strip()
 
     encoders = {
-        "shallownet": shallownet,
-        "deepnet": deepnet,
-        "eegnet": eegnet,
-        "tsconv": tsconv,
-        "conformer": conformer
+        "shallownet": ShallowFBCSPNet,
+        "deepnet": Deep4Net,
+        "eegnet": EEGNetv4,
     }
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if mode_choice == "dry":
-        # Dummy EEG input: (batch=1, channel=1, C=62, T=100)
-        eeg = torch.randn(1, 1, 62, 100).to(device)
+        eeg = torch.randn(1, 62, 100).to(device)  # dummy input (B,C,T)
 
         for name, EncoderClass in encoders.items():
-            encoder = EncoderClass(out_dim=512, C=62, T=100).to(device)
+            encoder = EncoderClass(
+                n_chans=62,
+                n_outputs=512,
+                input_window_samples=100,
+                final_conv_length="auto"
+            ).to(device)
             semantic = SemanticPredictor(input_dim=512).to(device)
-            out = semantic(encoder(eeg))
-            print(f"[{name}] EEG input: {eeg.shape} -> Predicted output: {out.shape}")
 
-        print("Dry run completed for all encoders")
+            enc_out = encoder(eeg)
+            out = semantic(enc_out)
+
+            print(f"[{name}] EEG input: {eeg.shape} -> Encoder out: {enc_out.shape} -> Predicted out: {out.shape}")
+
+        print("Dry run completed for ShallowNet, DeepNet, EEGNet")
         return
 
     if mode_choice == "train":
-        encoder_choice = input("Select encoder (shallownet, deepnet, eegnet, tsconv, conformer): ").strip()
+        encoder_choice = input("Select encoder (shallownet, deepnet, eegnet): ").strip()
         epochs_choice  = int(input("Enter number of epochs: "))
 
         if encoder_choice not in encoders:
             raise ValueError("Invalid encoder choice")
 
         EncoderClass = encoders[encoder_choice]
-        encoder = EncoderClass(out_dim=512, C=62, T=100).to(device)
+        encoder = EncoderClass(
+            n_chans=62,
+            n_outputs=512,
+            input_window_samples=100,
+            final_conv_length="auto"
+        ).to(device)
         semantic = SemanticPredictor(input_dim=512).to(device)
 
         train_ds = EEGTextDataset(bundle_file, train=True)
@@ -122,7 +130,8 @@ def main():
             for eeg, text in train_loader:
                 eeg, text = eeg.to(device), text.to(device)
                 optimizer.zero_grad()
-                pred = semantic(encoder(eeg))
+                enc_out = encoder(eeg)
+                pred = semantic(enc_out)
                 loss = criterion(pred, text)
                 loss.backward()
                 optimizer.step()
