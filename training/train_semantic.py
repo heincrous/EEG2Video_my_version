@@ -138,3 +138,5 @@ def main():
             'final_loss': avg_loss
         }, ckpt_path)
         print(f"Final checkpoint saved to {ckpt_path}")
+
+if __name__ == "__main__": main()
