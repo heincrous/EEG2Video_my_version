@@ -42,7 +42,7 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
         # ---- train ----
         model.train()
         correct, total = 0, 0
-        for X, y in train_loader:
+        for X, y in tqdm(train_loader, desc=f"Epoch {epoch} [train]", leave=False):
             X, y = X.to(device), y.to(device)
             optimizer.zero_grad()
             out = model(X)
@@ -57,7 +57,7 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
         model.eval()
         val_correct, val_total = 0, 0
         with torch.no_grad():
-            for X, y in val_loader:
+            for X, y in tqdm(val_loader, desc=f"Epoch {epoch} [val]", leave=False):
                 X, y = X.to(device), y.to(device)
                 out = model(X)
                 val_correct += (out.argmax(1) == y).sum().item()
@@ -77,7 +77,7 @@ def train_and_eval(model, train_loader, val_loader, test_loader, device, num_epo
     top1_list, top5_list = [], []
     all_preds, all_labels = [], []
     with torch.no_grad():
-        for X, y in test_loader:
+        for X, y in tqdm(test_loader, desc="Testing", leave=True):
             X, y = X.to(device), y.to(device)
             out = model(X)
             accs = topk_accuracy(out, y, topk=(1, 5))
