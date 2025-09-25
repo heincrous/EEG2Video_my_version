@@ -1,236 +1,195 @@
+# ==========================================
+# train_semantic_kfold_collapsecheck.py
+# ==========================================
+import os, sys
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch import Tensor
-from einops import rearrange
-from einops.layers.torch import Rearrange
-import math
+import torch.optim as optim
+from torch.utils.data import DataLoader, Dataset
 
-# ================================
-# ShallowNet
-# ================================
-class shallownet(nn.Module):
-    def __init__(self, out_dim=512, C=62, T=100):
+# === Repo imports ===
+repo_root = "/content/EEG2Video_my_version"
+sys.path.append(repo_root)
+from core_files.models import eegnet, conformer, glfnet_mlp
+
+# -------------------------------------------------
+# Fusion model (fixed 4 encoders)
+# -------------------------------------------------
+class FusionModel(nn.Module):
+    def __init__(self):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(1, 40, (1, 25)),
-            nn.Conv2d(40, 40, (C, 1)),
-            nn.BatchNorm2d(40),
-            nn.ELU(),
-            nn.AvgPool2d((1, 51), (1, 5)),
-            nn.Dropout(0.5),
-        )
+        self.encoders = nn.ModuleDict({
+            "de": glfnet_mlp(out_dim=128, emb_dim=64, input_dim=62*5),
+            "psd": glfnet_mlp(out_dim=128, emb_dim=64, input_dim=62*5),
+            "windows": eegnet(out_dim=128, C=62, T=100),
+            "segments": conformer(out_dim=128, C=62, T=400),
+        })
+        self.total_dim = 128*4
+        self.classifier = nn.Linear(self.total_dim, 40)
+    def forward(self, inputs, return_feats=False):
+        feats = [enc(inputs[name]) for name, enc in self.encoders.items()]
+        fused = torch.cat(feats, dim=-1)
+        if return_feats:
+            return fused
+        return self.classifier(fused)
+
+# -------------------------------------------------
+# Semantic predictor
+# -------------------------------------------------
+class SemanticPredictor(nn.Module):
+    def __init__(self, input_dim=512, hidden_dims=[1024, 2048], out_dim=77*768):
+        super().__init__()
+        layers = []
+        prev = input_dim
+        for h in hidden_dims:
+            layers += [nn.Linear(prev, h), nn.ReLU(), nn.Dropout(0.2)]
+            prev = h
+        layers.append(nn.Linear(prev, out_dim))
+        self.net = nn.Sequential(*layers)
+    def forward(self, x): return self.net(x)
+
+# -------------------------------------------------
+# Dataset
+# -------------------------------------------------
+class EEG2BLIPDataset(Dataset):
+    def __init__(self, Xs, blip_embs):
+        self.Xs, self.blip_embs = Xs, blip_embs
+        self.keys = list(Xs.keys())
+    def __len__(self): return len(self.blip_embs)
+    def __getitem__(self, idx):
+        out = {}
+        for k in self.keys:
+            x = torch.tensor(self.Xs[k][idx], dtype=torch.float32)
+            if k in ["windows","segments"]:
+                x = x.unsqueeze(0)  # (1,62,T)
+            out[k] = x
+        target = torch.tensor(self.blip_embs[idx], dtype=torch.float32)
+        return out, target
+
+# -------------------------------------------------
+# Training one fold (with collapse check)
+# -------------------------------------------------
+def train_one_fold(fusion, predictor, train_loader, val_loader, device, num_epochs=30, lr=1e-4):
+    criterion = nn.MSELoss()
+    optimizer = optim.AdamW(predictor.parameters(), lr=lr)
+    best_val = 1e9
+
+    for epoch in range(num_epochs):
+        fusion.eval(); predictor.train()
+        for Xs, blip in train_loader:
+            Xs = {k: v.to(device) for k,v in Xs.items()}
+            blip = blip.to(device)
+            with torch.no_grad():
+                feats = fusion(Xs, return_feats=True)
+            pred = predictor(feats)
+            loss = criterion(pred, blip)
+            optimizer.zero_grad(); loss.backward(); optimizer.step()
+
+        # --- collapse check on val set ---
+        predictor.eval(); val_loss = 0; count = 0
+        all_preds = []
         with torch.no_grad():
-            feat_dim = self.net(torch.zeros(1,1,C,T)).view(1,-1).size(1)
-        self.out = nn.Linear(feat_dim, out_dim)
+            for Xs, blip in val_loader:
+                Xs = {k: v.to(device) for k,v in Xs.items()}
+                blip = blip.to(device)
+                feats = fusion(Xs, return_feats=True)
+                pred = predictor(feats)
+                val_loss += criterion(pred, blip).item(); count += 1
+                all_preds.append(pred.cpu())
+        val_loss /= max(1,count)
 
-    def forward(self, x):
-        x = self.net(x)
-        return self.out(x.view(x.size(0), -1))
+        preds = torch.cat(all_preds, dim=0)  # (N, 59136)
+        var_per_dim = preds.var(dim=0).mean().item()
+        var_across_samples = preds.var(dim=1).mean().item()
 
-# ================================
-# DeepNet
-# ================================
-class deepnet(nn.Module):
-    def __init__(self, out_dim=512, C=62, T=100):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(1, 25, (1, 10)),
-            nn.Conv2d(25, 25, (C, 1)),
-            nn.BatchNorm2d(25), nn.ELU(),
-            nn.MaxPool2d((1, 2)), nn.Dropout(0.5),
+        print(f"Epoch {epoch+1}/{num_epochs}, Val Loss {val_loss:.4f}, "
+              f"PredVar(dim) {var_per_dim:.6f}, PredVar(samples) {var_across_samples:.6f}")
 
-            nn.Conv2d(25, 50, (1, 10)),
-            nn.BatchNorm2d(50), nn.ELU(),
-            nn.MaxPool2d((1, 2)), nn.Dropout(0.5),
+        if val_loss < best_val:
+            best_val = val_loss
 
-            nn.Conv2d(50, 100, (1, 10)),
-            nn.BatchNorm2d(100), nn.ELU(),
-            nn.MaxPool2d((1, 2)), nn.Dropout(0.5),
+    return best_val
 
-            nn.Conv2d(100, 200, (1, 10)),
-            nn.BatchNorm2d(200), nn.ELU(),
-            nn.MaxPool2d((1, 2)), nn.Dropout(0.5),
-        )
+# -------------------------------------------------
+# K-fold CV
+# -------------------------------------------------
+def run_cv(subj_name, drive_root, device):
+    # === Load EEG features ===
+    de = np.load(os.path.join(drive_root,"EEG_DE",f"{subj_name}.npy"))        # (7,40,5,62,5)
+    psd = np.load(os.path.join(drive_root,"EEG_PSD",f"{subj_name}.npy"))      # (7,40,5,62,5)
+    windows = np.load(os.path.join(drive_root,"EEG_windows",f"{subj_name}.npy"))    # (7,40,5,7,62,100)
+    segments = np.load(os.path.join(drive_root,"EEG_segments",f"{subj_name}.npy"))  # (7,40,5,62,400)
+    blip = np.load(os.path.join(drive_root,"BLIP_embeddings","BLIP_embeddings.npy")) # (7,40,5,77,768)
+
+    blip = blip.reshape(7,40,5,-1)  # (7,40,5,59136)
+
+    all_val_losses, all_test_losses = [], []
+
+    for test_block in range(7):
+        val_block = (test_block-1)%7
+        train_blocks = [i for i in range(7) if i not in [test_block,val_block]]
+
+        def collect(blocks):
+            Xs = {"de":[], "psd":[], "windows":[], "segments":[]}
+            Ys = []
+            for b in blocks:
+                for c in range(40):
+                    for k in range(5):
+                        Xs["de"].append(de[b,c,k])
+                        Xs["psd"].append(psd[b,c,k])
+                        Xs["windows"].append(windows[b,c,k].mean(0)) # (7,62,100) → (62,100)
+                        Xs["segments"].append(segments[b,c,k])
+                        Ys.append(blip[b,c,k])
+            Xs = {k: np.array(v) for k,v in Xs.items()}
+            Ys = np.array(Ys)
+            return Xs, Ys
+
+        X_train, Y_train = collect(train_blocks)
+        X_val, Y_val = collect([val_block])
+        X_test, Y_test = collect([test_block])
+
+        train_loader = DataLoader(EEG2BLIPDataset(X_train,Y_train), batch_size=32, shuffle=True)
+        val_loader   = DataLoader(EEG2BLIPDataset(X_val,Y_val), batch_size=32)
+        test_loader  = DataLoader(EEG2BLIPDataset(X_test,Y_test), batch_size=32)
+
+        # load fusion model checkpoint
+        fusion = FusionModel().to(device)
+        ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints"
+        ckpt_path = os.path.join(ckpt_dir, f"fusion_checkpoint_{subj_name}.pt")
+        fusion.load_state_dict(torch.load(ckpt_path, map_location=device))
+        for p in fusion.parameters(): p.requires_grad = False
+
+        predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
+        val_loss = train_one_fold(fusion, predictor, train_loader, val_loader, device)
+
+        # --- test evaluation ---
+        criterion = nn.MSELoss()
+        predictor.eval(); test_loss = 0; count = 0
         with torch.no_grad():
-            feat_dim = self.net(torch.zeros(1,1,C,T)).view(1,-1).size(1)
-        self.out = nn.Linear(feat_dim, out_dim)
+            for Xs, blip in test_loader:
+                Xs = {k: v.to(device) for k,v in Xs.items()}
+                blip = blip.to(device)
+                feats = fusion(Xs, return_feats=True)
+                pred = predictor(feats)
+                test_loss += criterion(pred, blip).item(); count += 1
+        test_loss /= max(1,count)
 
-    def forward(self, x):
-        x = self.net(x)
-        return self.out(x.view(x.size(0), -1))
+        all_val_losses.append(val_loss); all_test_losses.append(test_loss)
+        print(f"Fold {test_block+1}/7: Val {val_loss:.4f}, Test {test_loss:.4f}")
 
-# ================================
-# EEGNet
-# ================================
-class eegnet(nn.Module):
-    def __init__(self, out_dim=512, C=62, T=100):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(1, 8, (1, 64)), nn.BatchNorm2d(8),
-            nn.Conv2d(8, 16, (C, 1)), nn.BatchNorm2d(16), nn.ELU(),
-            nn.AvgPool2d((1, 2)), nn.Dropout(0.5),
+    print("\n=== Final Results ===")
+    print(f"Avg Val Loss:  {np.mean(all_val_losses):.4f}")
+    print(f"Avg Test Loss: {np.mean(all_test_losses):.4f}")
 
-            nn.Conv2d(16, 16, (1, 16)), nn.BatchNorm2d(16), nn.ELU(),
-            nn.AvgPool2d((1, 2)), nn.Dropout2d(0.5),
-        )
-        with torch.no_grad():
-            feat_dim = self.net(torch.zeros(1,1,C,T)).view(1,-1).size(1)
-        self.out = nn.Linear(feat_dim, out_dim)
+# -------------------------------------------------
+# Main
+# -------------------------------------------------
+def main():
+    drive_root="/content/drive/MyDrive/EEG2Video_data/processed"
+    device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    subj_name=input("Enter subject name: ").strip()
+    run_cv(subj_name, drive_root, device)
 
-    def forward(self, x):
-        x = self.net(x)
-        return self.out(x.view(x.size(0), -1))
-
-# ================================
-# TSConv
-# ================================
-class tsconv(nn.Module):
-    def __init__(self, out_dim=512, C=62, T=100):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(1, 40, (1, 25)),
-            nn.AvgPool2d((1, 51), (1, 5)),
-            nn.BatchNorm2d(40), nn.ELU(),
-            nn.Conv2d(40, 40, (C, 1)),
-            nn.BatchNorm2d(40), nn.ELU(),
-            nn.Dropout(0.5),
-        )
-        with torch.no_grad():
-            feat_dim = self.net(torch.zeros(1,1,C,T)).view(1,-1).size(1)
-        self.out = nn.Linear(feat_dim, out_dim)
-
-    def forward(self, x):
-        x = self.net(x)
-        return self.out(x.view(x.size(0), -1))
-
-# ================================
-# Conformer
-# ================================
-class MultiHeadAttention(nn.Module):
-    def __init__(self, emb_size, num_heads, dropout):
-        super().__init__()
-        self.emb_size = emb_size
-        self.num_heads = num_heads
-        self.keys = nn.Linear(emb_size, emb_size)
-        self.queries = nn.Linear(emb_size, emb_size)
-        self.values = nn.Linear(emb_size, emb_size)
-        self.att_drop = nn.Dropout(dropout)
-        self.projection = nn.Linear(emb_size, emb_size)
-
-    def forward(self, x: Tensor) -> Tensor:
-        q = rearrange(self.queries(x), "b n (h d) -> b h n d", h=self.num_heads)
-        k = rearrange(self.keys(x),    "b n (h d) -> b h n d", h=self.num_heads)
-        v = rearrange(self.values(x),  "b n (h d) -> b h n d", h=self.num_heads)
-        energy = torch.einsum('bhqd, bhkd -> bhqk', q, k)
-        att = F.softmax(energy / math.sqrt(self.emb_size), dim=-1)
-        att = self.att_drop(att)
-        out = torch.einsum('bhal, bhlv -> bhav', att, v)
-        out = rearrange(out, "b h n d -> b n (h d)")
-        return self.projection(out)
-
-class ResidualAdd(nn.Module):
-    def __init__(self, fn): super().__init__(); self.fn = fn
-    def forward(self, x): return self.fn(x) + x
-
-class FeedForwardBlock(nn.Sequential):
-    def __init__(self, emb_size, expansion, drop_p):
-        super().__init__(
-            nn.Linear(emb_size, expansion*emb_size),
-            nn.GELU(),
-            nn.Dropout(drop_p),
-            nn.Linear(expansion*emb_size, emb_size),
-        )
-
-class TransformerEncoderBlock(nn.Sequential):
-    def __init__(self, emb_size, num_heads=10, drop_p=0.5, exp=4):
-        super().__init__(
-            ResidualAdd(nn.Sequential(
-                nn.LayerNorm(emb_size),
-                MultiHeadAttention(emb_size, num_heads, drop_p),
-                nn.Dropout(drop_p)
-            )),
-            ResidualAdd(nn.Sequential(
-                nn.LayerNorm(emb_size),
-                FeedForwardBlock(emb_size, exp, drop_p),
-                nn.Dropout(drop_p)
-            ))
-        )
-
-class TransformerEncoder(nn.Sequential):
-    def __init__(self, depth, emb_size):
-        super().__init__(*[
-            TransformerEncoderBlock(emb_size) for _ in range(depth)
-        ])
-
-class PatchEmbedding(nn.Module):
-    def __init__(self, emb_size=40, C=62):
-        super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(1, 40, (1, 25)),
-            nn.Conv2d(40, 40, (C, 1)),
-            nn.BatchNorm2d(40),
-            nn.ELU(),
-            nn.AvgPool2d((1, 75), (1, 15)),
-            nn.Dropout(0.5),
-        )
-        self.proj = nn.Conv2d(40, emb_size, (1,1))
-
-    def forward(self, x):
-        x = self.conv(x)                        # (B,40,H,W)
-        x = self.proj(x)                        # (B,E,H,W)
-        return rearrange(x, "b e h w -> b (h w) e")
-
-class conformer(nn.Module):
-    def __init__(self, out_dim=512, C=62, T=100, emb_size=40, depth=3):
-        super().__init__()
-        self.patch = PatchEmbedding(emb_size, C)
-        self.encoder = TransformerEncoder(depth, emb_size)
-        with torch.no_grad():
-            feat_dim = self.patch(torch.zeros(1,1,C,T))
-            feat_dim = self.encoder(feat_dim).view(1,-1).size(1)
-        self.fc = nn.Linear(feat_dim, out_dim)
-
-    def forward(self, x):
-        x = self.patch(x)
-        x = self.encoder(x)
-        return self.fc(x.view(x.size(0), -1))
-
-# ================================
-# GLMNet-MLP (fixed to use input_dim)
-# ================================
-class mlpnet(nn.Module):
-    def __init__(self, out_dim, input_dim):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(input_dim, 512),
-            nn.GELU(),
-            nn.Linear(512, 256),
-            nn.GELU(),
-            nn.Linear(256, out_dim)
-        )
-    def forward(self, x):   # x: (batch, C, features_per_channel)
-        return self.net(x)
-
-class glfnet_mlp(nn.Module):
-    def __init__(self, out_dim=40, emb_dim=64, input_dim=310):
-        super().__init__()
-        # infer features per channel from total input size
-        f_per_ch = input_dim // 62
-
-        # global branch: all 62 channels
-        self.globalnet = mlpnet(emb_dim, 62 * f_per_ch)
-
-        # local branch: occipital channels only (12 channels)
-        self.occipital_index = list(range(50, 62))
-        self.occipital_localnet = mlpnet(emb_dim, 12 * f_per_ch)
-
-        # combine global + local features
-        self.out = nn.Linear(emb_dim * 2, out_dim)
-
-    def forward(self, x):   # x: (batch, 62, f_per_ch)
-        global_feature = self.globalnet(x)
-        occipital_x = x[:, self.occipital_index, :]
-        occipital_feature = self.occipital_localnet(occipital_x)
-        return self.out(torch.cat((global_feature, occipital_feature), dim=1))
+if __name__=="__main__":
+    main()
