@@ -11,7 +11,7 @@ import math
 # ================================
 class shallownet(nn.Module):
     def __init__(self, out_dim, C=62, T=100):
-        super(shallownet, self).__init__()
+        super().__init__()
         self.net = nn.Sequential(
             nn.Conv2d(1, 40, (1, 25), (1, 1)),
             nn.Conv2d(40, 40, (C, 1), (1, 1)),
@@ -20,106 +20,99 @@ class shallownet(nn.Module):
             nn.AvgPool2d((1, 51), (1, 5)),
             nn.Dropout(0.5),
         )
-        self.out = nn.Linear(1040 * (T // 100), out_dim)
+        # probe feature dim
+        with torch.no_grad():
+            dummy = torch.zeros(1,1,C,T)
+            feat = self.net(dummy)
+            feat_dim = feat.view(1,-1).size(1)
+        self.out = nn.Linear(feat_dim, out_dim)
 
-    def forward(self, x):               # input: (B,1,C,T)
+    def forward(self, x):
         x = self.net(x)
         x = x.view(x.size(0), -1)
-        x = self.out(x)
-        return x
+        return self.out(x)
 
 # ================================
 # DeepNet
 # ================================
 class deepnet(nn.Module):
     def __init__(self, out_dim, C=62, T=100):
-        super(deepnet, self).__init__()
+        super().__init__()
         self.net = nn.Sequential(
             nn.Conv2d(1, 25, (1, 10), (1, 1)),
             nn.Conv2d(25, 25, (C, 1), (1, 1)),
-            nn.BatchNorm2d(25),
-            nn.ELU(),
-            nn.MaxPool2d((1, 2), (1, 2)),
-            nn.Dropout(0.5),
+            nn.BatchNorm2d(25), nn.ELU(),
+            nn.MaxPool2d((1, 2), (1, 2)), nn.Dropout(0.5),
 
             nn.Conv2d(25, 50, (1, 10), (1, 1)),
-            nn.BatchNorm2d(50),
-            nn.ELU(),
-            nn.MaxPool2d((1, 2), (1, 2)),
-            nn.Dropout(0.5),
+            nn.BatchNorm2d(50), nn.ELU(),
+            nn.MaxPool2d((1, 2), (1, 2)), nn.Dropout(0.5),
 
             nn.Conv2d(50, 100, (1, 10), (1, 1)),
-            nn.BatchNorm2d(100),
-            nn.ELU(),
-            nn.MaxPool2d((1, 2), (1, 2)),
-            nn.Dropout(0.5),
+            nn.BatchNorm2d(100), nn.ELU(),
+            nn.MaxPool2d((1, 2), (1, 2)), nn.Dropout(0.5),
 
             nn.Conv2d(100, 200, (1, 10), (1, 1)),
-            nn.BatchNorm2d(200),
-            nn.ELU(),
-            nn.MaxPool2d((1, 2), (1, 2)),
-            nn.Dropout(0.5),
+            nn.BatchNorm2d(200), nn.ELU(),
+            nn.MaxPool2d((1, 2), (1, 2)), nn.Dropout(0.5),
         )
-        self.out = nn.Linear(800 * (T // 100), out_dim)
+        with torch.no_grad():
+            dummy = torch.zeros(1,1,C,T)
+            feat_dim = self.net(dummy).view(1,-1).size(1)
+        self.out = nn.Linear(feat_dim, out_dim)
 
-    def forward(self, x):               # input: (B,1,C,T)
+    def forward(self, x):
         x = self.net(x)
         x = x.view(x.size(0), -1)
-        x = self.out(x)
-        return x
+        return self.out(x)
 
 # ================================
 # EEGNet
 # ================================
 class eegnet(nn.Module):
     def __init__(self, out_dim, C=62, T=100):
-        super(eegnet, self).__init__()
+        super().__init__()
         self.net = nn.Sequential(
-            nn.Conv2d(1, 8, (1, 64), (1, 1)),
-            nn.BatchNorm2d(8),
-            nn.Conv2d(8, 16, (C, 1), (1, 1)),
-            nn.BatchNorm2d(16),
-            nn.ELU(),
-            nn.AvgPool2d((1, 2), (1, 2)),
-            nn.Dropout(0.5),
+            nn.Conv2d(1, 8, (1, 64), (1, 1)), nn.BatchNorm2d(8),
+            nn.Conv2d(8, 16, (C, 1), (1, 1)), nn.BatchNorm2d(16), nn.ELU(),
+            nn.AvgPool2d((1, 2), (1, 2)), nn.Dropout(0.5),
 
-            nn.Conv2d(16, 16, (1, 16), (1, 1)),
-            nn.BatchNorm2d(16),
-            nn.ELU(),
-            nn.AvgPool2d((1, 2), (1, 2)),
-            nn.Dropout2d(0.5),
+            nn.Conv2d(16, 16, (1, 16), (1, 1)), nn.BatchNorm2d(16), nn.ELU(),
+            nn.AvgPool2d((1, 2), (1, 2)), nn.Dropout2d(0.5),
         )
-        self.out = nn.Linear(416 * (T // 100), out_dim)
+        with torch.no_grad():
+            dummy = torch.zeros(1,1,C,T)
+            feat_dim = self.net(dummy).view(1,-1).size(1)
+        self.out = nn.Linear(feat_dim, out_dim)
 
-    def forward(self, x):               # input: (B,1,C,T)
+    def forward(self, x):
         x = self.net(x)
         x = x.view(x.size(0), -1)
-        x = self.out(x)
-        return x
+        return self.out(x)
 
 # ================================
 # TSConv
 # ================================
 class tsconv(nn.Module):
     def __init__(self, out_dim, C=62, T=100):
-        super(tsconv, self).__init__()
+        super().__init__()
         self.net = nn.Sequential(
             nn.Conv2d(1, 40, (1, 25), (1, 1)),
             nn.AvgPool2d((1, 51), (1, 5)),
-            nn.BatchNorm2d(40),
-            nn.ELU(),
+            nn.BatchNorm2d(40), nn.ELU(),
             nn.Conv2d(40, 40, (C, 1), (1, 1)),
-            nn.BatchNorm2d(40),
-            nn.ELU(),
+            nn.BatchNorm2d(40), nn.ELU(),
             nn.Dropout(0.5),
         )
-        self.out = nn.Linear(1040 * (T // 100), out_dim)
+        with torch.no_grad():
+            dummy = torch.zeros(1,1,C,T)
+            feat_dim = self.net(dummy).view(1,-1).size(1)
+        self.out = nn.Linear(feat_dim, out_dim)
 
-    def forward(self, x):               # input: (B,1,C,T)
+    def forward(self, x):
         x = self.net(x)
         x = x.view(x.size(0), -1)
-        x = self.out(x)
-        return x
+        return self.out(x)
 
 # ================================
 # Conformer (fixed for compatibility)
