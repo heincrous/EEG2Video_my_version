@@ -1,5 +1,5 @@
 # ==========================================
-# train_semantic_interactive.py
+# train_semantic_interactive.py (patched to avoid BLIP duplication)
 # ==========================================
 
 import os
@@ -34,15 +34,17 @@ class SemanticPredictor(nn.Module):
         return self.net(x)
 
 # ==========================================
-# EEG-BLIP Dataset
+# EEG-BLIP Dataset (patched to avoid BLIP duplication)
 # ==========================================
 class EEGTextDataset(Dataset):
     def __init__(self, bundle_file, feature_type="windows", train=True):
         bundle = np.load(bundle_file, allow_pickle=True)
         eeg_all = bundle["EEG_data"].item()
-        blip_emb = bundle["BLIP_embeddings"]
+        blip_emb = bundle["BLIP_embeddings"]   # shape [7,40,5,77,768]
 
         X, Y = [], []
+        blocks = range(0,6) if train else [6]
+
         for subj, subj_data in eeg_all.items():
             if feature_type == "windows":
                 eeg_feature = subj_data["EEG_windows"]   # [7,40,5,7,62,100]
@@ -51,20 +53,20 @@ class EEGTextDataset(Dataset):
             else:
                 raise ValueError("Invalid feature type")
 
-            blocks = range(0,6) if train else [6]
             for b in blocks:
                 for c in range(40):
                     for k in range(5):
                         eeg_clip = eeg_feature[b, c, k]
-                        blip_clip = blip_emb[b, c, k]
+                        # only fetch BLIP once, not per subject
+                        blip_clip = blip_emb[b, c, k].flatten()
 
                         if feature_type == "windows":
                             for w in range(7):
-                                X.append(eeg_clip[w])         # (62,100)
-                                Y.append(blip_clip.flatten())
+                                X.append(eeg_clip[w])  # (62,100)
+                                Y.append(blip_clip)    # same caption for all 7 windows
                         else:  # segments
-                            X.append(eeg_clip)                # (62,400)
-                            Y.append(blip_clip.flatten())
+                            X.append(eeg_clip)        # (62,400)
+                            Y.append(blip_clip)
 
         X = np.array(X)
         if feature_type == "windows":
@@ -89,7 +91,6 @@ def main():
     mode_choice = input("Select mode (train/dry): ").strip()
     feature_type = input("Select feature type (windows/segments): ").strip()
 
-    # Encoder availability
     encoders_all = {
         "shallownet": shallownet,
         "deepnet": deepnet,
@@ -101,7 +102,7 @@ def main():
         valid_encoders = {k:v for k,v in encoders_all.items() if k != "deepnet"}  # deepnet fails at T=100
         C, T = 62, 100
     elif feature_type == "segments":
-        valid_encoders = encoders_all  # all work with T=400
+        valid_encoders = encoders_all
         C, T = 62, 400
     else:
         raise ValueError("Invalid feature type")
