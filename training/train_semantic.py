@@ -1,5 +1,5 @@
 # ==========================================
-# train_semantic_kfold_collapsecheck.py (cleaned)
+# train_semantic_kfold_collapsecheck.py
 # ==========================================
 import os, sys
 import numpy as np
@@ -123,12 +123,9 @@ def run_cv(subj_name, drive_root, device):
     windows  = np.load(os.path.join(drive_root, "EEG_windows", f"{subj_name}.npy"))    # (7,40,5,7,62,100)
     segments = np.load(os.path.join(drive_root, "EEG_segments", f"{subj_name}.npy"))   # (7,40,5,62,400)
 
-    # Load BLIP embeddings (7, 40, 5, 77, 768)
-    blip_file = os.path.join(drive_root, "BLIP_embeddings", "BLIP_embeddings.npy")
-    blip_raw = np.load(blip_file)  # shape (7,40,5,77,768)
-    if blip_raw.shape != (7,40,5,77,768):
-        raise ValueError(f"Expected BLIP shape (7,40,5,77,768), got {blip_raw.shape}")
-    blip = blip_raw.reshape(7, 40, 5, -1)  # (7, 40, 5, 59136)
+    # Load BLIP embeddings (7,40,5,77,768)
+    blip_raw = np.load(os.path.join(drive_root, "BLIP_embeddings", "BLIP_embeddings.npy"))
+    assert blip_raw.shape == (7, 40, 5, 77, 768), f"BLIP shape mismatch: {blip_raw.shape}"
 
     all_val_losses, all_test_losses = [], []
 
@@ -146,7 +143,7 @@ def run_cv(subj_name, drive_root, device):
                         Xs["psd"].append(psd[b,c,k])
                         Xs["windows"].append(windows[b,c,k].mean(0))  # (7,62,100) → (62,100)
                         Xs["segments"].append(segments[b,c,k])
-                        Ys.append(blip[b,c,k])
+                        Ys.append(blip_raw[b, c, k].reshape(-1))  # (77,768) → (59136,)
             Xs = {k: np.array(v) for k,v in Xs.items()}
             Ys = np.array(Ys)
             return Xs, Ys
@@ -160,7 +157,6 @@ def run_cv(subj_name, drive_root, device):
         val_loader   = DataLoader(EEG2BLIPDataset(X_val,Y_val), batch_size=32)
         test_loader  = DataLoader(EEG2BLIPDataset(X_test,Y_test), batch_size=32)
 
-        # Load frozen fusion model
         fusion = FusionModel().to(device)
         ckpt_path = os.path.join("/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints",
                                  f"fusion_checkpoint_{subj_name}.pt")
@@ -170,7 +166,7 @@ def run_cv(subj_name, drive_root, device):
         predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
         val_loss = train_one_fold(fusion, predictor, train_loader, val_loader, device)
 
-        # Evaluate on test set
+        # Test
         predictor.eval(); test_loss = 0; count = 0
         criterion = nn.MSELoss()
         with torch.no_grad():
