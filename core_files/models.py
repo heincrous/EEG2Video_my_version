@@ -269,34 +269,34 @@ class conformer(nn.Sequential):
             ClassificationHead(emb_size, out_dim),
         )
 
-# ================================
-# GLFNet (for DE/PSD features)
-# ================================
-class glfnet(nn.Module):
-    def __init__(self, out_dim, emb_dim, C, T):
-        super().__init__()
-        # global branch on all channels
-        self.globalnet = shallownet(emb_dim, C, T)
-        # occipital branch (last 12 channels)
-        self.occipital_index = list(range(50, 62))
-        self.occipital_localnet = shallownet(emb_dim, 12, T)
-        # combine
-        self.out = nn.Linear(emb_dim * 2, out_dim)
+# # ================================
+# # GLFNet (for DE/PSD features)
+# # ================================
+# class glfnet(nn.Module):
+#     def __init__(self, out_dim, emb_dim, C, T):
+#         super().__init__()
+#         # global branch on all channels
+#         self.globalnet = shallownet(emb_dim, C, T)
+#         # occipital branch (last 12 channels)
+#         self.occipital_index = list(range(50, 62))
+#         self.occipital_localnet = shallownet(emb_dim, 12, T)
+#         # combine
+#         self.out = nn.Linear(emb_dim * 2, out_dim)
 
-    def forward(self, x):  # x: (B, W, C, T)
-        B, W, C, T = x.shape
-        x = x.view(B*W, 1, C, T)
-        global_feat = self.globalnet.net(x)
-        global_feat = global_feat.view(global_feat.size(0), -1)
-        global_feat = self.globalnet.out(global_feat)
+#     def forward(self, x):  # x: (B, W, C, T)
+#         B, W, C, T = x.shape
+#         x = x.view(B*W, 1, C, T)
+#         global_feat = self.globalnet.net(x)
+#         global_feat = global_feat.view(global_feat.size(0), -1)
+#         global_feat = self.globalnet.out(global_feat)
 
-        occipital_x = x[:, :, self.occipital_index, :]
-        local_feat = self.occipital_localnet.net(occipital_x)
-        local_feat = local_feat.view(local_feat.size(0), -1)
-        local_feat = self.occipital_localnet.out(local_feat)
+#         occipital_x = x[:, :, self.occipital_index, :]
+#         local_feat = self.occipital_localnet.net(occipital_x)
+#         local_feat = local_feat.view(local_feat.size(0), -1)
+#         local_feat = self.occipital_localnet.out(local_feat)
 
-        out = self.out(torch.cat((global_feat, local_feat), dim=1))
-        return out.view(B, W, -1)
+#         out = self.out(torch.cat((global_feat, local_feat), dim=1))
+#         return out.view(B, W, -1)
 
 # ================================
 # GLFNet-MLP (for DE/PSD features)
