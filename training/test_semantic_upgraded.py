@@ -87,10 +87,10 @@ def build_model(feature_type, encoder_type, output_dim, input_dim=None, window_r
             return glmnet(out_dim=output_dim, emb_dim=256, C=62, T=400)
 
     elif feature_type == "windows":
-        if encoder_type == "mlp":
-            return mlpnet(out_dim=output_dim, input_dim=input_dim)
-        elif encoder_type == "conformer":
+        if encoder_type == "conformer":
             return conformer(out_dim=output_dim)
+        else:
+            raise ValueError("For windows features, only conformer is valid")
 
     raise ValueError(f"Invalid combination: {feature_type}, {encoder_type}")
 

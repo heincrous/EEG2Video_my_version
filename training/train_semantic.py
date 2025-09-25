@@ -85,6 +85,7 @@ if __name__ == "__main__":
 
     # Dummy shapes for dry run
     dummy_segments  = torch.randn(2, 1, 62, 400).cuda()   # (B,1,C,T)
+    dummy_windows   = torch.randn(2, 7, 62, 100).cuda()   # (B,W,C,T)
     dummy_de        = torch.randn(2, 62, 5).cuda()        # (B,C,F)
     dummy_psd       = torch.randn(2, 62, 5).cuda()
     dummy_txt       = torch.randn(2, 77, 768).cuda()      # (B,77,768)
@@ -93,51 +94,46 @@ if __name__ == "__main__":
 
     if mode == "dry":
         print("\n--- DRY RUN ---")
-        # Segments
         for name, base in {
             "eegnet": eegnet(output_dim, 62, 400),
             "shallownet": shallownet(output_dim, 62, 400),
             "deepnet": deepnet(output_dim, 62, 400),
             "tsconv": tsconv(output_dim, 62, 400),
             "glmnet": glmnet(output_dim, 256, 62, 400),
-            "mlp": mlpnet(output_dim, 62*400),
         }.items():
             out = ReshapeWrapper(base.cuda())(dummy_segments)
             print(f"Segments-{name}: {out.shape}")
 
-        # DE
+        out = ReshapeWrapper(conformer(out_dim=output_dim).cuda())(dummy_windows)
+        print(f"Windows-conformer: {out.shape}")
+
         for name, base in {
-            "mlp": mlpnet(output_dim, 62*5),
-            "glfnet_mlp": glfnet_mlp(output_dim, 256, 62*5),
+            "mlp": mlpnet(output_dim, 310),          # 62*5
+            "glfnet_mlp": glfnet_mlp(output_dim, 256, 310),
         }.items():
             out = ReshapeWrapper(base.cuda())(dummy_de)
-            print(f"DE-{name}: {out.shape}")
-
-        # PSD
-        for name, base in {
-            "mlp": mlpnet(output_dim, 62*5),
-            "glfnet_mlp": glfnet_mlp(output_dim, 256, 62*5),
-        }.items():
-            out = ReshapeWrapper(base.cuda())(dummy_psd)
-            print(f"PSD-{name}: {out.shape}")
+            print(f"DE/PSD-{name}: {out.shape}")
 
         print("\nDry run complete.")
         sys.exit(0)
 
     # ---- Training mode ----
-    feature_type = input("\nEnter feature type (segments / DE / PSD): ").strip()
+    feature_type = input("\nEnter feature type (segments / windows / DE / PSD): ").strip()
     bundle_path  = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_EEG_bundle.npz"
     save_root    = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
     os.makedirs(save_root, exist_ok=True)
 
     if feature_type == "segments":
-        print("\nEncoders: mlp / eegnet / shallownet / deepnet / tsconv / glmnet")
+        print("\nEncoders: eegnet / shallownet / deepnet / tsconv / glmnet")
         encoder_type = input("Enter encoder type: ").strip()
+    elif feature_type == "windows":
+        print("\nEncoders: conformer")
+        encoder_type = "conformer"
     elif feature_type in ["DE","PSD"]:
         print("\nEncoders: mlp / glfnet_mlp")
         encoder_type = input("Enter encoder type: ").strip()
     else:
-        raise ValueError("feature_type must be segments / DE / PSD")
+        raise ValueError("feature_type must be segments / windows / DE / PSD")
 
     print("\nLoss options: mse / cosine / contrastive / mse+cosine / mse+contrastive / cosine+contrastive / mse+cosine+contrastive")
     loss_type = input("Enter loss type: ").strip()
@@ -156,10 +152,13 @@ if __name__ == "__main__":
     eeg_all = np.stack(eeg_list)
     txt_all = np.stack(txt_list)
 
-    # Explicit reshape logic (assumes [62,400] for segments now)
+    # Explicit reshape logic
     if feature_type == "segments":
         train_eeg = eeg_all[:, :6].reshape(-1, 1, 62, 400)
         test_eeg  = eeg_all[:, 6:].reshape(-1, 1, 62, 400)
+    elif feature_type == "windows":
+        train_eeg = eeg_all[:, :6].reshape(-1, 7, 62, 100)
+        test_eeg  = eeg_all[:, 6:].reshape(-1, 7, 62, 100)
     elif feature_type in ["DE","PSD"]:
         train_eeg = eeg_all[:, :6].reshape(-1, 62, 5)
         test_eeg  = eeg_all[:, 6:].reshape(-1, 62, 5)
@@ -177,7 +176,6 @@ if __name__ == "__main__":
 
     train_loader = DataLoader(train_set, batch_size=128, shuffle=True, num_workers=2, pin_memory=True)
 
-    input_dim = train_set.eeg.shape[1] * np.prod(train_set.eeg.shape[2:])
     output_dim = 77*768
 
     # Build model
@@ -187,11 +185,16 @@ if __name__ == "__main__":
         elif encoder_type == "shallownet": model = shallownet(output_dim, 62, 400).cuda()
         elif encoder_type == "deepnet": model = deepnet(output_dim, 62, 400).cuda()
         elif encoder_type == "tsconv": model = tsconv(output_dim, 62, 400).cuda()
-        elif encoder_type == "mlp": model = mlpnet(output_dim, input_dim).cuda()
+        else: raise ValueError("Invalid encoder for segments")
+
+    elif feature_type == "windows":
+        if encoder_type == "conformer": model = conformer(out_dim=output_dim).cuda()
+        else: raise ValueError("Invalid encoder for windows")
 
     elif feature_type in ["DE","PSD"]:
-        if encoder_type == "mlp": model = mlpnet(output_dim, input_dim).cuda()
-        elif encoder_type == "glfnet_mlp": model = glfnet_mlp(output_dim, 256, input_dim).cuda()
+        if encoder_type == "mlp": model = mlpnet(output_dim, 310).cuda()  # 62*5
+        elif encoder_type == "glfnet_mlp": model = glfnet_mlp(output_dim, 256, 310).cuda()
+        else: raise ValueError("Invalid encoder for DE/PSD")
 
     model = ReshapeWrapper(model, n_tokens=77)
 
