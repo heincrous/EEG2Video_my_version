@@ -227,7 +227,7 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device):
 # -------------------------------------------------
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoint/fusion_checkpoints"
+    ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints"
     ckpts = [f for f in os.listdir(ckpt_dir) if f.endswith(".pt")]
     ckpts = sorted(ckpts)
     print("Available fusion checkpoints:")
