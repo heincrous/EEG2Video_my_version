@@ -30,15 +30,24 @@ class FusionModel(nn.Module):
         return self.classifier(fused)
 
 # -------------------------------------------------
-# Dataset wrapper for dict features
+# Dataset wrapper
 # -------------------------------------------------
 class DictDataset(Dataset):
-    def __init__(self, Xs, y):
+    def __init__(self, Xs, y, conv_features):
         self.Xs, self.y = Xs, y
         self.keys = list(Xs.keys())
+        self.conv_features = conv_features
+
     def __len__(self): return len(self.y)
+
     def __getitem__(self, idx):
-        return {k: torch.tensor(self.Xs[k][idx], dtype=torch.float32) for k in self.keys}, torch.tensor(self.y[idx], dtype=torch.long)
+        out = {}
+        for k in self.keys:
+            x = torch.tensor(self.Xs[k][idx], dtype=torch.float32)
+            if k in self.conv_features:
+                x = x.unsqueeze(0)  # add channel dimension
+            out[k] = x
+        return out, torch.tensor(self.y[idx], dtype=torch.long)
 
 # -------------------------------------------------
 # Accuracy
@@ -113,12 +122,10 @@ def load_feature(feat_type, subj_name, drive_root):
         return arr.reshape(7,40,10,62,5)
     elif feat_type == "windows":
         arr = np.load(os.path.join(drive_root,"EEG_windows",f"{subj_name}.npy"))
-        # expected (7,40,10,62,100)
-        return arr
+        return arr  # (7,40,trials,62,100)
     elif feat_type == "segments":
         arr = np.load(os.path.join(drive_root,"EEG_segments",f"{subj_name}.npy"))
-        # expected (7,40,10,62,400)
-        return arr
+        return arr  # (7,40,trials,62,400)
     else:
         raise ValueError(f"Unknown feature {feat_type}")
 
@@ -127,53 +134,56 @@ def load_feature(feat_type, subj_name, drive_root):
 # -------------------------------------------------
 def run_cv(subj_name, drive_root, device, feat_types, encoders):
     datas = {f: load_feature(f, subj_name, drive_root) for f in feat_types}
+    trial_count = min([datas[f].shape[2] for f in feat_types])  # align trials
+    print(f"Trial counts per feature: {[ (f,datas[f].shape[2]) for f in feat_types ]}, using {trial_count}")
+
+    conv_features = [f for f in feat_types if f in ["windows","segments"]]
     top1_scores, top5_scores = [], []
 
-    with tqdm(total=7, desc="Cross-validation") as pbar:
-        for test_block in range(7):
-            val_block = (test_block-1)%7
-            train_blocks = [i for i in range(7) if i not in [test_block,val_block]]
+    overall = tqdm(total=7, desc="Cross-validation (overall)", position=0)
 
-            X_dicts = {"train":{f:[] for f in feat_types},
-                       "val":{f:[] for f in feat_types},
-                       "test":{f:[] for f in feat_types}}
-            y_dicts = {"train":[], "val":[], "test":[]}
+    for test_block in range(7):
+        val_block = (test_block-1)%7
+        train_blocks = [i for i in range(7) if i not in [test_block,val_block]]
 
-            trial_count = min([datas[f].shape[2] for f in feat_types])
+        X_dicts = {"train":{f:[] for f in feat_types},
+                   "val":{f:[] for f in feat_types},
+                   "test":{f:[] for f in feat_types}}
+        y_dicts = {"train":[], "val":[], "test":[]}
 
-            for b in train_blocks:
-                for c in range(40):
-                    for k in range(trial_count):
-                        for f in feat_types:
-                            X_dicts["train"][f].append(datas[f][b,c,k])
-                        y_dicts["train"].append(c)
-
+        for b in train_blocks:
             for c in range(40):
                 for k in range(trial_count):
-                    for f in feat_types:
-                        X_dicts["val"][f].append(datas[f][val_block,c,k])
-                        X_dicts["test"][f].append(datas[f][test_block,c,k])
-                    y_dicts["val"].append(c)
-                    y_dicts["test"].append(c)
-
-            for split in ["train","val","test"]:
+                    for f in feat_types: X_dicts["train"][f].append(datas[f][b,c,k])
+                    y_dicts["train"].append(c)
+        for c in range(40):
+            for k in range(trial_count):
                 for f in feat_types:
-                    arr = np.array(X_dicts[split][f])
-                    shape = arr.shape
-                    scaler = StandardScaler()
-                    arr = scaler.fit_transform(arr.reshape(len(arr), -1))
-                    X_dicts[split][f] = arr.reshape(shape)
-                y_dicts[split] = np.array(y_dicts[split])
+                    X_dicts["val"][f].append(datas[f][val_block,c,k])
+                    X_dicts["test"][f].append(datas[f][test_block,c,k])
+                y_dicts["val"].append(c)
+                y_dicts["test"].append(c)
 
-            train_loader = DataLoader(DictDataset(X_dicts["train"], y_dicts["train"]),batch_size=256,shuffle=True)
-            val_loader   = DataLoader(DictDataset(X_dicts["val"],   y_dicts["val"]),  batch_size=256,shuffle=False)
-            test_loader  = DataLoader(DictDataset(X_dicts["test"],  y_dicts["test"]), batch_size=256,shuffle=False)
+        # normalization per feature per split
+        for split in ["train","val","test"]:
+            for f in feat_types:
+                arr = np.array(X_dicts[split][f])
+                shape = arr.shape
+                scaler = StandardScaler()
+                arr = scaler.fit_transform(arr.reshape(len(arr), -1))
+                X_dicts[split][f] = arr.reshape(shape)
+            y_dicts[split] = np.array(y_dicts[split])
 
-            model = FusionModel(encoders,num_classes=40).to(device)
-            top1, top5 = train_and_eval(model, train_loader, val_loader, test_loader, device)
-            top1_scores.append(top1); top5_scores.append(top5)
-            pbar.update(1)
+        train_loader = DataLoader(DictDataset(X_dicts["train"], y_dicts["train"], conv_features),batch_size=256,shuffle=True)
+        val_loader   = DataLoader(DictDataset(X_dicts["val"],   y_dicts["val"],   conv_features),batch_size=256,shuffle=False)
+        test_loader  = DataLoader(DictDataset(X_dicts["test"],  y_dicts["test"],  conv_features),batch_size=256,shuffle=False)
 
+        model = FusionModel(encoders,num_classes=40).to(device)
+        top1, top5 = train_and_eval(model, train_loader, val_loader, test_loader, device)
+        top1_scores.append(top1); top5_scores.append(top5)
+        overall.update(1)
+
+    overall.close()
     return np.mean(top1_scores), np.mean(top5_scores)
 
 # -------------------------------------------------
