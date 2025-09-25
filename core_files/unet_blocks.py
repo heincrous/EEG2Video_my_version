@@ -3,8 +3,8 @@
 import torch
 from torch import nn
 
-from .attention import Transformer3DModel
-from .resnet import Downsample3D, ResnetBlock3D, Upsample3D
+from core_files.attention import Transformer3DModel
+from core_files.resnet import Downsample3D, ResnetBlock3D, Upsample3D
 
 
 def get_down_block(
