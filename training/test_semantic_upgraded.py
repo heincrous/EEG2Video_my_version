@@ -1,9 +1,7 @@
 # ==========================================
-# test_semantic_upgraded.py
+# test_semantic_upgraded.py (patched)
 # ==========================================
-import os, sys, json
-import numpy as np
-import torch
+import os, sys, json, numpy as np, torch
 import torch.nn as nn
 import torch.nn.functional as F
 import joblib
@@ -14,7 +12,7 @@ sys.path.append(repo_root)
 from core_files.models import shallownet, deepnet, eegnet, tsconv, conformer, glfnet_mlp
 
 # -------------------------------------------------
-# Fusion model (frozen)
+# Fusion model (frozen encoders, load classifier)
 # -------------------------------------------------
 class FusionModel(nn.Module):
     def __init__(self, encoders, num_classes=40):
@@ -39,21 +37,17 @@ class FusionModel(nn.Module):
 class SemanticPredictor(nn.Module):
     def __init__(self, input_dim, hidden=[512,512], out_dim=77*768):
         super().__init__()
-        layers = []
-        prev = input_dim
+        layers, prev = [], input_dim
         for h in hidden:
             layers += [nn.Linear(prev, h), nn.ReLU()]
             prev = h
         layers.append(nn.Linear(prev, out_dim))
         self.net = nn.Sequential(*layers)
         self.hidden = hidden
-        print(f"[SemanticPredictor] Built with hidden={hidden}, out_dim={out_dim}")
-
-    def forward(self, x):
-        return self.net(x)
+    def forward(self, x): return self.net(x)
 
 # -------------------------------------------------
-# Load subject EEG features
+# Subject feature loader
 # -------------------------------------------------
 def load_subject_features(subj_name, feat_types):
     base = "/content/drive/MyDrive/EEG2Video_data/processed"
@@ -76,7 +70,7 @@ def load_subject_features(subj_name, feat_types):
     return feats
 
 # -------------------------------------------------
-# Preprocess for fusion
+# Preprocess
 # -------------------------------------------------
 def preprocess_for_fusion(batch_dict, feat_types):
     processed = {}
@@ -102,25 +96,15 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     proto_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/prototype_checkpoints"
-    if not os.path.isdir(proto_dir):
-        print("No prototype_checkpoints directory found.")
-        return
     candidates = [f for f in sorted(os.listdir(proto_dir)) if f.endswith(".pt")]
     if not candidates:
-        print("No checkpoints found in prototype_checkpoints.")
-        return
-
-    print("Available checkpoints:")
-    for i, f in enumerate(candidates):
-        print(f"{i}: {f}")
+        print("No checkpoints found."); return
+    for i,f in enumerate(candidates): print(f"{i}: {f}")
     choice = int(input("Select checkpoint index: ").strip())
+    ckpt_path = os.path.join(proto_dir, candidates[choice])
+    subj_name = candidates[choice].replace("prototype_checkpoint_","").replace(".pt","")
 
-    fname = candidates[choice]
-    ckpt_path = os.path.join(proto_dir, fname)
-    subj_name = fname.replace("prototype_checkpoint_","").replace(".pt","")
-    print(f"Selected subject: {subj_name}")
-
-    # load fusion config + checkpoint
+    # build fusion
     fusion_cfg = json.load(open(f"/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints/fusion_config_{subj_name}.json"))
     feat_types = fusion_cfg["features"]
     encoders = {}
@@ -140,61 +124,45 @@ def main():
             encoders[ftype] = conformer(out_dim=128,C=62,T=100 if ftype=="windows" else 400).to(device)
 
     fusion = FusionModel(encoders, num_classes=40).to(device)
+    # load trained encoders+classifier
     fusion.load_state_dict(torch.load(f"/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints/fusion_checkpoint_{subj_name}.pt", map_location=device))
     fusion.eval()
 
-    # load state
+    # load prototype checkpoint
     state = torch.load(ckpt_path, map_location=device)
-
-    # use saved hidden config
-    hidden_cfg = state.get("hidden", [512,512])
-
-    predictor = SemanticPredictor(input_dim=fusion.total_dim, hidden=hidden_cfg).to(device)
+    predictor = SemanticPredictor(input_dim=fusion.total_dim, hidden=state["hidden"]).to(device)
     predictor.load_state_dict(state["predictor"])
     fusion.classifier.load_state_dict(state["classifier"])
     predictor.eval(); fusion.classifier.eval()
-
     scaler = joblib.load(ckpt_path.replace(".pt","_scaler.pkl"))
 
+    # sanity check
     eeg_feats = load_subject_features(subj_name, feat_types)
     text_emb = np.load("/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/BLIP_embeddings.npy").reshape(-1,77*768)
     text_tensor = torch.tensor(text_emb, dtype=torch.float32).to(device)
 
-    print("\n=== BLIP Embeddings Check ===")
-    blip_var = text_tensor.var(dim=0).mean().item()
-    cos_blip = F.cosine_similarity(text_tensor[0].unsqueeze(0), text_tensor[1:], dim=-1).mean().item()
-    print("BLIP variance:", blip_var)
-    print("Mean cosine similarity between BLIP embeddings:", cos_blip)
+    print("\n=== Semantic Predictor Sanity Check ===")
+    print("Checkpoint:", ckpt_path)
+    print("Predictor hidden:", state["hidden"])
+    print("BLIP embedding variance:", text_tensor.var(dim=0).mean().item())
 
+    # take one block for quick collapse check
     trial_count = min([eeg_feats[f].shape[2] for f in feat_types])
-    Xs, Ys = {ft: [] for ft in feat_types}, []
+    Xs = {ft: [] for ft in feat_types}
     for c in range(40):
         for k in range(trial_count):
             for ft in feat_types:
                 Xs[ft].append(eeg_feats[ft][0,c,k])
-            Ys.append(text_emb[c*trial_count+k])
     Xs = {ft: torch.tensor(np.array(Xs[ft]),dtype=torch.float32) for ft in feat_types}
-    Ys = torch.tensor(np.array(Ys),dtype=torch.float32).to(device)
-
     proc = preprocess_for_fusion(Xs, feat_types)
     with torch.no_grad():
-        Feat_raw = fusion({ft: proc[ft].to(device) for ft in feat_types}, return_feats=True).cpu()
+        Feat = fusion({ft: proc[ft].to(device) for ft in feat_types}, return_feats=True).cpu().numpy()
+    Feat = torch.tensor(scaler.transform(Feat),dtype=torch.float32).to(device)
 
-    print("\n=== Fusion Features Check ===")
-    print("Fusion variance:", Feat_raw.var(dim=0).mean().item())
-    cos_feats = F.cosine_similarity(Feat_raw[0].unsqueeze(0), Feat_raw[1:], dim=-1)
-    print("Mean cosine similarity between fusion features:", cos_feats.mean().item())
-
-    Feat = torch.tensor(scaler.transform(Feat_raw.numpy()),dtype=torch.float32).to(device)
     with torch.no_grad():
-        pred = predictor(Feat)
-
-    print("\n=== Semantic Predictor Check ===")
-    print("Prediction variance:", pred.var(dim=0).mean().item())
-    cos_preds = F.cosine_similarity(pred[0].unsqueeze(0), pred[1:], dim=-1)
-    print("Mean cosine similarity between predictions:", cos_preds.mean().item())
-    cos_gt = F.cosine_similarity(pred, Ys, dim=-1)
-    print("Mean cosine(pred, target):", cos_gt.mean().item())
+        preds = predictor(Feat)
+    print("Prediction variance:", preds.var(dim=0).mean().item())
+    print("Mean cosine(pred, target):", F.cosine_similarity(preds, torch.tensor(text_emb[:len(preds)],dtype=torch.float32).to(device), dim=-1).mean().item())
 
 if __name__=="__main__":
     main()
