@@ -13,7 +13,7 @@ from core_files.models import (
 )
 from core_files.unet import UNet3DConditionModel
 from training.train_semantic import WindowEncoderWrapper, ReshapeWrapper
-from add_noise import Diffusion
+from core_files.add_noise import Diffusion
 from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 
 # === Paths ===
