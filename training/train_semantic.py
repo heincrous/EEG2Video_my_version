@@ -1,5 +1,5 @@
 # ==========================================
-# Semantic Predictor Training (77x768 Embeddings, No Contrastive)
+# Semantic Predictor Training (77x768 Embeddings, Multi-Loss Options)
 # ==========================================
 
 import os
@@ -18,7 +18,8 @@ repo_root = "/content/EEG2Video_my_version"
 sys.path.append(repo_root)
 
 from core_files.models import (
-    eegnet, shallownet, deepnet, tsconv, conformer, mlpnet, glfnet, glfnet_mlp
+    eegnet, shallownet, deepnet, tsconv, conformer, mlpnet,
+    glfnet, glfnet_mlp
 )
 
 # ==========================================
@@ -73,7 +74,6 @@ class WindowEncoderWrapper(nn.Module):
     def __init__(self, base_encoder, out_dim):
         super().__init__()
         self.base = base_encoder
-        self.out_dim = out_dim
     def forward(self, x):
         B, W, C, T = x.shape
         x = x.view(B*W, 1, C, T)
@@ -98,10 +98,25 @@ def cosine_loss(pred, target):
     target = F.normalize(target.view(target.size(0), -1), dim=-1)
     return 1 - (pred * target).sum(dim=-1).mean()
 
+def contrastive_loss(pred, target, temperature=0.07):
+    B = pred.size(0)
+    pred = F.normalize(pred.view(B, -1), dim=-1)
+    target = F.normalize(target.view(B, -1), dim=-1)
+    logits = pred @ target.t() / temperature
+    labels = torch.arange(B, device=pred.device)
+    return F.cross_entropy(logits, labels)
+
 def mse_cosine_loss(pred, target):
-    mse = F.mse_loss(pred, target)
-    cos = cosine_loss(pred, target)
-    return mse + cos
+    return F.mse_loss(pred, target) + cosine_loss(pred, target)
+
+def mse_contrastive_loss(pred, target):
+    return F.mse_loss(pred, target) + contrastive_loss(pred, target)
+
+def cosine_contrastive_loss(pred, target):
+    return cosine_loss(pred, target) + contrastive_loss(pred, target)
+
+def mse_cosine_contrastive_loss(pred, target):
+    return F.mse_loss(pred, target) + cosine_loss(pred, target) + contrastive_loss(pred, target)
 
 # ==========================================
 # Training loop
@@ -122,7 +137,8 @@ if __name__ == "__main__":
     else:
         raise ValueError("feature_type must be one of: DE / PSD / windows")
 
-    loss_type = input("\nEnter loss type (mse / cosine / mse+cosine): ").strip()
+    print("\nLoss options: mse / cosine / contrastive / mse+cosine / mse+contrastive / cosine+contrastive / mse+cosine+contrastive")
+    loss_type = input("Enter loss type: ").strip()
 
     all_bundles = sorted([f for f in os.listdir(bundle_dir) if f.endswith("_train.npz")])
     subjects    = [f.replace("_train.npz", "") for f in all_bundles]
@@ -137,12 +153,38 @@ if __name__ == "__main__":
     # Dry run
     if choice.lower() == "check":
         test_file = os.path.join(bundle_dir, all_bundles[0])
-        dataset   = EEGTextDataset([test_file], feature_type=feature_type, fit_scaler=True, max_samples=10)
-        dataloader = DataLoader(dataset, batch_size=2, shuffle=False)
+        dataset   = EEGTextDataset([test_file], feature_type=feature_type, fit_scaler=True, max_samples=2)
+        dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
         eeg, txt = next(iter(dataloader))
         output_dim = 77*768
-        print("\nDry run shapes:", eeg.shape, txt.shape)
-        exit()
+
+        # Build trial model
+        if feature_type in ["DE", "PSD"]:
+            if encoder_type == "mlp":
+                model = mlpnet(out_dim=output_dim, input_dim=eeg[0].numel())
+            elif encoder_type == "glfnet":
+                model = glfnet(out_dim=output_dim, emb_dim=256, C=62, T=5)
+            elif encoder_type == "glfnet_mlp":
+                model = glfnet_mlp(out_dim=output_dim, emb_dim=256, input_dim=eeg[0].numel())
+        elif feature_type == "windows":
+            if encoder_type == "mlp":
+                model = mlpnet(out_dim=output_dim, input_dim=eeg[0].numel())
+            elif encoder_type == "eegnet":
+                model = WindowEncoderWrapper(eegnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
+            elif encoder_type == "shallownet":
+                model = WindowEncoderWrapper(shallownet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
+            elif encoder_type == "deepnet":
+                model = WindowEncoderWrapper(deepnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
+            elif encoder_type == "tsconv":
+                model = WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
+            elif encoder_type == "conformer":
+                model = conformer(out_dim=output_dim)
+        model = ReshapeWrapper(model, n_tokens=77)
+        with torch.no_grad():
+            out = model(eeg)
+        print("\nDry run successful")
+        print("EEG batch:", eeg.shape, "Text batch:", txt.shape, "Model output:", out.shape)
+        sys.exit()
 
     # Select files
     if choice.lower() == "all":
@@ -167,8 +209,6 @@ if __name__ == "__main__":
             model = glfnet(out_dim=output_dim, emb_dim=256, C=62, T=5).cuda()
         elif encoder_type == "glfnet_mlp":
             model = glfnet_mlp(out_dim=output_dim, emb_dim=256, input_dim=input_dim).cuda()
-        else:
-            raise ValueError("Unknown encoder type for DE/PSD")
     elif feature_type == "windows":
         if encoder_type == "mlp":
             model = mlpnet(out_dim=output_dim, input_dim=input_dim).cuda()
@@ -182,11 +222,6 @@ if __name__ == "__main__":
             model = WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim).cuda()
         elif encoder_type == "conformer":
             model = conformer(out_dim=output_dim).cuda()
-        else:
-            raise ValueError("Unknown encoder type for windows")
-    else:
-        raise ValueError("Invalid feature type")
-
     model = ReshapeWrapper(model, n_tokens=77)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
@@ -200,14 +235,24 @@ if __name__ == "__main__":
                 eeg, text = eeg.cuda(non_blocking=True), text.cuda(non_blocking=True)
                 optimizer.zero_grad()
                 pred = model(eeg)
+
                 if loss_type == "mse":
                     loss = F.mse_loss(pred, text)
                 elif loss_type == "cosine":
                     loss = cosine_loss(pred, text)
+                elif loss_type == "contrastive":
+                    loss = contrastive_loss(pred, text)
                 elif loss_type == "mse+cosine":
                     loss = mse_cosine_loss(pred, text)
+                elif loss_type == "mse+contrastive":
+                    loss = mse_contrastive_loss(pred, text)
+                elif loss_type == "cosine+contrastive":
+                    loss = cosine_contrastive_loss(pred, text)
+                elif loss_type == "mse+cosine+contrastive":
+                    loss = mse_cosine_contrastive_loss(pred, text)
                 else:
                     raise ValueError("Unknown loss type")
+
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
