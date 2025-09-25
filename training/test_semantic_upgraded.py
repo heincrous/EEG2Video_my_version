@@ -37,7 +37,7 @@ class FusionModel(nn.Module):
 # Semantic predictor
 # -------------------------------------------------
 class SemanticPredictor(nn.Module):
-    def __init__(self, input_dim, hidden=[1024,2048,1024], out_dim=77*768):
+    def __init__(self, input_dim, hidden=[512,512], out_dim=77*768):
         super().__init__()
         layers = []
         prev = input_dim
@@ -46,6 +46,7 @@ class SemanticPredictor(nn.Module):
             prev = h
         layers.append(nn.Linear(prev, out_dim))
         self.net = nn.Sequential(*layers)
+        self.hidden = hidden
         print(f"[SemanticPredictor] Built with hidden={hidden}, out_dim={out_dim}")
 
     def forward(self, x):
@@ -86,11 +87,11 @@ def preprocess_for_fusion(batch_dict, feat_types):
         elif ft == "combo":
             x = x.reshape(x.shape[0], 62, 10)
         elif ft == "windows":
-            if x.ndim == 4:  # (batch,7,62,100)
+            if x.ndim == 4:
                 x = x.mean(1)
-            x = x.unsqueeze(1)  # (batch,1,62,100)
+            x = x.unsqueeze(1)
         elif ft == "segments":
-            x = x.unsqueeze(1)  # (batch,1,62,400)
+            x = x.unsqueeze(1)
         processed[ft] = x
     return processed
 
@@ -145,19 +146,9 @@ def main():
     # load state
     state = torch.load(ckpt_path, map_location=device)
 
-    # decide hidden sizes
-    if "hidden" in state:
-        hidden_cfg = state["hidden"]
-    else:
-        # auto-detect from first linear layer weight shape
-        first_weight = list(state["predictor"].values())[0]
-        out_dim = first_weight.shape[0]
-        if out_dim == 512:
-            hidden_cfg = [512,512]
-        else:
-            hidden_cfg = [1024,2048,1024]
+    # use saved hidden config
+    hidden_cfg = state.get("hidden", [512,512])
 
-    # rebuild predictor with correct hidden config
     predictor = SemanticPredictor(input_dim=fusion.total_dim, hidden=hidden_cfg).to(device)
     predictor.load_state_dict(state["predictor"])
     fusion.classifier.load_state_dict(state["classifier"])
@@ -165,12 +156,10 @@ def main():
 
     scaler = joblib.load(ckpt_path.replace(".pt","_scaler.pkl"))
 
-    # load EEG + BLIP
     eeg_feats = load_subject_features(subj_name, feat_types)
     text_emb = np.load("/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/BLIP_embeddings.npy").reshape(-1,77*768)
     text_tensor = torch.tensor(text_emb, dtype=torch.float32).to(device)
 
-    # BLIP embedding sanity check
     print("\n=== BLIP Embeddings Check ===")
     blip_var = text_tensor.var(dim=0).mean().item()
     cos_blip = F.cosine_similarity(text_tensor[0].unsqueeze(0), text_tensor[1:], dim=-1).mean().item()
