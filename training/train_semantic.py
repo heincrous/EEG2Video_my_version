@@ -65,7 +65,7 @@ class EEGTextDataset(Dataset):
         return torch.tensor(eeg, dtype=torch.float32), torch.tensor(txt, dtype=torch.float32)
 
 # ==========================================
-# Window wrapper for encoders
+# Window wrapper for CNN-based encoders
 # ==========================================
 class WindowEncoderWrapper(nn.Module):
     def __init__(self, base_encoder, out_dim):
@@ -118,7 +118,14 @@ if __name__ == "__main__":
     os.makedirs(save_root, exist_ok=True)
 
     feature_type = input("\nEnter feature type (DE / PSD / windows): ").strip()
-    encoder_type = input("\nEnter encoder type (mlp / eegnet / shallownet / deepnet / tsconv / conformer): ").strip()
+
+    # Only ask for encoder when windows is chosen
+    if feature_type == "windows":
+        encoder_type = input("\nEnter encoder type (mlp / eegnet / shallownet / deepnet / tsconv / conformer): ").strip()
+    else:
+        encoder_type = "mlp"
+        print("For DE/PSD features, using mlpnet automatically.")
+
     loss_type    = input("\nEnter loss type (mse / cosine / contrastive): ").strip()
 
     all_bundles = sorted([f for f in os.listdir(bundle_dir) if f.endswith("_train.npz")])
@@ -144,7 +151,6 @@ if __name__ == "__main__":
         print("\nDry run shapes:")
         print("EEG batch:", eeg.shape, "Text batch:", txt.shape)
 
-        # Same logic as training setup
         if feature_type in ["DE", "PSD"]:
             model = mlpnet(out_dim=output_dim, input_dim=eeg[0].numel())
         elif feature_type == "windows":
@@ -159,7 +165,7 @@ if __name__ == "__main__":
             elif encoder_type == "tsconv":
                 model = WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
             elif encoder_type == "conformer":
-                model = WindowEncoderWrapper(conformer(out_dim=output_dim), out_dim=output_dim)
+                model = conformer(out_dim=output_dim)   # no wrapper
             else:
                 raise ValueError("Unknown encoder type")
         else:
@@ -202,7 +208,7 @@ if __name__ == "__main__":
         elif encoder_type == "tsconv":
             model = WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim).cuda()
         elif encoder_type == "conformer":
-            model = WindowEncoderWrapper(conformer(out_dim=output_dim), out_dim=output_dim).cuda()
+            model = conformer(out_dim=output_dim).cuda()   # no wrapper
         else:
             raise ValueError("Unknown encoder type")
     else:
