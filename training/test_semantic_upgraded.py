@@ -17,7 +17,7 @@ sys.path.append(repo_root)
 from core_files.models import eegnet, shallownet, deepnet, tsconv, conformer, mlpnet
 
 
-# === Wrapper for windowed encoders ===
+# === Wrapper for CNN-based encoders ===
 class WindowEncoderWrapper(torch.nn.Module):
     def __init__(self, base_encoder, out_dim):
         super().__init__()
@@ -29,6 +29,18 @@ class WindowEncoderWrapper(torch.nn.Module):
         feats = self.base(x)
         feats = feats.view(B, W, -1)
         return feats.mean(1)  # (B, out_dim)
+
+
+# === Reshape wrapper (flat -> (77,768)) ===
+class ReshapeWrapper(torch.nn.Module):
+    def __init__(self, base_model, n_tokens=77):
+        super().__init__()
+        self.base = base_model
+        self.n_tokens = n_tokens
+
+    def forward(self, x):
+        out = self.base(x)  # (B, n_tokens*768)
+        return out.view(out.size(0), self.n_tokens, 768)
 
 
 # === Build class prototypes (token-aware) ===
@@ -48,7 +60,6 @@ def build_class_prototypes(bundle_path, loss_type):
     for cid, embs in class_groups.items():
         avg_emb = np.mean(np.stack(embs), axis=0)  # (77,768)
         if loss_type == "cosine":
-            # normalize each row separately
             norms = np.linalg.norm(avg_emb, axis=-1, keepdims=True) + 1e-8
             avg_emb = avg_emb / norms
         prototypes[cid] = avg_emb
@@ -71,7 +82,7 @@ def build_model(feature_type, encoder_type, output_dim, input_dim=None):
         elif encoder_type == "tsconv":
             return WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
         elif encoder_type == "conformer":
-            return WindowEncoderWrapper(conformer(out_dim=output_dim), out_dim=output_dim)
+            return conformer(out_dim=output_dim)   # no wrapper
         else:
             raise ValueError(f"Unknown encoder type: {encoder_type}")
     else:
@@ -106,12 +117,15 @@ if __name__ == "__main__":
     encoder_type = parts[-2]
     loss_type    = parts[-1]
 
+    print(f"\n[Config] Feature={feature_type}, Encoder={encoder_type}, Loss={loss_type}")
+
     with open(scaler_path, "rb") as f:
         scaler = pickle.load(f)
 
     input_dim = scaler.mean_.shape[0]
     output_dim = 77 * 768
-    model = build_model(feature_type, encoder_type, output_dim, input_dim).cuda()
+    base_model = build_model(feature_type, encoder_type, output_dim, input_dim)
+    model = ReshapeWrapper(base_model, n_tokens=77).cuda()
     checkpoint = torch.load(ckpt_path, map_location="cuda")
     model.load_state_dict(checkpoint["state_dict"])
     model.eval()
@@ -151,7 +165,7 @@ if __name__ == "__main__":
             eeg_tensor = torch.tensor(eeg_scaled.reshape(62,5), dtype=torch.float32).unsqueeze(0).cuda()
 
         with torch.no_grad():
-            pred_emb = model(eeg_tensor).squeeze(0).cpu().numpy().reshape(77,768)
+            pred_emb = model(eeg_tensor).squeeze(0).cpu().numpy()  # already (77,768)
 
         if loss_type == "cosine":
             pred_emb = pred_emb / (np.linalg.norm(pred_emb, axis=-1, keepdims=True) + 1e-8)
