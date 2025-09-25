@@ -155,6 +155,8 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
     trial_count = min([eeg_feats[ft].shape[2] for ft in feat_types])
     print(f"Trial counts per feature: {[ (f,eeg_feats[f].shape[2]) for f in feat_types ]}, using {trial_count}")
 
+    ce_loss = nn.CrossEntropyLoss()
+
     for test_block in tqdm(range(7), desc=f"Cross-validation {subj_name}"):
         val_block = (test_block - 1) % 7
         train_blocks = [i for i in range(7) if i not in [test_block, val_block]]
@@ -205,12 +207,14 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
         predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
         optimizer = torch.optim.Adam(list(predictor.parameters())+list(fusion.classifier.parameters()), lr=5e-4)
 
-        ce_loss = nn.CrossEntropyLoss()
         best_val_loss, best_state = float("inf"), None
         ckpt_path = os.path.join(save_dir, f"semantic_checkpoint_{subj_name}.pt")
 
         for epoch in tqdm(range(50), desc=f"Fold {test_block} training", leave=False):
             predictor.train(); fusion.classifier.train()
+            total_cls_correct, total_cls = 0, 0
+            sem_vars = []
+
             for eeg, text, label in train_loader:
                 eeg, text, label = eeg.to(device), text.to(device), label.to(device)
                 optimizer.zero_grad()
@@ -222,9 +226,17 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
                 loss.backward()
                 optimizer.step()
 
+                total_cls_correct += (pred_cls.argmax(1) == label).sum().item()
+                total_cls += label.size(0)
+                sem_vars.append(pred_sem.var(dim=0).mean().item())
+
+            train_acc = total_cls_correct / total_cls
+            mean_sem_var = np.mean(sem_vars)
+
             # validation
             predictor.eval(); fusion.classifier.eval()
-            val_loss = 0
+            val_loss, val_cls_correct, val_cls_total = 0, 0, 0
+            sem_vars_val = []
             with torch.no_grad():
                 for eeg, text, label in val_loader:
                     eeg, text, label = eeg.to(device), text.to(device), label.to(device)
@@ -233,7 +245,19 @@ def run_cv(subj_name, fusion, feat_types, eeg_feats, text_emb, device,
                     loss_sem = F.mse_loss(pred_sem, text)
                     loss_cls = ce_loss(pred_cls, label)
                     val_loss += (lambda_sem*loss_sem + lambda_cls*loss_cls).item()
+
+                    val_cls_correct += (pred_cls.argmax(1) == label).sum().item()
+                    val_cls_total += label.size(0)
+                    sem_vars_val.append(pred_sem.var(dim=0).mean().item())
+
             avg_val = val_loss/len(val_loader)
+            val_acc = val_cls_correct / val_cls_total
+            mean_sem_var_val = np.mean(sem_vars_val)
+
+            print(f"Epoch {epoch+1}: "
+                  f"TrainAcc={train_acc:.3f}, ValAcc={val_acc:.3f}, "
+                  f"SemVarTrain={mean_sem_var:.4f}, SemVarVal={mean_sem_var_val:.4f}, "
+                  f"ValLoss={avg_val:.4f}")
 
             if avg_val < best_val_loss:
                 best_val_loss = avg_val
