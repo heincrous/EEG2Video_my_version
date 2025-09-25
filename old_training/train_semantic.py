@@ -1,179 +1,8 @@
-# # ==========================================
-# # Semantic Predictor Training
-# # ==========================================
-
-# # === Standard libraries ===
-# import os
-# import pickle
-
-# # === Third-party libraries ===
-# import numpy as np
-# import torch
-# import torch.nn as nn
-# import torch.nn.functional as F
-# from torch.utils.data import DataLoader, Dataset
-# from sklearn.preprocessing import StandardScaler
-# from tqdm import tqdm
-
-
-# # ==========================================
-# # Semantic Predictor (MLP)
-# # ==========================================
-# class SemanticPredictor(nn.Module):
-#     def __init__(self):
-#         super(SemanticPredictor, self).__init__()
-#         self.mlp = nn.Sequential(
-#             nn.Linear(310, 10000),
-#             nn.ReLU(),
-#             nn.Linear(10000, 10000),
-#             nn.ReLU(),
-#             nn.Linear(10000, 10000),
-#             nn.ReLU(),
-#             nn.Linear(10000, 10000),
-#             nn.ReLU(),
-#             nn.Linear(10000, 77 * 768)
-#         )
-
-#     def forward(self, eeg):
-#         return self.mlp(eeg)
-
-
-# # ==========================================
-# # Dataset wrapper
-# # ==========================================
-# class EEGTextDataset(Dataset):
-#     """
-#     Loads EEG-DE features and BLIP embeddings from NPZ bundles.
-
-#     Expected arrays inside .npz:
-#       - "EEG_DE"          → numpy array (N,62,5), flattened to (N,310)
-#       - "BLIP_embeddings" → numpy array (N,77,768), flattened to (N,77*768)
-#     """
-#     def __init__(self, npz_files, scaler=None, fit_scaler=False, max_samples=None):
-#         eeg_all, text_all = [], []
-
-#         for f in npz_files:
-#             data = np.load(f, allow_pickle=True)
-#             eeg  = data["EEG_DE"]           # (N,62,5)
-#             text = data["BLIP_embeddings"]  # (N,77,768)
-
-#             eeg  = eeg.reshape(eeg.shape[0], -1)    # (N,310)
-#             text = text.reshape(text.shape[0], -1)  # (N,77*768)
-
-#             eeg_all.append(eeg)
-#             text_all.append(text)
-
-#         self.eeg  = np.vstack(eeg_all)
-#         self.text = np.vstack(text_all)
-
-#         if max_samples:
-#             self.eeg  = self.eeg[:max_samples]
-#             self.text = self.text[:max_samples]
-
-#         if fit_scaler:
-#             self.scaler = StandardScaler().fit(self.eeg)
-#         else:
-#             self.scaler = scaler
-
-#         self.eeg = self.scaler.transform(self.eeg)
-
-#     def __len__(self):
-#         return self.eeg.shape[0]
-
-#     def __getitem__(self, idx):
-#         return (
-#             torch.tensor(self.eeg[idx], dtype=torch.float32),
-#             torch.tensor(self.text[idx], dtype=torch.float32),
-#         )
-
-
-# # ==========================================
-# # Training loop
-# # ==========================================
-# if __name__ == "__main__":
-#     # === Paths ===
-#     bundle_dir = "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles"
-#     save_root  = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
-#     os.makedirs(save_root, exist_ok=True)
-
-#     # === Subject selection ===
-#     all_bundles = sorted([f for f in os.listdir(bundle_dir) if f.endswith("_train.npz")])
-#     subjects    = [f.replace("_train.npz", "") for f in all_bundles]
-
-#     print("\nSelect subject(s):")
-#     for idx, subj in enumerate(subjects):
-#         print(f"  [{idx}] {subj}")
-
-#     choice     = input("\nEnter subject indices (comma separated), 'all', or 'check': ").strip()
-#     num_epochs = int(input("\nEnter number of epochs (default 50): ") or 50)
-
-#     # === Dry run ===
-#     if choice.lower() == "check":
-#         test_file = os.path.join(bundle_dir, all_bundles[0])
-#         dataset   = EEGTextDataset([test_file], fit_scaler=True, max_samples=10)
-#         eeg, txt  = dataset[0]
-#         print("Dry run OK")
-#         print("EEG shape:", eeg.shape, "Text shape:", txt.shape)
-#         exit()
-
-#     # === Select files ===
-#     if choice.lower() == "all":
-#         selected_files = [os.path.join(bundle_dir, f) for f in all_bundles]
-#         tag = "all"
-#     else:
-#         selected_idx   = [int(c.strip()) for c in choice.split(",") if c.strip().isdigit()]
-#         selected_files = [os.path.join(bundle_dir, all_bundles[i]) for i in selected_idx]
-#         tag = "_".join([subjects[i] for i in selected_idx])
-
-#     # === Dataset & loader ===
-#     dataset    = EEGTextDataset(selected_files, fit_scaler=True)
-#     dataloader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=2, pin_memory=True)
-
-#     # === Model ===
-#     model     = SemanticPredictor().cuda()
-#     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
-#     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(dataloader))
-
-#     # === Training ===
-#     for epoch in range(num_epochs):
-#         model.train()
-#         total_loss = 0.0
-
-#         with tqdm(total=len(dataloader), desc=f"Epoch {epoch+1}/{num_epochs}") as pbar:
-#             for eeg, text in dataloader:
-#                 eeg, text = eeg.cuda(non_blocking=True), text.cuda(non_blocking=True)
-
-#                 optimizer.zero_grad()
-#                 pred = model(eeg)
-#                 loss = F.mse_loss(pred, text)
-#                 loss.backward()
-#                 optimizer.step()
-#                 scheduler.step()
-
-#                 total_loss += loss.item()
-#                 pbar.set_postfix({"loss": f"{loss.item():.6f}"})
-#                 pbar.update(1)
-
-#         avg_loss = total_loss / len(dataloader)
-#         print(f"[Epoch {epoch+1}] Avg loss: {avg_loss:.6f}")
-
-#     # === Save model & scaler ===
-#     ckpt_path   = os.path.join(save_root, f"semantic_predictor_{tag}.pt")
-#     scaler_path = os.path.join(save_root, f"scaler_{tag}.pkl")
-
-#     torch.save({"state_dict": model.state_dict()}, ckpt_path)
-#     with open(scaler_path, "wb") as f:
-#         pickle.dump(dataset.scaler, f)
-
-#     print(f"Model saved to: {ckpt_path}")
-#     print(f"Scaler saved to: {scaler_path}")
-
 # ==========================================
-# Semantic Predictor Training (Flexible Features)
+# Semantic Predictor Training (Blocks 1–6 train, Block 7 test)
 # ==========================================
 
-import os
-import pickle
+import os, sys, pickle
 import numpy as np
 import torch
 import torch.nn as nn
@@ -182,169 +11,226 @@ from torch.utils.data import DataLoader, Dataset
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
-
-# ==========================================
-# Semantic Predictor (MLP)
-# ==========================================
-class SemanticPredictor(nn.Module):
-    def __init__(self, input_dim):
-        super(SemanticPredictor, self).__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(input_dim, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, 77 * 768)
-        )
-
-    def forward(self, eeg):
-        return self.mlp(eeg)
-
+# === Repo imports ===
+repo_root = "/content/EEG2Video_my_version"
+sys.path.append(repo_root)
+from core_files.models import (
+    eegnet, shallownet, deepnet, tsconv, conformer, mlpnet,
+    glfnet_mlp, glmnet
+)
 
 # ==========================================
 # Dataset wrapper
 # ==========================================
 class EEGTextDataset(Dataset):
-    """
-    Loads EEG features (DE / PSD / windows) and BLIP embeddings from NPZ bundles.
-    Shapes before flattening:
-      - EEG_DE:       (N,62,5)
-      - EEG_PSD:      (N,62,5)
-      - EEG_windows:  (N,7,62,100)
-      - BLIP_embeddings: (N,77,768)
-    """
-    def __init__(self, npz_files, feature_type="DE", scaler=None, fit_scaler=False, max_samples=None):
-        eeg_all, text_all = [], []
-        self.feature_type = feature_type
-
-        for f in npz_files:
-            data = np.load(f, allow_pickle=True)
-
-            if feature_type == "DE":
-                eeg = data["EEG_DE"].reshape(data["EEG_DE"].shape[0], -1)             # (N,310)
-            elif feature_type == "PSD":
-                eeg = data["EEG_PSD"].reshape(data["EEG_PSD"].shape[0], -1)           # (N,310)
-            elif feature_type == "windows":
-                eeg = data["EEG_windows"].reshape(data["EEG_windows"].shape[0], -1)   # (N,43400)
-            else:
-                raise ValueError("feature_type must be one of: DE, PSD, windows")
-
-            text = data["BLIP_embeddings"].reshape(data["BLIP_embeddings"].shape[0], -1)  # (N,77*768)
-
-            eeg_all.append(eeg)
-            text_all.append(text)
-
-        self.eeg = np.vstack(eeg_all)
-        self.text = np.vstack(text_all)
-
-        if max_samples:
-            self.eeg = self.eeg[:max_samples]
-            self.text = self.text[:max_samples]
-
+    def __init__(self, eeg_array, text_array, scaler=None, fit_scaler=False):
+        self.eeg = eeg_array
+        self.text = text_array
+        flat = self.eeg.reshape(self.eeg.shape[0], -1)
         if fit_scaler:
-            self.scaler = StandardScaler().fit(self.eeg)
+            self.scaler = StandardScaler().fit(flat)
         else:
             self.scaler = scaler
-
-        self.eeg = self.scaler.transform(self.eeg)
-
-    def __len__(self):
-        return self.eeg.shape[0]
-
+        flat = self.scaler.transform(flat)
+        self.eeg = flat.reshape(self.eeg.shape)
+    def __len__(self): return self.eeg.shape[0]
     def __getitem__(self, idx):
-        return (
-            torch.tensor(self.eeg[idx], dtype=torch.float32),
-            torch.tensor(self.text[idx], dtype=torch.float32),
-        )
-
+        return torch.tensor(self.eeg[idx], dtype=torch.float32), torch.tensor(self.text[idx], dtype=torch.float32)
 
 # ==========================================
-# Training loop
+# Reshape Wrapper (force output into [B,77,768])
+# ==========================================
+class ReshapeWrapper(nn.Module):
+    def __init__(self, base_model, n_tokens=77):
+        super().__init__()
+        self.base = base_model
+        self.n_tokens = n_tokens
+    def forward(self, x):
+        out = self.base(x)
+        return out.view(out.size(0), self.n_tokens, 768)
+
+# ==========================================
+# Loss functions
+# ==========================================
+def cosine_loss(pred, target):
+    pred = F.normalize(pred.view(pred.size(0), -1), dim=-1)
+    target = F.normalize(target.view(target.size(0), -1), dim=-1)
+    return 1 - (pred * target).sum(dim=-1).mean()
+
+def contrastive_loss(pred, target, temperature=0.07):
+    B = pred.size(0)
+    pred = F.normalize(pred.view(B, -1), dim=-1)
+    target = F.normalize(target.view(B, -1), dim=-1)
+    logits = pred @ target.t() / temperature
+    labels = torch.arange(B, device=pred.device)
+    return F.cross_entropy(logits, labels)
+
+def mse_cosine_loss(pred, target): 
+    return F.mse_loss(pred, target) + cosine_loss(pred, target)
+
+def mse_contrastive_loss(pred, target): 
+    return F.mse_loss(pred, target) + contrastive_loss(pred, target)
+
+def cosine_contrastive_loss(pred, target): 
+    return cosine_loss(pred, target) + contrastive_loss(pred, target)
+
+def mse_cosine_contrastive_loss(pred, target): 
+    return F.mse_loss(pred, target) + cosine_loss(pred, target) + contrastive_loss(pred, target)
+
+# ==========================================
+# Main
 # ==========================================
 if __name__ == "__main__":
-    bundle_dir = "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles"
-    save_root  = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
+    mode = input("\nMode (train / dry): ").strip()
+
+    # Dummy shapes for dry run
+    dummy_segments  = torch.randn(2, 1, 62, 400).cuda()   # (B,1,C,T)
+    dummy_windows   = torch.randn(2, 7, 62, 100).cuda()   # (B,W,C,T)
+    dummy_de        = torch.randn(2, 62, 5).cuda()        # (B,C,F)
+    dummy_psd       = torch.randn(2, 62, 5).cuda()
+    dummy_txt       = torch.randn(2, 77, 768).cuda()      # (B,77,768)
+
+    output_dim = 77*768
+
+    if mode == "dry":
+        print("\n--- DRY RUN ---")
+        for name, base in {
+            "eegnet": eegnet(output_dim, 62, 400),
+            "shallownet": shallownet(output_dim, 62, 400),
+            "deepnet": deepnet(output_dim, 62, 400),
+            "tsconv": tsconv(output_dim, 62, 400),
+            "glmnet": glmnet(output_dim, 256, 62, 400),
+        }.items():
+            out = ReshapeWrapper(base.cuda())(dummy_segments)
+            print(f"Segments-{name}: {out.shape}")
+
+        out = ReshapeWrapper(conformer(out_dim=output_dim).cuda())(dummy_windows)
+        print(f"Windows-conformer: {out.shape}")
+
+        for name, base in {
+            "mlp": mlpnet(output_dim, 310),          # 62*5
+            "glfnet_mlp": glfnet_mlp(output_dim, 256, 310),
+        }.items():
+            out = ReshapeWrapper(base.cuda())(dummy_de)
+            print(f"DE/PSD-{name}: {out.shape}")
+
+        print("\nDry run complete.")
+        sys.exit(0)
+
+    # ---- Training mode ----
+    feature_type = input("\nEnter feature type (segments / windows / DE / PSD): ").strip()
+    bundle_path  = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_EEG_bundle.npz"
+    save_root    = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
     os.makedirs(save_root, exist_ok=True)
 
-    # === Feature type ===
-    feature_type = input("\nEnter feature type (DE / PSD / windows): ").strip()
+    if feature_type == "segments":
+        print("\nEncoders: eegnet / shallownet / deepnet / tsconv / glmnet")
+        encoder_type = input("Enter encoder type: ").strip()
+    elif feature_type == "windows":
+        print("\nEncoders: conformer")
+        encoder_type = "conformer"
+    elif feature_type in ["DE","PSD"]:
+        print("\nEncoders: mlp / glfnet_mlp")
+        encoder_type = input("Enter encoder type: ").strip()
+    else:
+        raise ValueError("feature_type must be segments / windows / DE / PSD")
 
-    # === Subject selection ===
-    all_bundles = sorted([f for f in os.listdir(bundle_dir) if f.endswith("_train.npz")])
-    subjects    = [f.replace("_train.npz", "") for f in all_bundles]
-
-    print("\nSelect subject(s):")
-    for idx, subj in enumerate(subjects):
-        print(f"  [{idx}] {subj}")
-
-    choice     = input("\nEnter subject indices (comma separated), 'all', or 'check': ").strip()
+    print("\nLoss options: mse / cosine / contrastive / mse+cosine / mse+contrastive / cosine+contrastive / mse+cosine+contrastive")
+    loss_type = input("Enter loss type: ").strip()
     num_epochs = int(input("\nEnter number of epochs (default 50): ") or 50)
 
-    # === Dry run ===
-    if choice.lower() == "check":
-        test_file = os.path.join(bundle_dir, all_bundles[0])
-        dataset   = EEGTextDataset([test_file], feature_type=feature_type, fit_scaler=True, max_samples=10)
-        eeg, txt  = dataset[0]
-        print("Dry run OK")
-        print("EEG shape:", eeg.shape, "Text shape:", txt.shape)
-        exit()
+    # Load bundle
+    data = np.load(bundle_path, allow_pickle=True)
+    blip_emb = data["BLIP_embeddings"]
+    eeg_dict = data["EEG_data"].item()
 
-    # === Select files ===
-    if choice.lower() == "all":
-        selected_files = [os.path.join(bundle_dir, f) for f in all_bundles]
-        tag = f"all_{feature_type}"
-    else:
-        selected_idx   = [int(c.strip()) for c in choice.split(",") if c.strip().isdigit()]
-        selected_files = [os.path.join(bundle_dir, all_bundles[i]) for i in selected_idx]
-        tag = "_".join([subjects[i] for i in selected_idx]) + f"_{feature_type}"
+    eeg_list, txt_list = [], []
+    for subj, feats in eeg_dict.items():
+        eeg = feats[f"EEG_{feature_type}"]
+        eeg_list.append(eeg)
+        txt_list.append(blip_emb)
+    eeg_all = np.stack(eeg_list)
+    txt_all = np.stack(txt_list)
 
-    # === Dataset & loader ===
-    dataset    = EEGTextDataset(selected_files, feature_type=feature_type, fit_scaler=True)
-    input_dim  = dataset.eeg.shape[1]
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=2, pin_memory=True)
+    # Explicit reshape logic
+    if feature_type == "segments":
+        train_eeg = eeg_all[:, :6].reshape(-1, 1, 62, 400)
+        test_eeg  = eeg_all[:, 6:].reshape(-1, 1, 62, 400)
+    elif feature_type == "windows":
+        train_eeg = eeg_all[:, :6].reshape(-1, 7, 62, 100)
+        test_eeg  = eeg_all[:, 6:].reshape(-1, 7, 62, 100)
+    elif feature_type in ["DE","PSD"]:
+        train_eeg = eeg_all[:, :6].reshape(-1, 62, 5)
+        test_eeg  = eeg_all[:, 6:].reshape(-1, 62, 5)
 
-    print(f"\nTraining Semantic Predictor on {feature_type} features")
-    print(f"Input dimension: {input_dim}, Samples: {len(dataset)}")
+    train_txt = txt_all[:, :6].reshape(-1, 77, 768)
+    test_txt  = txt_all[:, 6:].reshape(-1, 77, 768)
 
-    # === Model ===
-    model     = SemanticPredictor(input_dim).cuda()
-    optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(dataloader))
+    train_set = EEGTextDataset(train_eeg, train_txt, fit_scaler=True)
+    test_set  = EEGTextDataset(test_eeg, test_txt, scaler=train_set.scaler, fit_scaler=False)
 
-    # === Training ===
+    # === Diagnostics: check scaling ===
+    print("\n[Scaler diagnostics]")
+    print(f"Train EEG scaled mean: {train_set.eeg.mean():.4f}, std: {train_set.eeg.std():.4f}")
+    print(f"Test EEG scaled mean: {test_set.eeg.mean():.4f}, std: {test_set.eeg.std():.4f}")
+
+    train_loader = DataLoader(train_set, batch_size=128, shuffle=True, num_workers=2, pin_memory=True)
+
+    output_dim = 77*768
+
+    # Build model
+    if feature_type == "segments":
+        if encoder_type == "glmnet": model = glmnet(output_dim, 256, 62, 400).cuda()
+        elif encoder_type == "eegnet": model = eegnet(output_dim, 62, 400).cuda()
+        elif encoder_type == "shallownet": model = shallownet(output_dim, 62, 400).cuda()
+        elif encoder_type == "deepnet": model = deepnet(output_dim, 62, 400).cuda()
+        elif encoder_type == "tsconv": model = tsconv(output_dim, 62, 400).cuda()
+        else: raise ValueError("Invalid encoder for segments")
+
+    elif feature_type == "windows":
+        if encoder_type == "conformer": model = conformer(out_dim=output_dim).cuda()
+        else: raise ValueError("Invalid encoder for windows")
+
+    elif feature_type in ["DE","PSD"]:
+        if encoder_type == "mlp": model = mlpnet(output_dim, 310).cuda()  # 62*5
+        elif encoder_type == "glfnet_mlp": model = glfnet_mlp(output_dim, 256, 310).cuda()
+        else: raise ValueError("Invalid encoder for DE/PSD")
+
+    model = ReshapeWrapper(model, n_tokens=77)
+
+    # Optimizer + scheduler
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(train_loader))
+
+    # Training loop
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0.0
-
-        with tqdm(total=len(dataloader), desc=f"Epoch {epoch+1}/{num_epochs}") as pbar:
-            for eeg, text in dataloader:
+        with tqdm(total=len(train_loader), desc=f"Epoch {epoch+1}/{num_epochs}") as pbar:
+            for eeg, text in train_loader:
                 eeg, text = eeg.cuda(non_blocking=True), text.cuda(non_blocking=True)
-
                 optimizer.zero_grad()
                 pred = model(eeg)
-                loss = F.mse_loss(pred, text)
+                if loss_type == "mse": loss = F.mse_loss(pred, text)
+                elif loss_type == "cosine": loss = cosine_loss(pred, text)
+                elif loss_type == "contrastive": loss = contrastive_loss(pred, text)
+                elif loss_type == "mse+cosine": loss = mse_cosine_loss(pred, text)
+                elif loss_type == "mse+contrastive": loss = mse_contrastive_loss(pred, text)
+                elif loss_type == "cosine+contrastive": loss = cosine_contrastive_loss(pred, text)
+                elif loss_type == "mse+cosine+contrastive": loss = mse_cosine_contrastive_loss(pred, text)
+                else: raise ValueError("Unknown loss type")
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
-
                 total_loss += loss.item()
                 pbar.set_postfix({"loss": f"{loss.item():.6f}"})
                 pbar.update(1)
+        print(f"[Epoch {epoch+1}] Avg {loss_type} loss: {total_loss/len(train_loader):.6f}")
 
-        avg_loss = total_loss / len(dataloader)
-        print(f"[Epoch {epoch+1}] Avg loss: {avg_loss:.6f}")
-
-    # === Save model & scaler ===
+    # Save
+    tag = f"{feature_type}_{encoder_type}_{loss_type}"
     ckpt_path   = os.path.join(save_root, f"semantic_predictor_{tag}.pt")
     scaler_path = os.path.join(save_root, f"scaler_{tag}.pkl")
-
     torch.save({"state_dict": model.state_dict()}, ckpt_path)
-    with open(scaler_path, "wb") as f:
-        pickle.dump(dataset.scaler, f)
-
-    print(f"Model saved to: {ckpt_path}")
-    print(f"Scaler saved to: {scaler_path}")
+    with open(scaler_path, "wb") as f: pickle.dump(train_set.scaler, f)
+    print(f"Model saved to {ckpt_path}\nScaler saved to {scaler_path}")

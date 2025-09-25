@@ -1,7 +1,7 @@
 # EEG2Video_data/
 # └── processed/
 #     ├── EEG_segments/                          # segmented raw EEG
-#     │   ├── sub1.npy        → [7,40,5,400,62]   (7 blocks, 40 classes, 5 clips,
+#     │   ├── sub1.npy        → [7,40,5,62, 400]   (7 blocks, 40 classes, 5 clips,
 #     │   ├── sub2.npy           2s segment with 400 samples at 200 Hz × 62 channels)
 #     │   └── ...
 #     │
@@ -48,7 +48,7 @@
 #               "BLIP_text"       → [7,40,5] captions
 #               "BLIP_embeddings" → [7,40,5,77,768]
 #               "EEG_data"        → dict of subjects:
-#                                    EEG_segments[subX] → [7,40,5,400,62]
+#                                    EEG_segments[subX] → [7,40,5,62, 400]
 #                                    EEG_windows[subX]  → [7,40,5,7,62,100]
 #                                    EEG_DE[subX]       → [7,40,5,62,5]
 #                                    EEG_PSD[subX]      → [7,40,5,62,5]
