@@ -87,7 +87,7 @@ def main():
             encoder = EncoderClass(
                 n_chans=62,
                 n_outputs=512,
-                input_window_samples=100,
+                n_times=100,           # <-- use this
                 final_conv_length="auto"
             ).to(device)
             semantic = SemanticPredictor(input_dim=512).to(device)
