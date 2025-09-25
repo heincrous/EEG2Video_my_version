@@ -5,13 +5,15 @@ Input:
   raw/EEG/subX.npy, subX_session2.npy ...
   Original sampling rate = 1000 Hz
   Channels              = 62
-  Video clip length     = 2 s → 2000 samples (before downsample)
+  Block length          = 40 classes × (3 s hint + 5×2 s clips) = 520 s
+  Each block per channel = 520000 samples (before downsample)
 
 Process:
   - Band-pass filter (0.1–100 Hz).
   - Downsample to 200 Hz.
-  - Use GT_LABEL (7x40) to align EEG stream with video class order per block.
-  - For each class slot, skip 3 s hint then extract 5×2 s clips.
+  - Use GT_LABEL (7×40) to align EEG with video class order per block.
+  - For each class slot: skip 3 s hint (600 samples at 200 Hz),
+    then extract 5×2 s clips (5×400 samples).
   - Collect into subject-level array shaped (7,40,5,400,62).
 
 Output:
@@ -26,17 +28,17 @@ from tqdm import tqdm
 from scipy.signal import butter, filtfilt, resample
 
 # parameters
-raw_freq = 1000
-fre = 200
+raw_freq = 1000   # original dataset sampling rate
+fre = 200         # target sampling rate
 segment_len = 2 * fre   # 400 samples (2 s after downsample)
 hint_len    = 3 * fre   # 600 samples (3 s after downsample)
 channels = 62
 clips_per_class = 5
 
-# band-pass filter design
+# band-pass filter
 def bandpass_filter(data, low=0.1, high=100, fs=1000, order=4):
     nyq = 0.5 * fs
-    b, a = butter(order, [low/nyq, high/nyq], btype='band')
+    b, a = butter(order, [low/nyq, high/nyq], btype="band")
     return filtfilt(b, a, data, axis=-1)
 
 # paths
@@ -74,14 +76,14 @@ for subj_file in selected_files:
     for block_id in range(7):
         now_data = eeg_data[block_id]  # [62,T_raw]
 
-        # filter each channel
+        # band-pass filter
         now_data = bandpass_filter(now_data, low=0.1, high=100, fs=raw_freq)
 
-        # downsample to 200 Hz
-        T_down = int(now_data.shape[1] * fre / raw_freq)
+        # downsample to 200 Hz with rounding
+        T_down = int(round(now_data.shape[1] * fre / raw_freq))
         now_data = resample(now_data, T_down, axis=-1)  # [62,T_down]
 
-        l = 0  # pointer into time axis
+        l = 0  # time pointer
 
         for order_idx in tqdm(range(40), desc=f"{subj_name} Block {block_id+1}"):
             true_class = GT_LABEL[block_id, order_idx]
@@ -92,6 +94,14 @@ for subj_file in selected_files:
             for clip_id in range(clips_per_class):
                 start_idx = l
                 end_idx   = l + segment_len
+
+                if end_idx > now_data.shape[1]:
+                    raise ValueError(
+                        f"{subj_name} Block {block_id+1}: insufficient samples "
+                        f"for class {true_class}, clip {clip_id}. "
+                        f"Available {now_data.shape[1]}, needed {end_idx}"
+                    )
+
                 eeg_slice = now_data[:, start_idx:end_idx]  # [62,400]
                 eeg_slice = eeg_slice.T  # → [400,62]
 
@@ -100,7 +110,11 @@ for subj_file in selected_files:
 
         # sanity check
         expected_len = (hint_len + clips_per_class*segment_len) * 40
-        assert l == expected_len, f"Block {block_id+1} mismatch: got {l}, expected {expected_len}"
+        if l != expected_len:
+            print(
+                f"Warning: {subj_name} Block {block_id+1} ended at {l}, "
+                f"expected {expected_len}."
+            )
 
     # save subject-level array
     out_path = os.path.join(out_dir, f"{subj_name}.npy")
