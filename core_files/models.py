@@ -318,4 +318,40 @@ class glfnet_mlp(nn.Module):
         local_feat = self.occipital_localnet(occipital_x)
         out = self.out(torch.cat((global_feat, local_feat), dim=1))
         return out
+    
+# ================================
+# GLMNet (Global–Local Multi-branch Network, for raw EEG windows)
+# ================================
+class glmnet(nn.Module):
+    def __init__(self, out_dim, emb_dim=256, C=62, T=100):
+        super().__init__()
+        # global branch on all channels
+        self.globalnet = shallownet(emb_dim, C, T)
+        # occipital branch (last 12 channels: indices 50–61)
+        self.occipital_index = list(range(50, 62))
+        self.localnet = shallownet(emb_dim, len(self.occipital_index), T)
+        # projection after concatenation
+        self.out = nn.Linear(emb_dim * 2, out_dim)
+
+    def forward(self, x):  # x: (B, W, C, T)
+        B, W, C, T = x.shape
+        x = x.view(B * W, 1, C, T)
+
+        # global features
+        global_feat = self.globalnet.net(x)
+        global_feat = global_feat.view(global_feat.size(0), -1)
+        global_feat = self.globalnet.out(global_feat)
+
+        # local features (occipital subset)
+        occipital_x = x[:, :, self.occipital_index, :]
+        local_feat = self.localnet.net(occipital_x)
+        local_feat = local_feat.view(local_feat.size(0), -1)
+        local_feat = self.localnet.out(local_feat)
+
+        # combine
+        combined = torch.cat((global_feat, local_feat), dim=1)
+        out = self.out(combined)
+
+        return out.view(B, W, -1)
+
 

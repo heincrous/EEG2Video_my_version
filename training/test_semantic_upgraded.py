@@ -16,7 +16,7 @@ repo_root = "/content/EEG2Video_my_version"
 sys.path.append(repo_root)
 from core_files.models import (
     eegnet, shallownet, deepnet, tsconv, conformer, mlpnet,
-    glfnet, glfnet_mlp
+    glfnet, glfnet_mlp, glmnet   # <-- added glmnet
 )
 
 # === Wrapper for CNN-based encoders ===
@@ -25,11 +25,7 @@ class WindowEncoderWrapper(torch.nn.Module):
         super().__init__()
         self.base = base_encoder
     def forward(self, x):  # (B,7,62,100)
-        B, W, C, T = x.shape
-        x = x.view(B*W, 1, C, T)
-        feats = self.base(x)
-        feats = feats.view(B, W, -1)
-        return feats.mean(1)
+        return self.base(x)  # glmnet already returns (B,W,feat)
 
 # === Reshape wrapper (flat -> (77,768)) ===
 class ReshapeWrapper(torch.nn.Module):
@@ -84,6 +80,8 @@ def build_model(feature_type, encoder_type, output_dim, input_dim=None):
             return WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
         elif encoder_type == "conformer":
             return conformer(out_dim=output_dim)
+        elif encoder_type == "glmnet":   # <-- added glmnet support
+            return WindowEncoderWrapper(glmnet(out_dim=output_dim, emb_dim=256, C=62, T=100), out_dim=output_dim)
         else:
             raise ValueError(f"Unknown encoder type for windows: {encoder_type}")
     else:

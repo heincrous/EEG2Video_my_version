@@ -19,7 +19,7 @@ sys.path.append(repo_root)
 
 from core_files.models import (
     eegnet, shallownet, deepnet, tsconv, conformer, mlpnet,
-    glfnet, glfnet_mlp
+    glfnet, glfnet_mlp, glmnet   # <-- added glmnet
 )
 
 # ==========================================
@@ -76,10 +76,7 @@ class WindowEncoderWrapper(nn.Module):
         self.base = base_encoder
     def forward(self, x):
         B, W, C, T = x.shape
-        x = x.view(B*W, 1, C, T)
-        feats = self.base(x)
-        feats = feats.view(B, W, -1)
-        return feats.mean(1)
+        return self.base(x)  # base already returns (B,W,feat) for glmnet, others are reshaped below
 
 class ReshapeWrapper(nn.Module):
     def __init__(self, base_model, n_tokens=77):
@@ -95,7 +92,7 @@ class ReshapeWrapper(nn.Module):
 # ==========================================
 def cosine_loss(pred, target):
     pred = F.normalize(pred.view(pred.size(0), -1), dim=-1)
-    target = F.normalize(target.view(target.size(0), -1), dim=-1)
+    target = F.normalize(target.view(pred.size(0), -1), dim=-1)
     return 1 - (pred * target).sum(dim=-1).mean()
 
 def contrastive_loss(pred, target, temperature=0.07):
@@ -129,7 +126,7 @@ if __name__ == "__main__":
     feature_type = input("\nEnter feature type (DE / PSD / windows): ").strip()
 
     if feature_type == "windows":
-        print("\nEncoders available for windows: mlp / eegnet / shallownet / deepnet / tsconv / conformer")
+        print("\nEncoders available for windows: mlp / eegnet / shallownet / deepnet / tsconv / conformer / glmnet")
         encoder_type = input("Enter encoder type: ").strip()
     elif feature_type in ["DE", "PSD"]:
         print("\nEncoders available for DE/PSD: mlp / glfnet / glfnet_mlp")
@@ -158,7 +155,6 @@ if __name__ == "__main__":
         eeg, txt = next(iter(dataloader))
         output_dim = 77*768
 
-        # Build trial model
         if feature_type in ["DE", "PSD"]:
             if encoder_type == "mlp":
                 model = mlpnet(out_dim=output_dim, input_dim=eeg[0].numel())
@@ -179,6 +175,8 @@ if __name__ == "__main__":
                 model = WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
             elif encoder_type == "conformer":
                 model = conformer(out_dim=output_dim)
+            elif encoder_type == "glmnet":
+                model = WindowEncoderWrapper(glmnet(out_dim=output_dim, emb_dim=256, C=62, T=100), out_dim=output_dim)
         model = ReshapeWrapper(model, n_tokens=77)
         with torch.no_grad():
             out = model(eeg)
@@ -222,6 +220,8 @@ if __name__ == "__main__":
             model = WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim).cuda()
         elif encoder_type == "conformer":
             model = conformer(out_dim=output_dim).cuda()
+        elif encoder_type == "glmnet":
+            model = WindowEncoderWrapper(glmnet(out_dim=output_dim, emb_dim=256, C=62, T=100), out_dim=output_dim).cuda()
     model = ReshapeWrapper(model, n_tokens=77)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
