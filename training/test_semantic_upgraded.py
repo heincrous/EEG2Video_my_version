@@ -32,11 +32,11 @@ class FusionModel(nn.Module):
 # Semantic predictor
 # -------------------------------------------------
 class SemanticPredictor(nn.Module):
-    def __init__(self, input_dim, hidden=[512,512], out_dim=77*768):
+    def __init__(self, input_dim, hidden=[512,512], out_dim=768, dropout=0.3):
         super().__init__()
         layers, prev = [], input_dim
         for h in hidden:
-            layers += [nn.Linear(prev, h), nn.ReLU()]
+            layers += [nn.Linear(prev, h), nn.ReLU(), nn.Dropout(dropout)]
             prev = h
         layers.append(nn.Linear(prev, out_dim))
         self.net = nn.Sequential(*layers)
