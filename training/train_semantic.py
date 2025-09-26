@@ -96,12 +96,12 @@ def main():
     # dataset split
     ds = EEG2BLIPDataset(de_flat, blip_flat)
     n = len(ds); split=int(0.8*n)
-    train_loader = DataLoader(torch.utils.data.Subset(ds, range(split)), batch_size=32, shuffle=True)
-    val_loader   = DataLoader(torch.utils.data.Subset(ds, range(split,n)), batch_size=32)
+    train_loader = DataLoader(torch.utils.data.Subset(ds, range(split)), batch_size=256, shuffle=True)
+    val_loader   = DataLoader(torch.utils.data.Subset(ds, range(split,n)), batch_size=256)
 
     # model
     model = SemanticPredictor(in_dim=310, out_shape=(77,768)).to(device)
-    train(model, train_loader, val_loader, device, epochs=50)
+    train(model, train_loader, val_loader, device, epochs=400)
 
     # save
     torch.save({'state_dict': model.state_dict()}, 
