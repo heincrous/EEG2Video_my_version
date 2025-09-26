@@ -173,7 +173,7 @@ class EEG2BLIPDataset(Dataset):
 # -------------------------------------------------
 # Train loop
 # -------------------------------------------------
-def train(model, train_loader, val_loader, feat_dict, device, epochs=100, lr=5e-4):
+def train(model, train_loader, val_loader, feat_dict, device, epochs=50, lr=5e-4):
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs*len(train_loader))
 
@@ -257,13 +257,13 @@ def main():
     # dataset
     ds = EEG2BLIPDataset(feat_dict, blip_flat)
     n = len(ds); split=int(0.8*n)
-    train_loader = DataLoader(torch.utils.data.Subset(ds, range(split)), batch_size=128, shuffle=True)
-    val_loader   = DataLoader(torch.utils.data.Subset(ds, range(split,n)), batch_size=128)
+    train_loader = DataLoader(torch.utils.data.Subset(ds, range(split)), batch_size=512, shuffle=True)
+    val_loader   = DataLoader(torch.utils.data.Subset(ds, range(split,n)), batch_size=512)
 
     # model
     in_dim = ds.X.shape[1]
     model = SemanticPredictor(in_dim=in_dim, out_shape=(77,768)).to(device)
-    history = train(model, train_loader, val_loader, feat_dict, device, epochs=100)
+    history = train(model, train_loader, val_loader, feat_dict, device, epochs=50)
 
     # save
     out_path = f"/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor_{subj_name}_{'_'.join(choices)}.pt"
