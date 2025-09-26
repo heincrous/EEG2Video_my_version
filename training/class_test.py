@@ -51,7 +51,7 @@ embed = class_embeds[chosen_class]  # (77,768)
 
 # --- Prepare tensor for pipeline (mimic text pipeline) ---
 embed = torch.tensor(embed, dtype=torch.float32, device=device).unsqueeze(0)  # (1,77,768)
-num_videos_per_eeg = 1
+num_videos_per_eeg = 6
 embed = embed.repeat(num_videos_per_eeg, 1, 1)  # (1,77,768) still, but expandable if >1
 
 print("Final embed shape:", embed.shape, "dtype:", embed.dtype)
