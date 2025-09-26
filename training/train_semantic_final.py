@@ -132,18 +132,11 @@ def train(model, train_loader, val_loader, device, cfg, feat_name):
               f"Var(samples) {stats['pred_var_samp']:.6f}")
         history.append(stats)
 
-        # Plot after training
-    epochs = [h["epoch"] for h in history]
-    val_losses = [h["val_loss"] for h in history]
-    var_dims = [h["pred_var_dim"] for h in history]
+    # Plot after training (drop first 30 epochs completely)
+    epochs = [h["epoch"] for h in history][30:]
+    val_losses = [h["val_loss"] for h in history][30:]
+    var_dims = [h["pred_var_dim"] for h in history][30:]
 
-    # Remove burn-in epochs
-    burnin = 30
-    epochs = epochs[burnin:]
-    val_losses = val_losses[burnin:]
-    var_dims = var_dims[burnin:]
-
-    # Compute slope of variance trend
     if len(epochs) > 1:
         slope = np.polyfit(epochs, var_dims, 1)[0]
     else:
@@ -172,6 +165,34 @@ def train(model, train_loader, val_loader, device, cfg, feat_name):
     plt.close()
 
     return history
+
+# -------------------------------------------------
+# Evaluate on held-out test set
+# -------------------------------------------------
+def evaluate(model, test_loader, device, cfg, feat_name):
+    model.eval(); test_loss=0; preds=[]
+    with torch.no_grad():
+        for eeg, blip in test_loader:
+            eeg, blip = eeg.to(device), blip.to(device)
+            pred = model(eeg)
+            if cfg["loss_type"] == "mse":
+                test_loss += F.mse_loss(pred, blip).item()
+            elif cfg["loss_type"] == "cosine":
+                test_loss += cosine_loss(pred, blip).item()
+            else:
+                test_loss += contrastive_loss(pred, blip).item()
+            preds.append(pred.view(pred.size(0), -1).cpu())
+    preds = torch.cat(preds, dim=0)
+
+    stats = {
+        "test_loss": test_loss/len(test_loader),
+        "pred_var_dim": preds.var(dim=0).mean().item(),
+        "pred_var_samp": preds.var(dim=1).mean().item()
+    }
+    print(f"[{feat_name}] TestLoss {stats['test_loss']:.4f}, "
+          f"Var(dim) {stats['pred_var_dim']:.6f}, "
+          f"Var(samples) {stats['pred_var_samp']:.6f}")
+    return stats
 
 # -------------------------------------------------
 # Utility to load features
@@ -219,18 +240,44 @@ def main():
     for combo in combos:
         feat_dict = load_features(combo, subj_name, drive_root)
         ds = EEG2BLIPDataset(feat_dict, blip_flat)
-        n = len(ds); split=int(0.8*n)
-        train_loader = DataLoader(torch.utils.data.Subset(ds, range(split)), batch_size=CFG["batch_size"], shuffle=True)
-        val_loader   = DataLoader(torch.utils.data.Subset(ds, range(split,n)), batch_size=CFG["batch_size"])
+
+        # --- Fixed block-wise split ---
+        block_size = 200
+        train_blocks = [0,1,2,3,4]
+        val_blocks   = [5]
+        test_blocks  = [6]
+
+        def block_indices(block_list):
+            idxs = []
+            for b in block_list:
+                start = b * block_size
+                end   = (b+1) * block_size
+                idxs.extend(range(start, end))
+            return idxs
+
+        train_idx = block_indices(train_blocks)
+        val_idx   = block_indices(val_blocks)
+        test_idx  = block_indices(test_blocks)
+
+        train_loader = DataLoader(torch.utils.data.Subset(ds, train_idx),
+                                  batch_size=CFG["batch_size"], shuffle=True)
+        val_loader   = DataLoader(torch.utils.data.Subset(ds, val_idx),
+                                  batch_size=CFG["batch_size"])
+        test_loader  = DataLoader(torch.utils.data.Subset(ds, test_idx),
+                                  batch_size=CFG["batch_size"])
 
         in_dim = ds.X.shape[1]
-        model = SemanticPredictor(in_dim=in_dim, out_shape=(77,768), use_dropout=CFG["use_dropout"]).to(device)
+        model = SemanticPredictor(in_dim=in_dim, out_shape=(77,768),
+                                  use_dropout=CFG["use_dropout"]).to(device)
         feat_name = "_".join(combo)
         train(model, train_loader, val_loader, device, CFG, feat_name)
 
         out_path = f"/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints/semantic_predictor_{subj_name}_{feat_name}.pt"
         torch.save({'state_dict': model.state_dict()}, out_path)
         print(f"Saved model to {out_path}")
+
+        # Evaluate on held-out block 7
+        evaluate(model, test_loader, device, CFG, feat_name)
 
 # -------------------------------------------------
 # Config dictionary
@@ -240,7 +287,7 @@ CFG = {
     "use_var_reg": False,
     "use_dropout": False,
     "lr": 5e-4,
-    "batch_size": 128,
+    "batch_size": 32,
     "epochs": 100,
 }
 
