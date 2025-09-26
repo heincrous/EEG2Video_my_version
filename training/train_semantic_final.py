@@ -283,12 +283,12 @@ def main():
 # Config dictionary
 # -------------------------------------------------
 CFG = {
-    "loss_type": "mse",        # "mse", "cosine", "contrastive"
-    "use_var_reg": True,
+    "loss_type": "contrastive",        # "mse", "cosine", "contrastive"
+    "use_var_reg": True, # False default
     "use_dropout": False,
-    "lr": 5e-4,
-    "batch_size": 64,
-    "epochs": 50,
+    "lr": 1e-4, # 5e-4 default
+    "batch_size": 256, #32 default
+    "epochs": 100,
 }
 
 if __name__ == "__main__":
