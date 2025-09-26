@@ -11,21 +11,35 @@ import matplotlib.pyplot as plt
 import copy
 
 # -------------------------------------------------
-# Semantic Predictor MLP
+# Semantic Predictor MLP (adaptive hidden sizes)
 # -------------------------------------------------
 class SemanticPredictor(nn.Module):
-    def __init__(self, in_dim, out_shape=(77,768), use_dropout=False):
+    def __init__(self, in_dim, out_shape=(77,768), use_dropout=False, feat_name="de"):
         super().__init__()
         out_dim = out_shape[0] * out_shape[1]
-        layers = [nn.Linear(in_dim, 10000), nn.ReLU()]
-        for _ in range(3):
-            layers.append(nn.Linear(10000, 10000))
+
+        # pick hidden layer sizes depending on feature type
+        if "segments" in feat_name:
+            hidden = [4096, 2048, 1024]
+        elif "windows" in feat_name:
+            hidden = [2048, 1024, 512]
+        elif "psd" in feat_name or "de" in feat_name:
+            hidden = [512, 512, 512]
+        else:
+            hidden = [1024, 512]
+
+        layers = []
+        prev = in_dim
+        for h in hidden:
+            layers.append(nn.Linear(prev, h))
             layers.append(nn.ReLU())
             if use_dropout:
                 layers.append(nn.Dropout(0.3))
-        layers.append(nn.Linear(10000, out_dim))
+            prev = h
+        layers.append(nn.Linear(prev, out_dim))
         self.mlp = nn.Sequential(*layers)
         self.out_shape = out_shape
+
     def forward(self, x):
         out = self.mlp(x)
         return out.view(-1, *self.out_shape)
@@ -246,7 +260,12 @@ def main():
         test_loader  = DataLoader(torch.utils.data.Subset(ds, test_idx), batch_size=CFG["batch_size"])
 
         in_dim = ds.X.shape[1]
-        model = SemanticPredictor(in_dim=in_dim, out_shape=(77,768), use_dropout=CFG["use_dropout"]).to(device)
+        model = SemanticPredictor(
+            in_dim=in_dim,
+            out_shape=(77,768),
+            use_dropout=CFG["use_dropout"],
+            feat_name=feat_name
+        ).to(device)
         feat_name = "_".join(combo)
 
         history, ckpt_path = train(model, train_loader, val_loader, device, CFG, feat_name, subj_name)
