@@ -1,3 +1,6 @@
+# ==========================================
+# evaluate_semantic_predictor_block7.py
+# ==========================================
 import os, torch, numpy as np
 import torch.nn.functional as F
 from transformers import CLIPTokenizer, CLIPTextModel
@@ -32,41 +35,26 @@ tokenizer   = CLIPTokenizer.from_pretrained(sd_path, subfolder="tokenizer")
 def encode_texts(texts):
     inputs = tokenizer(texts, padding=True, return_tensors="pt", truncation=True).to(device)
     outputs = clip_model(**inputs)
-    return outputs.last_hidden_state.mean(dim=1)  # pooled embedding [N,768]
-
-# === Build caption bank per class ===
-def build_caption_bank(caption_dir, num_classes=40):
-    class_embeds = {}
-    for c in range(num_classes):
-        cap_path = os.path.join(caption_dir, f"class{c:02d}_captions.txt")
-        with open(cap_path,"r") as f:
-            caps = [line.strip() for line in f if line.strip()]
-        embeds = encode_texts(caps)
-        class_embeds[c] = embeds
-    return class_embeds
+    return outputs.last_hidden_state.mean(dim=1)  # pooled [N,768]
 
 # === Top-k accuracy evaluation ===
-def evaluate_topk(predictor, eeg_feats, labels, caption_bank, k=5):
+def evaluate_topk(predictor, eeg_feats, labels, blip_embeds, k=5):
     predictor.eval()
     correct = 0
     total = len(labels)
 
-    all_refs = []
-    all_ref_classes = []
-    for c, embeds in caption_bank.items():
-        all_refs.append(embeds)
-        all_ref_classes.extend([c]*embeds.size(0))
-    all_refs = torch.cat(all_refs, dim=0)   # [Nref, 768]
-    all_ref_classes = torch.tensor(all_ref_classes, device=device)
+    # build reference bank from block 7 BLIP embeddings
+    all_refs = torch.tensor(blip_embeds, dtype=torch.float32).to(device)  # [Nref, 77,768]
+    all_refs = all_refs.mean(dim=1)  # pool tokens -> [Nref,768]
 
     with torch.no_grad():
         for x, y in zip(eeg_feats, labels):
             x = torch.tensor(x, dtype=torch.float32).unsqueeze(0).to(device)
-            pred = predictor(x).mean(dim=1)  # average tokens -> [1,768]
+            pred = predictor(x).mean(dim=1)  # [1,768]
             sims = F.cosine_similarity(pred, all_refs)  # [Nref]
-            topk_idx = sims.topk(k).indices
-            topk_classes = all_ref_classes[topk_idx]
-            if y in topk_classes:
+            # top-k indices
+            topk_idx = sims.topk(k).indices.cpu().numpy()
+            if y in topk_idx:  # ground-truth class index in top-k
                 correct += 1
     return correct/total
 
@@ -74,20 +62,23 @@ def evaluate_topk(predictor, eeg_feats, labels, caption_bank, k=5):
 if __name__ == "__main__":
     # load predictor
     predictor = SemanticPredictor(in_dim=310)  # adjust in_dim to match training
-    ckpt_path = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints/semantic_predictor.pt"
+    ckpt_path = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints/semantic_predictor_sub1_de_best.pt"
     predictor.load_state_dict(torch.load(ckpt_path, map_location=device))
     predictor.to(device)
 
-    # load EEG features + labels
-    eeg_feats = np.load("/content/drive/MyDrive/EEG2Video_data/test_eeg_feats.npy")   # shape [N, in_dim]
-    labels    = np.load("/content/drive/MyDrive/EEG2Video_data/test_labels.npy")      # shape [N]
+    # load EEG features (sub1.npy) and select block 7
+    eeg_all = np.load("/content/drive/MyDrive/EEG2Video_data/processed/sub1.npy")  # [7,40,5,62,5] for DE
+    eeg_block7 = eeg_all[6]  # block index 6 = 7th block -> shape [40,5,62,5]
+    eeg_feats = eeg_block7.reshape(-1, 62*5)  # [200,310]
+    labels = np.repeat(np.arange(40), 5)      # [200]
 
-    # build caption bank
-    caption_bank = build_caption_bank("/content/drive/MyDrive/EEG2Video_data/BLIP_captions", num_classes=40)
+    # load BLIP embeddings and select block 7
+    blip_all = np.load("/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/BLIP_embeddings.npy")  # [7,40,5,77,768]
+    blip_block7 = blip_all[6].reshape(-1, 77,768)  # [200,77,768]
 
     # run eval
-    acc1 = evaluate_topk(predictor, eeg_feats, labels, caption_bank, k=1)
-    acc5 = evaluate_topk(predictor, eeg_feats, labels, caption_bank, k=5)
+    acc1 = evaluate_topk(predictor, eeg_feats, labels, blip_block7, k=1)
+    acc5 = evaluate_topk(predictor, eeg_feats, labels, blip_block7, k=5)
 
-    print(f"Top-1 Accuracy: {acc1*100:.2f}%")
-    print(f"Top-5 Accuracy: {acc5*100:.2f}%")
+    print(f"Block 7 Top-1 Accuracy: {acc1*100:.2f}%")
+    print(f"Block 7 Top-5 Accuracy: {acc5*100:.2f}%")
