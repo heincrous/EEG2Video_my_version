@@ -1,6 +1,6 @@
 # ==========================================
-# train_semantic_aux.py
-# sub1 only, auxiliary classifier signal
+# train_semantic_aux_strong.py
+# sub1 only, classifier emphasized
 # ==========================================
 import os, sys
 import numpy as np
@@ -15,7 +15,7 @@ sys.path.append(repo_root)
 from core_files.models import eegnet, conformer, glfnet_mlp
 
 # -------------------------------------------------
-# Fusion model (intact, with classifier)
+# Fusion model (with classifier)
 # -------------------------------------------------
 class FusionModel(nn.Module):
     def __init__(self):
@@ -37,7 +37,7 @@ class FusionModel(nn.Module):
         return self.classifier(fused)
 
 # -------------------------------------------------
-# Semantic predictor (input = feats + classifier logits)
+# Semantic predictor (input = feats + scaled classifier logits)
 # -------------------------------------------------
 class SemanticPredictor(nn.Module):
     def __init__(self, input_dim=512+40, out_dim=(77,768)):
@@ -54,10 +54,11 @@ class SemanticPredictor(nn.Module):
 # Dataset
 # -------------------------------------------------
 class EEG2BLIPDataset(Dataset):
-    def __init__(self, Xs, Ys):
+    def __init__(self, Xs, Ys, labels):
         self.Xs = Xs
         Ys = Ys / (np.linalg.norm(Ys, axis=-1, keepdims=True) + 1e-8)
         self.Ys = Ys.astype(np.float32)
+        self.labels = labels.astype(np.int64)
         self.keys = list(Xs.keys())
     def __len__(self): return len(self.Ys)
     def __getitem__(self, idx):
@@ -68,10 +69,11 @@ class EEG2BLIPDataset(Dataset):
                 x = x.unsqueeze(0)
             out[k] = x
         target = torch.tensor(self.Ys[idx], dtype=torch.float32)
-        return out, target
+        label = torch.tensor(self.labels[idx], dtype=torch.long)
+        return out, target, label
 
 # -------------------------------------------------
-# Loss (MSE + cosine)
+# Loss
 # -------------------------------------------------
 def semantic_loss(pred, target, alpha=0.5):
     pred = F.normalize(pred, dim=-1)
@@ -82,34 +84,40 @@ def semantic_loss(pred, target, alpha=0.5):
     ).mean()
     return mse + alpha * cos
 
+def joint_loss(pred, target, cls_logits, labels, alpha=0.5, beta=1.0):
+    sem = semantic_loss(pred, target, alpha)
+    ce = F.cross_entropy(cls_logits, labels)
+    return sem + beta * ce
+
 # -------------------------------------------------
 # Train loop
 # -------------------------------------------------
-def train(fusion, predictor, train_loader, val_loader, device, epochs=10, lr=1e-3):
+def train(fusion, predictor, train_loader, val_loader, device,
+          epochs=10, lr=1e-3, logit_scale=5.0, beta=1.0):
     opt = optim.AdamW(predictor.parameters(), lr=lr)
     for ep in range(epochs):
         predictor.train()
-        for Xs, Ys in train_loader:
+        for Xs, Ys, labels in train_loader:
             Xs = {k:v.to(device) for k,v in Xs.items()}
-            Ys = Ys.to(device)
+            Ys, labels = Ys.to(device), labels.to(device)
             with torch.no_grad():
                 feats = fusion(Xs, return_feats=True)
                 cls_logits = fusion.classifier(feats)
-            aux = torch.cat([feats, cls_logits], dim=-1)
+            aux = torch.cat([feats, logit_scale * cls_logits], dim=-1)
             pred = predictor(aux)
-            loss = semantic_loss(pred, Ys)
+            loss = joint_loss(pred, Ys, cls_logits, labels, beta=beta)
             opt.zero_grad(); loss.backward(); opt.step()
         # validation
         predictor.eval(); all_preds=[]; val_loss,n=0,0
         with torch.no_grad():
-            for Xs, Ys in val_loader:
+            for Xs, Ys, labels in val_loader:
                 Xs = {k:v.to(device) for k,v in Xs.items()}
-                Ys = Ys.to(device)
+                Ys, labels = Ys.to(device), labels.to(device)
                 feats = fusion(Xs, return_feats=True)
                 cls_logits = fusion.classifier(feats)
-                aux = torch.cat([feats, cls_logits], dim=-1)
+                aux = torch.cat([feats, logit_scale * cls_logits], dim=-1)
                 pred = predictor(aux)
-                val_loss += semantic_loss(pred, Ys).item(); n+=1
+                val_loss += joint_loss(pred, Ys, cls_logits, labels, beta=beta).item(); n+=1
                 all_preds.append(F.normalize(pred,dim=-1).view(pred.size(0),-1).cpu())
         preds = torch.cat(all_preds,dim=0)
         print(f"Epoch {ep+1}, ValLoss {val_loss/n:.4f}, "
@@ -121,7 +129,7 @@ def train(fusion, predictor, train_loader, val_loader, device, epochs=10, lr=1e-
 # -------------------------------------------------
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    subj_name = "sub1"  # fixed
+    subj_name = "sub1"
     drive_root = "/content/drive/MyDrive/EEG2Video_data/processed"
 
     # load data
@@ -131,7 +139,7 @@ def main():
     segments = np.load(os.path.join(drive_root,"EEG_segments",f"{subj_name}.npy"))
     blip_raw = np.load(os.path.join(drive_root,"BLIP_embeddings","BLIP_embeddings.npy"))
 
-    Xs={"de":[],"psd":[],"windows":[],"segments":[]}; Ys=[]
+    Xs={"de":[],"psd":[],"windows":[],"segments":[]}; Ys=[]; labels=[]
     for b in range(7):
         for c in range(40):
             for k in range(5):
@@ -140,9 +148,11 @@ def main():
                 Xs["windows"].append(windows[b,c,k].mean(0))
                 Xs["segments"].append(segments[b,c,k])
                 Ys.append(blip_raw[b,c,k])
-    Xs={k:np.array(v) for k,v in Xs.items()}; Ys=np.array(Ys)
+                labels.append(c)  # class label
+    Xs={k:np.array(v) for k,v in Xs.items()}
+    Ys=np.array(Ys); labels=np.array(labels)
 
-    ds = EEG2BLIPDataset(Xs,Ys)
+    ds = EEG2BLIPDataset(Xs,Ys,labels)
     n = len(ds); split=int(0.8*n)
     train_loader=DataLoader(torch.utils.data.Subset(ds,range(split)),batch_size=32,shuffle=True)
     val_loader=DataLoader(torch.utils.data.Subset(ds,range(split,n)),batch_size=32)
@@ -153,7 +163,7 @@ def main():
     for p in fusion.parameters(): p.requires_grad=False
 
     predictor = SemanticPredictor(input_dim=fusion.total_dim+40).to(device)
-    train(fusion,predictor,train_loader,val_loader,device,epochs=10)
+    train(fusion,predictor,train_loader,val_loader,device,epochs=10,logit_scale=5.0,beta=1.0)
 
 if __name__=="__main__":
     main()
