@@ -14,9 +14,10 @@ import copy
 # Semantic Predictor MLP (adaptive hidden sizes)
 # -------------------------------------------------
 class SemanticPredictor(nn.Module):
-    def __init__(self, in_dim, out_shape=(77,768), use_dropout=None, feat_name="de"):
+    def __init__(self, in_dim, out_shape=(77,768), use_dropout=None, feat_name="de", loss_type="cosine"):
         super().__init__()
         out_dim = out_shape[0] * out_shape[1]
+        self.loss_type = loss_type
 
         # pick hidden layer sizes depending on feature type
         if "segments" in feat_name:
@@ -43,7 +44,11 @@ class SemanticPredictor(nn.Module):
 
     def forward(self, x):
         out = self.mlp(x)
-        return out.view(-1, *self.out_shape)
+        out = out.view(-1, *self.out_shape)
+        # normalize only if cosine loss is being used
+        if self.loss_type == "cosine":
+            out = F.normalize(out.view(out.size(0), -1), dim=-1).view(-1, *self.out_shape)
+        return out
 
 # -------------------------------------------------
 # Dataset wrapper
