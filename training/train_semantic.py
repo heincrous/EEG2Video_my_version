@@ -51,7 +51,7 @@ class EEG2BLIPDataset(Dataset):
 # -------------------------------------------------
 # Train loop
 # -------------------------------------------------
-def train(model, train_loader, val_loader, device, epochs=50, lr=5e-4):
+def train(model, train_loader, val_loader, device, epochs=100, lr=5e-4):
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs*len(train_loader))
     for ep in range(epochs):
@@ -101,7 +101,7 @@ def main():
 
     # model
     model = SemanticPredictor(in_dim=310, out_shape=(77,768)).to(device)
-    train(model, train_loader, val_loader, device, epochs=400)
+    train(model, train_loader, val_loader, device, epochs=100)
 
     # save
     torch.save({'state_dict': model.state_dict()}, 
