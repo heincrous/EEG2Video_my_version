@@ -1,6 +1,6 @@
 # ==========================================
-# train_semantic_kfold_collapsecheck.py
-# (flattened variance reg + optional InfoNCE)
+# train_semantic_experiments.py
+# Minimal baseline + toggles
 # ==========================================
 import os, sys
 import numpy as np
@@ -10,13 +10,12 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 
-# === Repo imports ===
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(repo_root)
 from core_files.models import eegnet, conformer, glfnet_mlp
 
 # -------------------------------------------------
-# Fusion model (fixed 4 encoders)
+# Fusion (frozen)
 # -------------------------------------------------
 class FusionModel(nn.Module):
     def __init__(self):
@@ -28,209 +27,153 @@ class FusionModel(nn.Module):
             "segments": conformer(out_dim=128, C=62, T=400),
         })
         self.total_dim = 128 * 4
-        self.classifier = nn.Linear(self.total_dim, 40)
-
-    def forward(self, inputs, return_feats=False):
+    def forward(self, inputs):
         feats = [enc(inputs[name]) for name, enc in self.encoders.items()]
-        fused = torch.cat(feats, dim=-1)
-        if return_feats:
-            return fused
-        return self.classifier(fused)
+        return torch.cat(feats, dim=-1)
 
 # -------------------------------------------------
-# Semantic predictor (structured output: [77,768])
+# Predictor
 # -------------------------------------------------
 class SemanticPredictor(nn.Module):
     def __init__(self, input_dim=512, out_dim=(77,768)):
         super().__init__()
-        self.fc1 = nn.Linear(input_dim, 2048)
-        self.fc2 = nn.Linear(2048, 4096)
-        self.fc3 = nn.Linear(4096, out_dim[0]*out_dim[1])
+        self.fc1 = nn.Linear(input_dim, 1024)
+        self.fc2 = nn.Linear(1024, out_dim[0]*out_dim[1])
         self.out_dim = out_dim
     def forward(self, x):
         x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
+        x = self.fc2(x)
         return x.view(-1, *self.out_dim)  # [B,77,768]
 
 # -------------------------------------------------
-# Dataset (normalise BLIP targets once here)
+# Dataset
 # -------------------------------------------------
 class EEG2BLIPDataset(Dataset):
-    def __init__(self, Xs, Ys):
+    def __init__(self, Xs, Ys, normalise_targets=False):
         self.Xs = Xs
-        Ys = Ys / (np.linalg.norm(Ys, axis=-1, keepdims=True) + 1e-8)
+        if normalise_targets:
+            Ys = Ys / (np.linalg.norm(Ys, axis=-1, keepdims=True) + 1e-8)
         self.Ys = Ys.astype(np.float32)
         self.keys = list(Xs.keys())
-    def __len__(self):
-        return len(self.Ys)
+    def __len__(self): return len(self.Ys)
     def __getitem__(self, idx):
         out = {}
         for k in self.keys:
             x = torch.tensor(self.Xs[k][idx], dtype=torch.float32)
-            if k in ["windows", "segments"]:
-                x = x.unsqueeze(0)
+            if k in ["windows","segments"]: x = x.unsqueeze(0)
             out[k] = x
-        target = torch.tensor(self.Ys[idx], dtype=torch.float32)  # [77,768], normed
+        target = torch.tensor(self.Ys[idx], dtype=torch.float32)
         return out, target
 
 # -------------------------------------------------
-# Loss functions
+# Loss builder
 # -------------------------------------------------
-def semantic_loss(pred, target, alpha=0.5, beta=0.01, use_infonce=False, tau=0.07):
-    # Normalise
-    pred_norm = F.normalize(pred, dim=-1)
-    target_norm = F.normalize(target, dim=-1)
+def build_loss(use_mse=True, use_cosine=False, use_var=False, use_infonce=False,
+               alpha=0.5, beta=0.01, tau=0.07, normalise_preds=False):
+    def loss_fn(pred, target):
+        if normalise_preds:
+            pred = F.normalize(pred, dim=-1)
+        target = F.normalize(target, dim=-1)  # always safe
 
-    # Flatten for cosine + variance
-    pred_flat = pred_norm.view(pred_norm.size(0), -1)
-    target_flat = target_norm.view(target_norm.size(0), -1)
+        pred_flat = pred.view(pred.size(0), -1)
+        target_flat = target.view(target.size(0), -1)
 
-    mse = F.mse_loss(pred_norm, target_norm)
-    cos = 1 - F.cosine_similarity(pred_flat, target_flat, dim=-1).mean()
-    var_loss = -pred_flat.var(dim=0).mean()
-
-    loss = mse + alpha * cos + beta * var_loss
-
-    # Optional InfoNCE
-    if use_infonce:
-        logits = pred_flat @ target_flat.T / tau
-        labels = torch.arange(pred_flat.size(0), device=pred.device)
-        infonce = F.cross_entropy(logits, labels)
-        loss += infonce
-
-    return loss
+        loss = 0.0
+        if use_mse:
+            loss += F.mse_loss(pred, target)
+        if use_cosine:
+            cos = 1 - F.cosine_similarity(pred_flat, target_flat, dim=-1).mean()
+            loss += alpha * cos
+        if use_var:
+            var_loss = -pred_flat.var(dim=0).mean()
+            loss += beta * var_loss
+        if use_infonce:
+            logits = pred_flat @ target_flat.T / tau
+            labels = torch.arange(pred_flat.size(0), device=pred.device)
+            infonce = F.cross_entropy(logits, labels)
+            loss += infonce
+        return loss
+    return loss_fn
 
 # -------------------------------------------------
-# Train 1 fold
+# Train single fold (simplified)
 # -------------------------------------------------
-def train_one_fold(fusion, predictor, train_loader, val_loader, device, subj_name,
-                   num_epochs=30, lr=1e-3, use_infonce=False):
-    optimizer = optim.AdamW(predictor.parameters(), lr=lr)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=num_epochs * len(train_loader)
-    )
-    best_val = 1e9
-    best_state_dict = None
-
-    for epoch in range(num_epochs):
-        fusion.eval(); predictor.train()
-        for Xs, blip in train_loader:
-            Xs = {k: v.to(device) for k,v in Xs.items()}
-            blip = blip.to(device)
-            with torch.no_grad():
-                feats = fusion(Xs, return_feats=True)
+def train_one_fold(fusion, predictor, train_loader, val_loader, device, loss_fn, epochs=10, lr=1e-3):
+    opt = optim.AdamW(predictor.parameters(), lr=lr)
+    for ep in range(epochs):
+        predictor.train()
+        for Xs, Ys in train_loader:
+            Xs = {k:v.to(device) for k,v in Xs.items()}
+            Ys = Ys.to(device)
+            with torch.no_grad(): feats = fusion(Xs)
             pred = predictor(feats)
-            loss = semantic_loss(pred, blip, use_infonce=use_infonce)
-            optimizer.zero_grad(); loss.backward(); optimizer.step()
-            scheduler.step()
-
-        predictor.eval(); val_loss = 0; count = 0
-        all_preds = []
+            loss = loss_fn(pred, Ys)
+            opt.zero_grad(); loss.backward(); opt.step()
+        # validation
+        predictor.eval(); all_preds = []
+        val_loss, n = 0,0
         with torch.no_grad():
-            for Xs, blip in val_loader:
-                Xs = {k: v.to(device) for k,v in Xs.items()}
-                blip = blip.to(device)
-                feats = fusion(Xs, return_feats=True)
+            for Xs, Ys in val_loader:
+                Xs = {k:v.to(device) for k,v in Xs.items()}
+                Ys = Ys.to(device)
+                feats = fusion(Xs)
                 pred = predictor(feats)
-                val_loss += semantic_loss(pred, blip, use_infonce=use_infonce).item(); count += 1
-                all_preds.append(F.normalize(pred, dim=-1).view(pred.size(0), -1).cpu())
-        val_loss /= max(1, count)
-
-        preds = torch.cat(all_preds, dim=0)
-        var_per_dim = preds.var(dim=0).mean().item()
-        var_across_samples = preds.var(dim=1).mean().item()
-
-        print(f"Epoch {epoch+1}/{num_epochs}, Val Loss {val_loss:.4f}, "
-              f"PredVar(dim) {var_per_dim:.6f}, PredVar(samples) {var_across_samples:.6f}")
-
-        if val_loss < best_val:
-            best_val = val_loss
-            best_state_dict = predictor.state_dict()
-
-    save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
-    os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, f"semantic_checkpoint_{subj_name}.pt")
-    torch.save(best_state_dict, save_path)
-    print(f"Best semantic predictor saved to: {save_path}")
-    return best_val
+                val_loss += loss_fn(pred, Ys).item(); n+=1
+                all_preds.append(F.normalize(pred,dim=-1).view(pred.size(0),-1).cpu())
+        preds = torch.cat(all_preds,dim=0)
+        print(f"Epoch {ep+1}, ValLoss {val_loss/n:.4f}, "
+              f"Var(dim) {preds.var(dim=0).mean().item():.6f}, "
+              f"Var(samples) {preds.var(dim=1).mean().item():.6f}")
 
 # -------------------------------------------------
-# K-Fold CV
-# -------------------------------------------------
-def run_cv(subj_name, drive_root, device, use_infonce=False):
-    de       = np.load(os.path.join(drive_root, "EEG_DE", f"{subj_name}.npy"))
-    psd      = np.load(os.path.join(drive_root, "EEG_PSD", f"{subj_name}.npy"))
-    windows  = np.load(os.path.join(drive_root, "EEG_windows", f"{subj_name}.npy"))
-    segments = np.load(os.path.join(drive_root, "EEG_segments", f"{subj_name}.npy"))
-
-    blip_raw = np.load(os.path.join(drive_root, "BLIP_embeddings", "BLIP_embeddings.npy"))
-    assert blip_raw.shape == (7, 40, 5, 77, 768)
-
-    all_val_losses, all_test_losses = [], []
-
-    for test_block in range(7):
-        val_block = (test_block - 1) % 7
-        train_blocks = [i for i in range(7) if i not in [test_block, val_block]]
-
-        def collect(blocks):
-            Xs = {"de": [], "psd": [], "windows": [], "segments": []}
-            Ys = []
-            for b in blocks:
-                for c in range(40):
-                    for k in range(5):
-                        Xs["de"].append(de[b,c,k])
-                        Xs["psd"].append(psd[b,c,k])
-                        Xs["windows"].append(windows[b,c,k].mean(0))
-                        Xs["segments"].append(segments[b,c,k])
-                        Ys.append(blip_raw[b,c,k])  # [77,768]
-            return {k: np.array(v) for k,v in Xs.items()}, np.array(Ys)
-
-        print(f"\n--- Fold {test_block+1}/7 ---")
-        X_train, Y_train = collect(train_blocks)
-        X_val,   Y_val   = collect([val_block])
-        X_test,  Y_test  = collect([test_block])
-
-        train_loader = DataLoader(EEG2BLIPDataset(X_train, Y_train), batch_size=32, shuffle=True)
-        val_loader   = DataLoader(EEG2BLIPDataset(X_val, Y_val), batch_size=32)
-        test_loader  = DataLoader(EEG2BLIPDataset(X_test, Y_test), batch_size=32)
-
-        fusion = FusionModel().to(device)
-        fusion_ckpt = f"/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints/fusion_checkpoint_{subj_name}.pt"
-        fusion.load_state_dict(torch.load(fusion_ckpt, map_location=device))
-        for p in fusion.parameters(): p.requires_grad = False
-
-        predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
-        val_loss = train_one_fold(fusion, predictor, train_loader, val_loader, device, subj_name, use_infonce=use_infonce)
-
-        # Test
-        predictor.eval(); test_loss = 0; count = 0
-        criterion = nn.MSELoss()
-        with torch.no_grad():
-            for Xs, blip in test_loader:
-                Xs = {k: v.to(device) for k,v in Xs.items()}; blip = blip.to(device)
-                feats = fusion(Xs, return_feats=True)
-                pred = predictor(feats)
-                pred_norm = F.normalize(pred, dim=-1)
-                test_loss += criterion(pred_norm, blip).item(); count += 1
-        test_loss /= max(1, count)
-
-        all_val_losses.append(val_loss)
-        all_test_losses.append(test_loss)
-        print(f"Fold {test_block+1}/7: Val {val_loss:.4f}, Test {test_loss:.4f}")
-
-    print("\n=== Final Results ===")
-    print(f"Avg Val Loss:  {np.mean(all_val_losses):.4f}")
-    print(f"Avg Test Loss: {np.mean(all_test_losses):.4f}")
-
-# -------------------------------------------------
-# Main
+# Example main
 # -------------------------------------------------
 def main():
-    drive_root = "/content/drive/MyDrive/EEG2Video_data/processed"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     subj_name = input("Enter subject name: ").strip()
-    run_cv(subj_name, drive_root, device, use_infonce=True)  # toggle True/False
+    drive_root = "/content/drive/MyDrive/EEG2Video_data/processed"
 
-if __name__ == "__main__":
+    # load data
+    de       = np.load(os.path.join(drive_root,"EEG_DE",f"{subj_name}.npy"))
+    psd      = np.load(os.path.join(drive_root,"EEG_PSD",f"{subj_name}.npy"))
+    windows  = np.load(os.path.join(drive_root,"EEG_windows",f"{subj_name}.npy"))
+    segments = np.load(os.path.join(drive_root,"EEG_segments",f"{subj_name}.npy"))
+    blip_raw = np.load(os.path.join(drive_root,"BLIP_embeddings","BLIP_embeddings.npy"))
+
+    # simple collect all
+    Xs={"de":[],"psd":[],"windows":[],"segments":[]}; Ys=[]
+    for b in range(7):
+        for c in range(40):
+            for k in range(5):
+                Xs["de"].append(de[b,c,k])
+                Xs["psd"].append(psd[b,c,k])
+                Xs["windows"].append(windows[b,c,k].mean(0))
+                Xs["segments"].append(segments[b,c,k])
+                Ys.append(blip_raw[b,c,k])
+    Xs={k:np.array(v) for k,v in Xs.items()}; Ys=np.array(Ys)
+
+    ds = EEG2BLIPDataset(Xs,Ys,normalise_targets=True)
+    n = len(ds); split=int(0.8*n)
+    train_loader=DataLoader(torch.utils.data.Subset(ds,range(split)),batch_size=32,shuffle=True)
+    val_loader=DataLoader(torch.utils.data.Subset(ds,range(split,n)),batch_size=32)
+
+    fusion = FusionModel().to(device)
+    fusion_ckpt = f"/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints/fusion_checkpoint_{subj_name}.pt"
+    fusion.load_state_dict(torch.load(fusion_ckpt,map_location=device))
+    for p in fusion.parameters(): p.requires_grad=False
+
+    predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
+
+    # choose combo here
+    loss_fn = build_loss(
+        use_mse=True,
+        use_cosine=True,
+        use_var=True,
+        use_infonce=False,
+        normalise_preds=False
+    )
+
+    train_one_fold(fusion,predictor,train_loader,val_loader,device,loss_fn,epochs=10)
+
+if __name__=="__main__":
     main()
