@@ -1,5 +1,6 @@
 # ==========================================
 # train_semantic_kfold_collapsecheck.py
+# (flattened variance reg + optional InfoNCE)
 # ==========================================
 import os, sys
 import numpy as np
@@ -70,26 +71,41 @@ class EEG2BLIPDataset(Dataset):
             if k in ["windows", "segments"]:
                 x = x.unsqueeze(0)
             out[k] = x
-        target = torch.tensor(self.Ys[idx], dtype=torch.float32)  # [77,768], already normed
+        target = torch.tensor(self.Ys[idx], dtype=torch.float32)  # [77,768], normed
         return out, target
 
 # -------------------------------------------------
-# Loss (MSE + cosine + variance reg, on normalised preds)
+# Loss functions
 # -------------------------------------------------
-def semantic_loss(pred, target, alpha=0.5, beta=0.1):
+def semantic_loss(pred, target, alpha=0.5, beta=0.01, use_infonce=False, tau=0.07):
+    # Normalise
     pred_norm = F.normalize(pred, dim=-1)
-    mse = F.mse_loss(pred_norm, target)
-    cos = 1 - F.cosine_similarity(
-        pred_norm.flatten(1), target.flatten(1), dim=-1
-    ).mean()
-    var_loss = -pred_norm.var(dim=0).mean()
-    return mse + alpha * cos + beta * var_loss
+    target_norm = F.normalize(target, dim=-1)
+
+    # Flatten for cosine + variance
+    pred_flat = pred_norm.view(pred_norm.size(0), -1)
+    target_flat = target_norm.view(target_norm.size(0), -1)
+
+    mse = F.mse_loss(pred_norm, target_norm)
+    cos = 1 - F.cosine_similarity(pred_flat, target_flat, dim=-1).mean()
+    var_loss = -pred_flat.var(dim=0).mean()
+
+    loss = mse + alpha * cos + beta * var_loss
+
+    # Optional InfoNCE
+    if use_infonce:
+        logits = pred_flat @ target_flat.T / tau
+        labels = torch.arange(pred_flat.size(0), device=pred.device)
+        infonce = F.cross_entropy(logits, labels)
+        loss += infonce
+
+    return loss
 
 # -------------------------------------------------
 # Train 1 fold
 # -------------------------------------------------
 def train_one_fold(fusion, predictor, train_loader, val_loader, device, subj_name,
-                   num_epochs=30, lr=1e-3):
+                   num_epochs=30, lr=1e-3, use_infonce=False):
     optimizer = optim.AdamW(predictor.parameters(), lr=lr)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=num_epochs * len(train_loader)
@@ -105,7 +121,7 @@ def train_one_fold(fusion, predictor, train_loader, val_loader, device, subj_nam
             with torch.no_grad():
                 feats = fusion(Xs, return_feats=True)
             pred = predictor(feats)
-            loss = semantic_loss(pred, blip)
+            loss = semantic_loss(pred, blip, use_infonce=use_infonce)
             optimizer.zero_grad(); loss.backward(); optimizer.step()
             scheduler.step()
 
@@ -117,8 +133,8 @@ def train_one_fold(fusion, predictor, train_loader, val_loader, device, subj_nam
                 blip = blip.to(device)
                 feats = fusion(Xs, return_feats=True)
                 pred = predictor(feats)
-                val_loss += semantic_loss(pred, blip).item(); count += 1
-                all_preds.append(F.normalize(pred, dim=-1).cpu())
+                val_loss += semantic_loss(pred, blip, use_infonce=use_infonce).item(); count += 1
+                all_preds.append(F.normalize(pred, dim=-1).view(pred.size(0), -1).cpu())
         val_loss /= max(1, count)
 
         preds = torch.cat(all_preds, dim=0)
@@ -142,7 +158,7 @@ def train_one_fold(fusion, predictor, train_loader, val_loader, device, subj_nam
 # -------------------------------------------------
 # K-Fold CV
 # -------------------------------------------------
-def run_cv(subj_name, drive_root, device):
+def run_cv(subj_name, drive_root, device, use_infonce=False):
     de       = np.load(os.path.join(drive_root, "EEG_DE", f"{subj_name}.npy"))
     psd      = np.load(os.path.join(drive_root, "EEG_PSD", f"{subj_name}.npy"))
     windows  = np.load(os.path.join(drive_root, "EEG_windows", f"{subj_name}.npy"))
@@ -185,7 +201,7 @@ def run_cv(subj_name, drive_root, device):
         for p in fusion.parameters(): p.requires_grad = False
 
         predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
-        val_loss = train_one_fold(fusion, predictor, train_loader, val_loader, device, subj_name)
+        val_loss = train_one_fold(fusion, predictor, train_loader, val_loader, device, subj_name, use_infonce=use_infonce)
 
         # Test
         predictor.eval(); test_loss = 0; count = 0
@@ -214,7 +230,7 @@ def main():
     drive_root = "/content/drive/MyDrive/EEG2Video_data/processed"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     subj_name = input("Enter subject name: ").strip()
-    run_cv(subj_name, drive_root, device)
+    run_cv(subj_name, drive_root, device, use_infonce=True)  # toggle True/False
 
 if __name__ == "__main__":
     main()
