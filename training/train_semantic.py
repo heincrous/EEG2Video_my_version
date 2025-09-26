@@ -1,147 +1,35 @@
-# # ==========================================
-# # train_semantic_from_DE.py
-# # Author-style semantic predictor (EEG → BLIP)
-# # ==========================================
-# import os, sys
-# import numpy as np
-# import torch
-# import torch.nn as nn
-# import torch.nn.functional as F
-# from torch.utils.data import Dataset, DataLoader
-# from sklearn.preprocessing import StandardScaler
-# from tqdm import tqdm
-
-# # -------------------------------------------------
-# # Semantic Predictor MLP (authors' CLIP-like)
-# # -------------------------------------------------
-# class SemanticPredictor(nn.Module):
-#     def __init__(self, in_dim=310, out_shape=(77,768)):
-#         super().__init__()
-#         out_dim = out_shape[0] * out_shape[1]
-#         self.mlp = nn.Sequential(
-#             nn.Linear(in_dim, 10000),
-#             nn.ReLU(),
-#             nn.Linear(10000, 10000),
-#             nn.ReLU(),
-#             nn.Linear(10000, 10000),
-#             nn.ReLU(),
-#             nn.Linear(10000, 10000),
-#             nn.ReLU(),
-#             nn.Linear(10000, out_dim),
-#         )
-#         self.out_shape = out_shape
-
-#     def forward(self, x):
-#         out = self.mlp(x)
-#         return out.view(-1, *self.out_shape)
-
-# # -------------------------------------------------
-# # Dataset wrapper
-# # -------------------------------------------------
-# class EEG2BLIPDataset(Dataset):
-#     def __init__(self, eeg_feats, blip_feats):
-#         scaler = StandardScaler().fit(eeg_feats)
-#         eeg_feats = scaler.transform(eeg_feats)
-#         self.X = eeg_feats.astype(np.float32)
-#         self.Y = blip_feats.astype(np.float32)
-#     def __len__(self): return len(self.X)
-#     def __getitem__(self, idx):
-#         return torch.from_numpy(self.X[idx]), torch.from_numpy(self.Y[idx])
-
-# # -------------------------------------------------
-# # Train loop
-# # -------------------------------------------------
-# def train(model, train_loader, val_loader, device, epochs=100, lr=5e-4):
-#     opt = torch.optim.Adam(model.parameters(), lr=lr)
-#     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs*len(train_loader))
-#     for ep in range(epochs):
-#         model.train(); total_loss = 0
-#         for eeg, blip in train_loader:
-#             eeg, blip = eeg.to(device), blip.to(device)
-#             pred = model(eeg)
-#             loss = F.mse_loss(pred, blip)
-#             opt.zero_grad(); loss.backward(); opt.step(); scheduler.step()
-#             total_loss += loss.item()
-#         # validation
-#         model.eval(); val_loss=0; preds=[]
-#         with torch.no_grad():
-#             for eeg, blip in val_loader:
-#                 eeg, blip = eeg.to(device), blip.to(device)
-#                 pred = model(eeg)
-#                 val_loss += F.mse_loss(pred, blip).item()
-#                 preds.append(pred.view(pred.size(0), -1).cpu())
-#         preds = torch.cat(preds, dim=0)
-#         print(f"Epoch {ep+1}, TrainLoss {total_loss/len(train_loader):.4f}, "
-#               f"ValLoss {val_loss/len(val_loader):.4f}, "
-#               f"Var(dim) {preds.var(dim=0).mean().item():.6f}, "
-#               f"Var(samples) {preds.var(dim=1).mean().item():.6f}")
-
-# # -------------------------------------------------
-# # Main
-# # -------------------------------------------------
-# def main():
-#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#     subj_name = "sub1"
-#     drive_root = "/content/drive/MyDrive/EEG2Video_data/processed"
-
-#     # load DE features (shape [7,40,5,62,5]) and flatten to (N,310)
-#     de = np.load(os.path.join(drive_root, "EEG_DE", f"{subj_name}.npy"))  # (7,40,5,62,5)
-#     N = de.shape[0]*de.shape[1]*de.shape[2]
-#     de_flat = de.reshape(N, 62*5)
-
-#     # load BLIP embeddings (shape [7,40,5,77,768]) and flatten to (N,77,768)
-#     blip = np.load(os.path.join(drive_root, "BLIP_embeddings", "BLIP_embeddings.npy"))
-#     blip_flat = blip.reshape(N, 77, 768)
-
-#     # dataset split
-#     ds = EEG2BLIPDataset(de_flat, blip_flat)
-#     n = len(ds); split=int(0.8*n)
-#     train_loader = DataLoader(torch.utils.data.Subset(ds, range(split)), batch_size=256, shuffle=True)
-#     val_loader   = DataLoader(torch.utils.data.Subset(ds, range(split,n)), batch_size=256)
-
-#     # model
-#     model = SemanticPredictor(in_dim=310, out_shape=(77,768)).to(device)
-#     train(model, train_loader, val_loader, device, epochs=100)
-
-#     # save
-#     torch.save({'state_dict': model.state_dict()}, 
-#                f"/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor_{subj_name}.pt")
-
-# if __name__ == "__main__":
-#     main()
-
 # ==========================================
-# train_semantic_multi_feat.py
+# train_semantic_multi_feat_configurable.py
 # Author-style semantic predictor (EEG → BLIP)
-# Supports DE, PSD, windows, segments
+# Configurable with toggles + Chart Output
 # ==========================================
-import os, sys
+import os
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import StandardScaler
-from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 # -------------------------------------------------
 # Semantic Predictor MLP
 # -------------------------------------------------
 class SemanticPredictor(nn.Module):
-    def __init__(self, in_dim, out_shape=(77,768)):
+    def __init__(self, in_dim, out_shape=(77,768), use_dropout=False):
         super().__init__()
         out_dim = out_shape[0] * out_shape[1]
-        self.mlp = nn.Sequential(
+        layers = [
             nn.Linear(in_dim, 10000),
             nn.ReLU(),
-            nn.Linear(10000, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, out_dim),
-        )
+        ]
+        for _ in range(3):
+            layers.append(nn.Linear(10000, 10000))
+            layers.append(nn.ReLU())
+            if use_dropout:
+                layers.append(nn.Dropout(0.3))
+        layers.append(nn.Linear(10000, out_dim))
+        self.mlp = nn.Sequential(*layers)
         self.out_shape = out_shape
 
     def forward(self, x):
@@ -163,37 +51,69 @@ class EEG2BLIPDataset(Dataset):
         X = np.concatenate(proc_feats, axis=1)
         self.X = X.astype(np.float32)
         self.Y = blip_feats.astype(np.float32)
-        self.keys = list(feat_dict.keys())
-        self.raw_feats = feat_dict
 
     def __len__(self): return len(self.X)
     def __getitem__(self, idx):
         return torch.from_numpy(self.X[idx]), torch.from_numpy(self.Y[idx])
 
 # -------------------------------------------------
+# Loss functions
+# -------------------------------------------------
+def cosine_loss(pred, target):
+    pred = F.normalize(pred.view(pred.size(0), -1), dim=-1)
+    target = F.normalize(target.view(target.size(0), -1), dim=-1)
+    return 1 - (pred * target).sum(-1).mean()
+
+def contrastive_loss(pred, target, temperature=0.07):
+    pred = F.normalize(pred.view(pred.size(0), -1), dim=-1)
+    target = F.normalize(target.view(target.size(0), -1), dim=-1)
+    logits = pred @ target.t() / temperature
+    labels = torch.arange(pred.size(0), device=pred.device)
+    return F.cross_entropy(logits, labels)
+
+# -------------------------------------------------
 # Train loop
 # -------------------------------------------------
-def train(model, train_loader, val_loader, feat_dict, device, epochs=50, lr=5e-4):
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs*len(train_loader))
-
+def train(model, train_loader, val_loader, device, cfg):
+    opt = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        opt, T_max=cfg["epochs"] * len(train_loader)
+    )
     history = []
-    for ep in range(epochs):
+
+    for ep in range(cfg["epochs"]):
         model.train(); total_loss = 0
         for eeg, blip in train_loader:
             eeg, blip = eeg.to(device), blip.to(device)
             pred = model(eeg)
-            loss = F.mse_loss(pred, blip)
+
+            if cfg["loss_type"] == "mse":
+                loss = F.mse_loss(pred, blip)
+            elif cfg["loss_type"] == "cosine":
+                loss = cosine_loss(pred, blip)
+            elif cfg["loss_type"] == "contrastive":
+                loss = contrastive_loss(pred, blip)
+            else:
+                raise ValueError("Unknown loss type")
+
+            if cfg["use_var_reg"]:
+                var_loss = 1.0 / (pred.view(pred.size(0), -1).var(dim=0).mean() + 1e-6)
+                loss += 0.01 * var_loss
+
             opt.zero_grad(); loss.backward(); opt.step(); scheduler.step()
             total_loss += loss.item()
 
-        # validation
         model.eval(); val_loss=0; preds=[]
         with torch.no_grad():
             for eeg, blip in val_loader:
                 eeg, blip = eeg.to(device), blip.to(device)
                 pred = model(eeg)
-                val_loss += F.mse_loss(pred, blip).item()
+                if cfg["loss_type"] == "mse":
+                    val_loss += F.mse_loss(pred, blip).item()
+                elif cfg["loss_type"] == "cosine":
+                    val_loss += cosine_loss(pred, blip).item()
+                else:
+                    val_loss += contrastive_loss(pred, blip).item()
                 preds.append(pred.view(pred.size(0), -1).cpu())
         preds = torch.cat(preds, dim=0)
 
@@ -211,12 +131,23 @@ def train(model, train_loader, val_loader, feat_dict, device, epochs=50, lr=5e-4
               f"Var(samples) {stats['pred_var_samp']:.6f}")
         history.append(stats)
 
-    # summary
-    print("\n=== Training Summary ===")
-    print(f"Final TrainLoss: {history[-1]['train_loss']:.4f}")
-    print(f"Final ValLoss:   {history[-1]['val_loss']:.4f}")
-    print(f"Final Var(dim):  {history[-1]['pred_var_dim']:.6f}")
-    print(f"Final Var(samples): {history[-1]['pred_var_samp']:.6f}")
+    # Plot after training
+    epochs = [h["epoch"] for h in history]
+    val_losses = [h["val_loss"] for h in history]
+    var_dims = [h["pred_var_dim"] for h in history]
+
+    plt.figure(figsize=(10,4))
+    plt.subplot(1,2,1)
+    plt.plot(epochs, val_losses, marker="o")
+    plt.xlabel("Epoch"); plt.ylabel("Val Loss"); plt.title("Validation Loss")
+
+    plt.subplot(1,2,2)
+    plt.plot(epochs, var_dims, marker="o", color="orange")
+    plt.xlabel("Epoch"); plt.ylabel("Variance (dim)"); plt.title("Prediction Variance")
+
+    plt.tight_layout()
+    plt.show()
+
     return history
 
 # -------------------------------------------------
@@ -227,49 +158,51 @@ def main():
     subj_name = "sub1"
     drive_root = "/content/drive/MyDrive/EEG2Video_data/processed"
 
-    # ask user
     choices = input("Select features (comma separated from: de, psd, windows, segments, all): ")
     choices = [c.strip() for c in choices.split(",")]
     if "all" in choices: choices = ["de","psd","windows","segments"]
 
     feat_dict = {}
-    # DE: (7,40,5,62,5) → (N,310)
     if "de" in choices:
         de = np.load(os.path.join(drive_root,"EEG_DE",f"{subj_name}.npy"))
         feat_dict["de"] = de.reshape(-1, 62*5)
-    # PSD: same shape as DE
     if "psd" in choices:
         psd = np.load(os.path.join(drive_root,"EEG_PSD",f"{subj_name}.npy"))
         feat_dict["psd"] = psd.reshape(-1, 62*5)
-    # windows: (7,40,5,7,62,100) → avg over windows → (N,62*100)
     if "windows" in choices:
         win = np.load(os.path.join(drive_root,"EEG_windows",f"{subj_name}.npy"))
         feat_dict["windows"] = win.mean(3).reshape(-1, 62*100)
-    # segments: (7,40,5,62,400) → (N,62*400)
     if "segments" in choices:
         seg = np.load(os.path.join(drive_root,"EEG_segments",f"{subj_name}.npy"))
         feat_dict["segments"] = seg.reshape(-1, 62*400)
 
-    # BLIP: (7,40,5,77,768) → (N,77,768)
     blip = np.load(os.path.join(drive_root,"BLIP_embeddings","BLIP_embeddings.npy"))
     blip_flat = blip.reshape(-1, 77, 768)
 
-    # dataset
     ds = EEG2BLIPDataset(feat_dict, blip_flat)
     n = len(ds); split=int(0.8*n)
-    train_loader = DataLoader(torch.utils.data.Subset(ds, range(split)), batch_size=32, shuffle=True)
-    val_loader   = DataLoader(torch.utils.data.Subset(ds, range(split,n)), batch_size=32)
+    train_loader = DataLoader(torch.utils.data.Subset(ds, range(split)), batch_size=CFG["batch_size"], shuffle=True)
+    val_loader   = DataLoader(torch.utils.data.Subset(ds, range(split,n)), batch_size=CFG["batch_size"])
 
-    # model
     in_dim = ds.X.shape[1]
-    model = SemanticPredictor(in_dim=in_dim, out_shape=(77,768)).to(device)
-    history = train(model, train_loader, val_loader, feat_dict, device, epochs=50)
+    model = SemanticPredictor(in_dim=in_dim, out_shape=(77,768), use_dropout=CFG["use_dropout"]).to(device)
+    train(model, train_loader, val_loader, device, CFG)
 
-    # save
     out_path = f"/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor_{subj_name}_{'_'.join(choices)}.pt"
     torch.save({'state_dict': model.state_dict()}, out_path)
     print(f"Saved model to {out_path}")
 
+# -------------------------------------------------
+# Config dictionary
+# -------------------------------------------------
+CFG = {
+    "loss_type": "mse",        # "mse", "cosine", "contrastive"
+    "use_var_reg": False,
+    "use_dropout": False,
+    "lr": 5e-4,
+    "batch_size": 128,
+    "epochs": 50,
+}
+
 if __name__ == "__main__":
     main()
-
