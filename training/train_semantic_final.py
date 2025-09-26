@@ -44,11 +44,8 @@ class SemanticPredictor(nn.Module):
 
     def forward(self, x):
         out = self.mlp(x)
-        out = out.view(-1, *self.out_shape)
-        # normalize only if cosine loss is being used
-        if self.loss_type == "cosine":
-            out = F.normalize(out.view(out.size(0), -1), dim=-1).view(-1, *self.out_shape)
-        return out
+        return out.view(-1, *self.out_shape)
+
 
 # -------------------------------------------------
 # Dataset wrapper
@@ -85,6 +82,27 @@ def contrastive_loss(pred, target, temperature=0.07):
     return F.cross_entropy(logits, labels)
 
 # -------------------------------------------------
+# Variance utilities
+# -------------------------------------------------
+def compute_within_between_variance(embeds, num_classes=40, clips_per_class=5):
+    """embeds: (N, D), ordered such that every 5 rows = one class"""
+    N, D = embeds.shape
+    class_means = []
+    within_vars = []
+    for c in range(num_classes):
+        start = c * clips_per_class
+        end = start + clips_per_class
+        class_embeds = embeds[start:end]
+        mu_c = class_embeds.mean(0)
+        class_means.append(mu_c)
+        within_vars.append(class_embeds.var(0).mean().item())
+    class_means = torch.stack(class_means, dim=0)
+    global_mean = class_means.mean(0)
+    between_var = ((class_means - global_mean)**2).mean().item()
+    within_var = np.mean(within_vars)
+    return within_var, between_var
+
+# -------------------------------------------------
 # Train loop (no early stopping)
 # -------------------------------------------------
 def train(model, train_loader, val_loader, device, cfg, feat_name, subj_name):
@@ -109,8 +127,11 @@ def train(model, train_loader, val_loader, device, cfg, feat_name, subj_name):
                 loss = cosine_loss(pred, blip)
             elif cfg["loss_type"] == "contrastive":
                 loss = contrastive_loss(pred, blip)
-            if cfg["use_var_reg"]:
-                var_loss = 1.0 / (pred.view(pred.size(0), -1).var(dim=0).mean() + 1e-6)
+            # variance regularizer only for mse/cosine if enabled
+            if cfg["use_var_reg"] and cfg["loss_type"] in ["mse", "cosine"]:
+                var = pred.view(pred.size(0), -1).var(dim=0).mean()
+                target_var = blip.view(blip.size(0), -1).var(dim=0).mean()
+                var_loss = (var - target_var).pow(2)
                 loss += 0.01 * var_loss
             opt.zero_grad(); loss.backward(); opt.step(); scheduler.step()
             total_loss += loss.item()
@@ -131,18 +152,25 @@ def train(model, train_loader, val_loader, device, cfg, feat_name, subj_name):
         preds = torch.cat(preds, dim=0)
         val_loss /= len(val_loader)
 
+        # compute class structure stats
+        within_var, between_var = compute_within_between_variance(preds)
+
         stats = {
             "epoch": ep+1,
             "train_loss": total_loss/len(train_loader),
             "val_loss": val_loss,
             "pred_var_dim": preds.var(dim=0).mean().item(),
-            "pred_var_samp": preds.var(dim=1).mean().item()
+            "pred_var_samp": preds.var(dim=1).mean().item(),
+            "within_var": within_var,
+            "between_var": between_var
         }
         print(f"[{feat_name}] Epoch {stats['epoch']}, "
               f"TrainLoss {stats['train_loss']:.4f}, "
               f"ValLoss {stats['val_loss']:.4f}, "
               f"Var(dim) {stats['pred_var_dim']:.6f}, "
-              f"Var(samples) {stats['pred_var_samp']:.6f}")
+              f"Var(samples) {stats['pred_var_samp']:.6f}, "
+              f"Within {stats['within_var']:.6f}, "
+              f"Between {stats['between_var']:.6f}")
         history.append(stats)
 
         # Track best state but do not print every time
@@ -165,17 +193,26 @@ def train(model, train_loader, val_loader, device, cfg, feat_name, subj_name):
         epochs = [h["epoch"] for h in history]
         val_losses = [h["val_loss"] for h in history]
         var_dims = [h["pred_var_dim"] for h in history]
+        within_vars = [h["within_var"] for h in history]
+        between_vars = [h["between_var"] for h in history]
 
-        plt.figure(figsize=(10,4))
-        plt.subplot(1,2,1)
+        plt.figure(figsize=(15,4))
+        plt.subplot(1,3,1)
         plt.plot(epochs, val_losses, marker="o")
         plt.xlabel("Epoch"); plt.ylabel("Val Loss")
         plt.title("Validation Loss")
 
-        plt.subplot(1,2,2)
+        plt.subplot(1,3,2)
         plt.plot(epochs, var_dims, marker="o", color="orange")
         plt.xlabel("Epoch"); plt.ylabel("Variance (dim)")
         plt.title("Prediction Variance")
+
+        plt.subplot(1,3,3)
+        plt.plot(epochs, within_vars, marker="o", label="Within-class")
+        plt.plot(epochs, between_vars, marker="o", label="Between-class")
+        plt.xlabel("Epoch"); plt.ylabel("Variance")
+        plt.title("Class Variance (Within vs Between)")
+        plt.legend()
 
         plot_dir = "/content/drive/MyDrive/EEG2Video_outputs/semantic_predictor_plots"
         os.makedirs(plot_dir, exist_ok=True)
@@ -202,14 +239,21 @@ def evaluate(model, test_loader, device, cfg, feat_name):
                 test_loss += contrastive_loss(pred, blip).item()
             preds.append(pred.view(pred.size(0), -1).cpu())
     preds = torch.cat(preds, dim=0)
+
+    within_var, between_var = compute_within_between_variance(preds)
+
     stats = {
         "test_loss": test_loss/len(test_loader),
         "pred_var_dim": preds.var(dim=0).mean().item(),
-        "pred_var_samp": preds.var(dim=1).mean().item()
+        "pred_var_samp": preds.var(dim=1).mean().item(),
+        "within_var": within_var,
+        "between_var": between_var
     }
     print(f"[{feat_name}] TestLoss {stats['test_loss']:.4f}, "
           f"Var(dim) {stats['pred_var_dim']:.6f}, "
-          f"Var(samples) {stats['pred_var_samp']:.6f}")
+          f"Var(samples) {stats['pred_var_samp']:.6f}, "
+          f"Within {stats['within_var']:.6f}, "
+          f"Between {stats['between_var']:.6f}")
     return stats
 
 # -------------------------------------------------
@@ -272,7 +316,8 @@ def main():
             in_dim=in_dim,
             out_shape=(77,768),
             use_dropout=CFG["use_dropout"],
-            feat_name=feat_name
+            feat_name=feat_name,
+            loss_type=CFG["loss_type"]
         ).to(device)
         
         history, ckpt_path = train(model, train_loader, val_loader, device, CFG, feat_name, subj_name)
