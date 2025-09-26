@@ -1,15 +1,15 @@
 # ==========================================
-# Full Inference (Semantic Predictor auto-detection, random samples, all models)
+# Full Inference (Subject1, DE features, Block7 test set, 5 samples, scaler refit + captions)
 # ==========================================
-
-import os, sys, gc, glob, random, imageio, torch, shutil
-import numpy as np
-import joblib
+import os, gc, glob, random, imageio, torch, shutil, numpy as np
+from sklearn.preprocessing import StandardScaler
+from diffusers import AutoencoderKL, DDIMScheduler
 
 from core_files.unet import UNet3DConditionModel
-from training.train_semantic_final import WindowEncoderWrapper, ReshapeWrapper
 from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
+from training.train_semantic_final import ReshapeWrapper, SemanticPredictor
 
+# --- Paths ---
 drive_root            = "/content/drive/MyDrive/EEG2Video_data/processed"
 pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 finetuned_model_path  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final"
@@ -17,57 +17,27 @@ semantic_ckpt_dir     = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_c
 
 blip_text_root        = os.path.join(drive_root, "BLIP_text")
 video_mp4_root        = os.path.join(drive_root, "Video_mp4")
-
 output_dir            = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference"
 os.makedirs(output_dir, exist_ok=True)
 
+# --- Device + mem cleanup ---
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 gc.collect()
 torch.cuda.empty_cache()
 device = "cuda"
 
-# === Helper: pick checkpoint ===
-def select_ckpt(ckpt_dir, name="checkpoint"):
-    ckpts = sorted(glob.glob(os.path.join(ckpt_dir, "*.pt")))
-    if not ckpts:
-        raise FileNotFoundError(f"No checkpoints found in {ckpt_dir}")
-    print(f"\nAvailable {name} checkpoints:")
-    for idx, path in enumerate(ckpts):
-        print(f"  [{idx}] {os.path.basename(path)}")
-    choice = int(input(f"Select {name} checkpoint index: "))
-    return ckpts[choice]
-
-# === Load semantic predictor ===
-semantic_ckpt = select_ckpt(semantic_ckpt_dir, "semantic")
-semantic_tag  = os.path.basename(semantic_ckpt).replace("semantic_predictor_", "").replace(".pt", "")
-print("Using semantic checkpoint:", semantic_ckpt)
-print("Semantic tag:", semantic_tag)
-
-parts = semantic_tag.split("_")
-feature_type, encoder_type, loss_type = None, None, None
-if any(ft in parts for ft in ["DE", "PSD", "windows"]):
-    for candidate in ["DE", "PSD", "windows"]:
-        if candidate in parts:
-            feature_type = candidate
-            break
-    if "glfnet" in parts and "mlp" in parts:
-        encoder_type = "glfnet_mlp"
-    elif "glmnet" in parts:
-        encoder_type = "glmnet"
-    else:
-        idx = parts.index(feature_type)
-        if idx + 1 < len(parts):
-            encoder_type = parts[idx+1]
-        if idx + 2 < len(parts):
-            loss_type = "_".join(parts[idx+2:])
-else:
-    raise ValueError(f"Could not parse semantic tag: {semantic_tag}")
-print(f"Feature: {feature_type}, Encoder: {encoder_type}, Loss: {loss_type}")
-
-semantic_scaler = joblib.load(os.path.join(semantic_ckpt_dir, f"scaler_{semantic_tag}.pkl"))
+# === Select semantic predictor checkpoint ===
+ckpts = sorted(glob.glob(os.path.join(semantic_ckpt_dir, "semantic_predictor_sub1_de*.pt")))
+if not ckpts:
+    raise FileNotFoundError("No DE checkpoints for sub1 found")
+print("Available checkpoints:")
+for i, p in enumerate(ckpts):
+    print(f"[{i}] {os.path.basename(p)}")
+choice = int(input("Select checkpoint index: "))
+semantic_ckpt = ckpts[choice]
+print("Using checkpoint:", semantic_ckpt)
 
 # === Load diffusion backbone ===
-from diffusers import AutoencoderKL, DDIMScheduler
 vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae").to(device, dtype=torch.float32)
 scheduler = DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
 unet = UNet3DConditionModel.from_pretrained_2d(pretrained_model_path, subfolder="unet").to(device, dtype=torch.float32)
@@ -81,95 +51,36 @@ pipe = TuneAVideoPipeline.from_pretrained(
 ).to(device)
 pipe.enable_vae_slicing()
 
-# === Build semantic predictor model ===
-output_dim = 77 * 768
-if feature_type in ["DE", "PSD"]:
-    input_dim = 62 * 5
-    if encoder_type == "mlp":
-        base_model = mlpnet(out_dim=output_dim, input_dim=input_dim)
-    elif encoder_type == "glfnet":
-        base_model = glfnet(out_dim=output_dim, emb_dim=256, C=62, T=5)
-    elif encoder_type == "glfnet_mlp":
-        base_model = glfnet_mlp(out_dim=output_dim, emb_dim=256, input_dim=input_dim)
-    else:
-        raise ValueError(f"Unknown encoder type {encoder_type}")
-elif feature_type == "windows":
-    if encoder_type == "mlp":
-        input_dim = 7 * 62 * 100
-        base_model = mlpnet(out_dim=output_dim, input_dim=input_dim)
-    elif encoder_type == "eegnet":
-        base_model = WindowEncoderWrapper(eegnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
-    elif encoder_type == "shallownet":
-        base_model = WindowEncoderWrapper(shallownet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
-    elif encoder_type == "deepnet":
-        base_model = WindowEncoderWrapper(deepnet(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
-    elif encoder_type == "tsconv":
-        base_model = WindowEncoderWrapper(tsconv(out_dim=output_dim, C=62, T=100), out_dim=output_dim)
-    elif encoder_type == "conformer":
-        base_model = conformer(out_dim=output_dim)
-    elif encoder_type == "glmnet":
-        base_model = WindowEncoderWrapper(glmnet(out_dim=output_dim, emb_dim=256, C=62, T=100), out_dim=output_dim)
-    else:
-        raise ValueError(f"Unknown encoder type {encoder_type}")
-else:
-    raise ValueError(f"Invalid feature type {feature_type}")
-
-model = ReshapeWrapper(base_model, n_tokens=77).to(device)
+# === Build semantic predictor ===
+in_dim = 62*5
+out_shape = (77,768)
+model = ReshapeWrapper(SemanticPredictor(in_dim=in_dim, out_shape=out_shape), n_tokens=77).to(device)
 model.load_state_dict(torch.load(semantic_ckpt, map_location=device)["state_dict"])
 model.eval()
 
-# === Load test bundles and pick random sample ===
-bundle_root = os.path.join(drive_root, "SubjectBundles")
-test_bundles = sorted([f for f in os.listdir(bundle_root) if f.endswith("_test.npz")])
-if not test_bundles:
-    raise FileNotFoundError("No test bundles found!")
+# === Load DE features and rebuild scaler ===
+subj = "sub1"
+de_path = os.path.join(drive_root, "EEG_DE", f"{subj}.npy")   # shape (7,40,5,62,5)
+de = np.load(de_path)
 
-test_bundle = random.choice(test_bundles)
-data = np.load(os.path.join(bundle_root, test_bundle), allow_pickle=True)
-eeg_data = data[f"EEG_{feature_type}"]
-keys = data["keys"]
+# Fit scaler on blocks 1–6 (indices 0–5)
+trainval = de[:6].reshape(-1, 62*5)
+scaler = StandardScaler().fit(trainval)
 
-idx = random.randrange(len(keys))
-eeg_feat = eeg_data[idx]
-key = keys[idx]
-print("Chosen test sample:", test_bundle, key)
+# Prepare block 7 (index 6) as test set
+block7 = de[6].reshape(-1, 62*5)
+samples = scaler.transform(block7)
 
-# === Parse key for naming and caption ===
-parts = key.split("/")
-if len(parts) == 3:
-    _, block, fname = parts
-elif len(parts) == 2:
-    block, fname = parts
-else:
-    raise ValueError(f"Unexpected key format: {key}")
+# === Helper: run inference for one sample ===
+def run_inference(eeg_feat, clip_name, block="Block7", class_idx=None, clip_idx=None):
+    eeg_tensor = torch.tensor(eeg_feat, dtype=torch.float32).unsqueeze(0).to(device)
 
-blip_caption_path = os.path.join(blip_text_root, block, fname.replace(".npy", ".txt"))
-blip_prompt = "[Prompt not found]"
-if os.path.exists(blip_caption_path):
-    with open(blip_caption_path, "r") as f:
-        blip_prompt = f.read().strip()
+    with torch.no_grad():
+        semantic_pred = model(eeg_tensor)
+    negative = semantic_pred.mean(dim=0, keepdim=True).float().to(device)
 
-video_mp4_path = os.path.join(video_mp4_root, block, fname.replace(".npy", ".mp4"))
-
-# === Prepare EEG features ===
-eeg_flat = eeg_feat.reshape(-1)
-eeg_scaled = semantic_scaler.transform([eeg_flat])[0]
-if feature_type == "windows":
-    eeg_tensor = torch.tensor(eeg_scaled.reshape(7,62,100), dtype=torch.float32).unsqueeze(0).to(device)
-else:
-    eeg_tensor = torch.tensor(eeg_scaled.reshape(62,5), dtype=torch.float32).unsqueeze(0).to(device)
-
-with torch.no_grad():
-    semantic_pred = model(eeg_tensor)
-negative = semantic_pred.mean(dim=0, keepdim=True).float().to(device)
-
-# === Run inference ===
-def run_inference():
-    video_length = 6
-    fps = 3
-
+    video_length, fps = 6, 3
     video = pipe(
-        model=None,
         eeg=semantic_pred,
         negative_eeg=negative,
         latents=None,
@@ -180,34 +91,38 @@ def run_inference():
         guidance_scale=12.5,
     ).videos
 
-    frames = (video[0] * 255).clamp(0, 255).to(torch.uint8)
-    frames = frames.permute(0, 2, 3, 1).cpu().numpy()
-
-    # Enforce exactly 6 frames
-    assert frames.shape[0] == video_length, f"Expected {video_length} frames, got {frames.shape[0]}"
+    frames = (video[0] * 255).clamp(0,255).to(torch.uint8).permute(0,2,3,1).cpu().numpy()
     frames = frames[:video_length]
+    if frames.shape[-1] > 3: frames = frames[...,:3]
+    elif frames.shape[-1] == 1: frames = np.repeat(frames, 3, axis=-1)
 
-    if frames.shape[-1] > 3:
-        frames = frames[..., :3]
-    elif frames.shape[-1] == 1:
-        frames = np.repeat(frames, 3, axis=-1)
-
-    clip_name = fname.replace(".npy", "")
-    inf_path = os.path.join(output_dir, f"{clip_name}_inference_{video_length}f_{fps}fps.mp4")
-    gt_path  = os.path.join(output_dir, f"{clip_name}_groundtruth.mp4")
-
+    inf_path = os.path.join(output_dir, f"{clip_name}_inference.mp4")
     writer = imageio.get_writer(inf_path, fps=fps, codec="libx264")
-    for f in frames:
-        writer.append_data(f)
+    for f in frames: writer.append_data(f)
     writer.close()
 
-    if os.path.exists(video_mp4_path):
-        shutil.copy(video_mp4_path, gt_path)
+    # Copy ground-truth video and print caption if exists
+    if class_idx is not None and clip_idx is not None:
+        fname = f"class{class_idx:02d}_clip{clip_idx:02d}"
+        gt_path = os.path.join(video_mp4_root, block, fname + ".mp4")
+        if os.path.exists(gt_path):
+            shutil.copy(gt_path, os.path.join(output_dir, f"{clip_name}_groundtruth.mp4"))
 
-    print("Saved:")
-    print(" - Inference video:", inf_path)
-    print(" - Ground-truth video:", gt_path)
-    print(" - EEG sample key:", key)
-    print(" - BLIP caption:", blip_prompt)
+        cap_path = os.path.join(blip_text_root, block, fname + ".txt")
+        if os.path.exists(cap_path):
+            with open(cap_path,"r") as f:
+                caption = f.read().strip()
+            print("BLIP caption:", caption)
 
-run_inference()
+    print("Saved inference video:", inf_path)
+
+# === Pick 5 random samples ===
+for n in range(5):
+    idx = random.randrange(len(samples))
+    eeg_feat = samples[idx]
+
+    # map idx back to class and clip
+    class_idx = idx // 5
+    clip_idx  = idx % 5 + 1
+    clip_name = f"{subj}_block7_class{class_idx:02d}_clip{clip_idx:02d}"
+    run_inference(eeg_feat, clip_name, block="Block7", class_idx=class_idx, clip_idx=clip_idx)

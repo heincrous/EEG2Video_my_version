@@ -284,7 +284,7 @@ def main():
 # -------------------------------------------------
 CFG = {
     "loss_type": "mse",        # "mse", "cosine", "contrastive"
-    "use_var_reg": False,
+    "use_var_reg": True,
     "use_dropout": False,
     "lr": 5e-4,
     "batch_size": 64,
