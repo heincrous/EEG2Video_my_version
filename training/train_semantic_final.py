@@ -164,7 +164,7 @@ def train(model, train_loader, val_loader, device, cfg, feat_name):
 
     plt.tight_layout()
 
-    plot_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/plots"
+    plot_dir = "/content/drive/MyDrive/EEG2Video_outputs/semantic_predictor_plots"
     os.makedirs(plot_dir, exist_ok=True)
     plot_path = os.path.join(plot_dir, f"training_plot_{feat_name}_{cfg['loss_type']}.png")
     plt.savefig(plot_path)
@@ -228,7 +228,7 @@ def main():
         feat_name = "_".join(combo)
         train(model, train_loader, val_loader, device, CFG, feat_name)
 
-        out_path = f"/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor_{subj_name}_{feat_name}.pt"
+        out_path = f"/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints/semantic_predictor_{subj_name}_{feat_name}.pt"
         torch.save({'state_dict': model.state_dict()}, out_path)
         print(f"Saved model to {out_path}")
 
@@ -241,7 +241,7 @@ CFG = {
     "use_dropout": False,
     "lr": 5e-4,
     "batch_size": 128,
-    "epochs": 50,
+    "epochs": 100,
 }
 
 if __name__ == "__main__":
