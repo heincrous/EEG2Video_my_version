@@ -1,5 +1,5 @@
 # ==========================================
-# Class-Averaged Embeddings → Video (One Class, fp16, patched)
+# Class-Averaged Embeddings → Video (One Class, fp16, fixed)
 # ==========================================
 import os, sys, torch, numpy as np, imageio
 from einops import rearrange
@@ -24,8 +24,8 @@ os.makedirs(save_dir, exist_ok=True)
 device = "cuda"
 dtype  = torch.float16
 
-# --- Load pipeline (force fp16) ---
-vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae").to(device, dtype=dtype)
+# --- Load pipeline (fp16 everywhere) ---
+vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae", torch_dtype=dtype).to(device)
 scheduler = DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
 unet = UNet3DConditionModel.from_pretrained_2d(finetuned_model_path, subfolder="unet").to(device, dtype=dtype)
 tokenizer = CLIPTokenizer.from_pretrained(pretrained_model_path, subfolder="tokenizer")
@@ -51,29 +51,24 @@ chosen_class = 0
 embed = class_embeds[chosen_class]  # (77,768)
 
 # --- Prepare tensor for pipeline ---
-embed = torch.tensor(embed, dtype=dtype, device=device).unsqueeze(0)  # (1,77,768)
+embed = torch.tensor(embed, dtype=dtype).unsqueeze(0).to(device)  # (1,77,768)
 
 # --- Run inference ---
 video_length = 6
+generator = torch.Generator(device=device).manual_seed(42)
 
-# generator on CUDA
-gen = torch.Generator(device=device).manual_seed(42)
+result = pipe(
+    model=None,
+    eeg=embed.to(device=device, dtype=dtype),
+    video_length=video_length,
+    height=288,
+    width=512,
+    num_inference_steps=50,
+    guidance_scale=12.5,
+    generator=generator,
+)
 
-# call pipeline and make sure everything is fp16
-with torch.autocast(device_type="cuda", dtype=dtype):
-    result = pipe(
-        model=None,
-        eeg=embed.to(device=dtype),
-        video_length=video_length,
-        height=288,
-        width=512,
-        num_inference_steps=50,
-        guidance_scale=12.5,
-        generator=gen,
-        dtype=dtype,
-    )
-
-video_tensor = result["videos"]  # (B,C,F,H,W)
+video_tensor = result["videos"]
 frames = (video_tensor[0] * 255).clamp(0,255).to(torch.uint8)
 frames = rearrange(frames, "c f h w -> f h w c").cpu().numpy()
 
