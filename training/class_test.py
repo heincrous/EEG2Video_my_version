@@ -1,5 +1,5 @@
 # ==========================================
-# Class-Averaged Embeddings → Video (One Class)
+# Class-Averaged Embeddings → Video (One Class, fp16)
 # ==========================================
 import os, sys, torch, numpy as np, imageio
 from einops import rearrange
@@ -23,10 +23,10 @@ os.makedirs(save_dir, exist_ok=True)
 
 device = "cuda"
 
-# --- Load pipeline ---
-vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae").to(device, dtype=torch.float32)
+# --- Load pipeline (fp16 everywhere) ---
+vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae").to(device, dtype=torch.float16)
 scheduler = DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
-unet = UNet3DConditionModel.from_pretrained_2d(finetuned_model_path, subfolder="unet").to(device, dtype=torch.float32)
+unet = UNet3DConditionModel.from_pretrained_2d(finetuned_model_path, subfolder="unet").to(device, dtype=torch.float16)
 tokenizer = CLIPTokenizer.from_pretrained(pretrained_model_path, subfolder="tokenizer")
 
 pipe = TuneAVideoPipeline(
@@ -50,7 +50,7 @@ chosen_class = 0
 embed = class_embeds[chosen_class]        # (77,768)
 
 # --- Prepare tensor for pipeline ---
-embed = torch.tensor(embed, dtype=torch.float32).unsqueeze(0).to(device)  # (1,77,768)
+embed = torch.tensor(embed, dtype=torch.float16).unsqueeze(0).to(device)  # (1,77,768)
 
 # --- Run inference ---
 video_length = 6   # frames (→ ~2s at 3fps)
