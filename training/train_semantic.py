@@ -187,10 +187,10 @@ def main():
         use_mse=True,
         use_cosine=True,
         use_var=False,
-        use_infonce=False,
+        use_infonce=True,
         normalise_preds=False,
         use_multitask=True,   # enable multitask
-        lambda_cls=1        # weight for classification loss
+        lambda_cls=0.5        # weight for classification loss
     )
 
     train_one_fold(fusion,predictor,train_loader,val_loader,
