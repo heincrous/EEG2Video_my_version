@@ -282,10 +282,10 @@ def main():
 CFG = {
     "loss_type": "mse",
     "use_var_reg": False,
-    "use_dropout": False,
+    "use_dropout": True,
     "lr": 5e-4,
-    "batch_size": 32,
-    "epochs": 200,
+    "batch_size": 16,
+    "epochs": 50,
 }
 
 if __name__ == "__main__":
