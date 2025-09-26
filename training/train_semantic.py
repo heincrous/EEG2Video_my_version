@@ -1,5 +1,5 @@
 # ==========================================
-# train_semantic_kfold_collapsecheck.py (structured predictor + norm targets in dataset)
+# train_semantic_kfold_collapsecheck.py
 # ==========================================
 import os, sys
 import numpy as np
@@ -74,10 +74,10 @@ class EEG2BLIPDataset(Dataset):
         return out, target
 
 # -------------------------------------------------
-# Loss (MSE + cosine + variance reg)
+# Loss (MSE + cosine + variance reg, on normalised preds)
 # -------------------------------------------------
 def semantic_loss(pred, target, alpha=0.5, beta=0.1):
-    pred_norm = F.normalize(pred, dim=-1)  # normalise predictions
+    pred_norm = F.normalize(pred, dim=-1)
     mse = F.mse_loss(pred_norm, target)
     cos = 1 - F.cosine_similarity(
         pred_norm.flatten(1), target.flatten(1), dim=-1
@@ -118,7 +118,7 @@ def train_one_fold(fusion, predictor, train_loader, val_loader, device, subj_nam
                 feats = fusion(Xs, return_feats=True)
                 pred = predictor(feats)
                 val_loss += semantic_loss(pred, blip).item(); count += 1
-                all_preds.append(pred.cpu())
+                all_preds.append(F.normalize(pred, dim=-1).cpu())
         val_loss /= max(1, count)
 
         preds = torch.cat(all_preds, dim=0)
