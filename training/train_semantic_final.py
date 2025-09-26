@@ -1,12 +1,14 @@
 # ==========================================
 # Semantic predictor (EEG → BLIP)
-# Only best checkpoint saved
+# Keeps best checkpoint in memory, saves once to Drive
 # ==========================================
 import os, itertools, numpy as np, torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import StandardScaler
+import matplotlib.pyplot as plt
+import copy
 
 # -------------------------------------------------
 # Semantic Predictor MLP
@@ -70,11 +72,10 @@ def train(model, train_loader, val_loader, device, cfg, feat_name, subj_name):
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         opt, T_max=cfg["epochs"] * len(train_loader)
     )
+    history = []
     best_val = float("inf")
+    best_state = None
     patience, wait = 20, 0
-    ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
-    os.makedirs(ckpt_dir, exist_ok=True)
-    ckpt_path = os.path.join(ckpt_dir, f"semantic_predictor_{subj_name}_{feat_name}_best.pt")
 
     for ep in range(cfg["epochs"]):
         # Training
@@ -107,25 +108,68 @@ def train(model, train_loader, val_loader, device, cfg, feat_name, subj_name):
                 else:
                     val_loss += contrastive_loss(pred, blip).item()
                 preds.append(pred.view(pred.size(0), -1).cpu())
+        preds = torch.cat(preds, dim=0)
         val_loss /= len(val_loader)
 
-        print(f"[{feat_name}] Epoch {ep+1}, "
-              f"TrainLoss {total_loss/len(train_loader):.4f}, "
-              f"ValLoss {val_loss:.4f}")
+        stats = {
+            "epoch": ep+1,
+            "train_loss": total_loss/len(train_loader),
+            "val_loss": val_loss,
+            "pred_var_dim": preds.var(dim=0).mean().item(),
+            "pred_var_samp": preds.var(dim=1).mean().item()
+        }
+        print(f"[{feat_name}] Epoch {stats['epoch']}, "
+              f"TrainLoss {stats['train_loss']:.4f}, "
+              f"ValLoss {stats['val_loss']:.4f}, "
+              f"Var(dim) {stats['pred_var_dim']:.6f}, "
+              f"Var(samples) {stats['pred_var_samp']:.6f}")
+        history.append(stats)
 
-        # Checkpointing
+        # Save best in memory
         if val_loss < best_val:
             best_val = val_loss
+            best_state = copy.deepcopy(model.state_dict())
             wait = 0
-            torch.save({'state_dict': model.state_dict()}, ckpt_path)
-            print(f"New best checkpoint saved at epoch {ep+1}")
+            print(f"New best model found at epoch {ep+1}")
         else:
             wait += 1
             if wait >= patience:
                 print("Early stopping triggered")
                 break
 
-    return ckpt_path
+    # Save once to Drive if we found a best state
+    ckpt_path = None
+    if best_state is not None:
+        ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
+        os.makedirs(ckpt_dir, exist_ok=True)
+        ckpt_path = os.path.join(ckpt_dir, f"semantic_predictor_{subj_name}_{feat_name}_best.pt")
+        torch.save({'state_dict': best_state}, ckpt_path)
+        print(f"Best checkpoint saved to {ckpt_path}")
+
+    # Plot validation loss + variance
+    if history:
+        epochs = [h["epoch"] for h in history]
+        val_losses = [h["val_loss"] for h in history]
+        var_dims = [h["pred_var_dim"] for h in history]
+
+        plt.figure(figsize=(10,4))
+        plt.subplot(1,2,1)
+        plt.plot(epochs, val_losses, marker="o")
+        plt.xlabel("Epoch"); plt.ylabel("Val Loss")
+        plt.title("Validation Loss")
+
+        plt.subplot(1,2,2)
+        plt.plot(epochs, var_dims, marker="o", color="orange")
+        plt.xlabel("Epoch"); plt.ylabel("Variance (dim)")
+        plt.title("Prediction Variance")
+
+        plot_dir = "/content/drive/MyDrive/EEG2Video_outputs/semantic_predictor_plots"
+        os.makedirs(plot_dir, exist_ok=True)
+        plot_path = os.path.join(plot_dir, f"training_plot_{feat_name}_{cfg['loss_type']}.png")
+        plt.savefig(plot_path); plt.close()
+        print(f"Saved plot to {plot_path}")
+
+    return history, ckpt_path
 
 # -------------------------------------------------
 # Evaluate on held-out test set
@@ -212,9 +256,13 @@ def main():
         model = SemanticPredictor(in_dim=in_dim, out_shape=(77,768), use_dropout=CFG["use_dropout"]).to(device)
         feat_name = "_".join(combo)
 
-        ckpt_path = train(model, train_loader, val_loader, device, CFG, feat_name, subj_name)
-        model.load_state_dict(torch.load(ckpt_path)['state_dict'])
-        evaluate(model, test_loader, device, CFG, feat_name)
+        history, ckpt_path = train(model, train_loader, val_loader, device, CFG, feat_name, subj_name)
+
+        if ckpt_path:
+            model.load_state_dict(torch.load(ckpt_path)['state_dict'])
+            evaluate(model, test_loader, device, CFG, feat_name)
+        else:
+            print(f"[{feat_name}] No best checkpoint found, skipping evaluation.")
 
 # -------------------------------------------------
 # Config
@@ -230,6 +278,3 @@ CFG = {
 
 if __name__ == "__main__":
     main()
-
-# DE & PSD together is redundant (both frequency domain)
-# contrastive makes variance blow-up
