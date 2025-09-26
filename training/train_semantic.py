@@ -1,5 +1,5 @@
 # ==========================================
-# train_semantic_kfold_collapsecheck.py (fully fixed with mixed loss)
+# train_semantic_kfold_collapsecheck.py (structured predictor + norm targets in dataset)
 # ==========================================
 import os, sys
 import numpy as np
@@ -37,30 +37,29 @@ class FusionModel(nn.Module):
         return self.classifier(fused)
 
 # -------------------------------------------------
-# Semantic predictor (deep MLP)
+# Semantic predictor (structured output: [77,768])
 # -------------------------------------------------
 class SemanticPredictor(nn.Module):
-    def __init__(self, input_dim=512, out_dim=77*768):
+    def __init__(self, input_dim=512, out_dim=(77,768)):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 2048),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(2048, 4096),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(4096, out_dim)
-        )
+        self.fc1 = nn.Linear(input_dim, 2048)
+        self.fc2 = nn.Linear(2048, 4096)
+        self.fc3 = nn.Linear(4096, out_dim[0]*out_dim[1])
+        self.out_dim = out_dim
     def forward(self, x):
-        return self.net(x)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        return x.view(-1, *self.out_dim)  # [B,77,768]
 
 # -------------------------------------------------
-# Dataset
+# Dataset (normalise BLIP targets once here)
 # -------------------------------------------------
 class EEG2BLIPDataset(Dataset):
     def __init__(self, Xs, Ys):
         self.Xs = Xs
-        self.Ys = Ys
+        Ys = Ys / (np.linalg.norm(Ys, axis=-1, keepdims=True) + 1e-8)
+        self.Ys = Ys.astype(np.float32)
         self.keys = list(Xs.keys())
     def __len__(self):
         return len(self.Ys)
@@ -71,23 +70,30 @@ class EEG2BLIPDataset(Dataset):
             if k in ["windows", "segments"]:
                 x = x.unsqueeze(0)
             out[k] = x
-        target = torch.tensor(self.Ys[idx], dtype=torch.float32)
+        target = torch.tensor(self.Ys[idx], dtype=torch.float32)  # [77,768], already normed
         return out, target
 
 # -------------------------------------------------
-# Mixed loss (MSE + cosine dissimilarity)
+# Loss (MSE + cosine + variance reg)
 # -------------------------------------------------
-def mixed_loss(pred, target, alpha=0.5):
-    mse = F.mse_loss(pred, target)
-    cos = 1 - F.cosine_similarity(pred, target, dim=-1).mean()
-    return mse + alpha * cos
+def semantic_loss(pred, target, alpha=0.5, beta=0.1):
+    pred_norm = F.normalize(pred, dim=-1)  # normalise predictions
+    mse = F.mse_loss(pred_norm, target)
+    cos = 1 - F.cosine_similarity(
+        pred_norm.flatten(1), target.flatten(1), dim=-1
+    ).mean()
+    var_loss = -pred_norm.var(dim=0).mean()
+    return mse + alpha * cos + beta * var_loss
 
 # -------------------------------------------------
-# Train 1 fold (with scheduler + best checkpoint tracking)
+# Train 1 fold
 # -------------------------------------------------
-def train_one_fold(fusion, predictor, train_loader, val_loader, device, subj_name, num_epochs=30, lr=5e-4):
+def train_one_fold(fusion, predictor, train_loader, val_loader, device, subj_name,
+                   num_epochs=30, lr=1e-3):
     optimizer = optim.AdamW(predictor.parameters(), lr=lr)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(train_loader))
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=num_epochs * len(train_loader)
+    )
     best_val = 1e9
     best_state_dict = None
 
@@ -99,7 +105,7 @@ def train_one_fold(fusion, predictor, train_loader, val_loader, device, subj_nam
             with torch.no_grad():
                 feats = fusion(Xs, return_feats=True)
             pred = predictor(feats)
-            loss = mixed_loss(pred, blip)
+            loss = semantic_loss(pred, blip)
             optimizer.zero_grad(); loss.backward(); optimizer.step()
             scheduler.step()
 
@@ -111,7 +117,7 @@ def train_one_fold(fusion, predictor, train_loader, val_loader, device, subj_nam
                 blip = blip.to(device)
                 feats = fusion(Xs, return_feats=True)
                 pred = predictor(feats)
-                val_loss += mixed_loss(pred, blip).item(); count += 1
+                val_loss += semantic_loss(pred, blip).item(); count += 1
                 all_preds.append(pred.cpu())
         val_loss /= max(1, count)
 
@@ -143,7 +149,7 @@ def run_cv(subj_name, drive_root, device):
     segments = np.load(os.path.join(drive_root, "EEG_segments", f"{subj_name}.npy"))
 
     blip_raw = np.load(os.path.join(drive_root, "BLIP_embeddings", "BLIP_embeddings.npy"))
-    assert blip_raw.shape == (7, 40, 5, 77, 768), f"BLIP shape mismatch: {blip_raw.shape}"
+    assert blip_raw.shape == (7, 40, 5, 77, 768)
 
     all_val_losses, all_test_losses = [], []
 
@@ -161,7 +167,7 @@ def run_cv(subj_name, drive_root, device):
                         Xs["psd"].append(psd[b,c,k])
                         Xs["windows"].append(windows[b,c,k].mean(0))
                         Xs["segments"].append(segments[b,c,k])
-                        Ys.append(blip_raw[b,c,k].reshape(-1))
+                        Ys.append(blip_raw[b,c,k])  # [77,768]
             return {k: np.array(v) for k,v in Xs.items()}, np.array(Ys)
 
         print(f"\n--- Fold {test_block+1}/7 ---")
@@ -181,7 +187,7 @@ def run_cv(subj_name, drive_root, device):
         predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
         val_loss = train_one_fold(fusion, predictor, train_loader, val_loader, device, subj_name)
 
-        # === Test performance (MSE only for consistency) ===
+        # Test
         predictor.eval(); test_loss = 0; count = 0
         criterion = nn.MSELoss()
         with torch.no_grad():
@@ -189,7 +195,8 @@ def run_cv(subj_name, drive_root, device):
                 Xs = {k: v.to(device) for k,v in Xs.items()}; blip = blip.to(device)
                 feats = fusion(Xs, return_feats=True)
                 pred = predictor(feats)
-                test_loss += criterion(pred, blip).item(); count += 1
+                pred_norm = F.normalize(pred, dim=-1)
+                test_loss += criterion(pred_norm, blip).item(); count += 1
         test_loss /= max(1, count)
 
         all_val_losses.append(val_loss)
@@ -199,21 +206,6 @@ def run_cv(subj_name, drive_root, device):
     print("\n=== Final Results ===")
     print(f"Avg Val Loss:  {np.mean(all_val_losses):.4f}")
     print(f"Avg Test Loss: {np.mean(all_test_losses):.4f}")
-
-    # === Collapse Check ===
-    print("\n=== Collapse Check on Final Test Set ===")
-    predictor.load_state_dict(torch.load(
-        f"/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints/semantic_checkpoint_{subj_name}.pt"))
-    predictor.eval(); all_preds, all_targets = [], []
-    with torch.no_grad():
-        for Xs, blip in test_loader:
-            Xs = {k: v.to(device) for k,v in Xs.items()}; blip = blip.to(device)
-            feats = fusion(Xs, return_feats=True); pred = predictor(feats)
-            all_preds.append(pred.cpu()); all_targets.append(blip.cpu())
-    preds = torch.cat(all_preds, dim=0); targets = torch.cat(all_targets, dim=0)
-    print(f"PredVar(dim):     {preds.var(dim=0).mean().item():.6f}")
-    print(f"PredVar(samples): {preds.var(dim=1).mean().item():.6f}")
-    print(f"Cosine Similarity: {F.cosine_similarity(preds, targets, dim=-1).mean().item():.4f}")
 
 # -------------------------------------------------
 # Main
