@@ -74,7 +74,7 @@ if __name__ == "__main__":
     predictor.to(device)
 
     # load EEG features (sub1.npy) and select block 7
-    eeg_all = np.load("/content/drive/MyDrive/EEG2Video_data/processed/sub1.npy")  # [7,40,5,62,5]
+    eeg_all = np.load("/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE/sub1.npy")  # [7,40,5,62,5]
     eeg_block7 = eeg_all[6]  # block index 6 = 7th block -> [40,5,62,5]
     eeg_feats = eeg_block7.reshape(-1, 62*5)  # [200,310]
     labels = np.repeat(np.arange(40), 5)      # [200]
