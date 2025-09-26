@@ -63,7 +63,7 @@ result = pipe(
     width=512,
     num_inference_steps=50,
     guidance_scale=12.5,
-    generator=gen,
+    generator=torch.Generator(device="cuda").manual_seed(42),
     dtype=dtype,
 )
 
