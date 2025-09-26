@@ -332,7 +332,7 @@ def main():
 # Config
 # -------------------------------------------------
 CFG = {
-    "loss_type": "cosine",  # mse / cosine / contrastive
+    "loss_type": "contrastive",  # mse / cosine / contrastive
     "use_var_reg": False,
     "use_dropout": False,
     "lr": 5e-4,
