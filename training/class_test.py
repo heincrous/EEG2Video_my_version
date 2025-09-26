@@ -63,7 +63,7 @@ result = pipe(
     width=512,
     num_inference_steps=50,
     guidance_scale=12.5,
-    generator=torch.manual_seed(42),
+    generator=gen,
     dtype=dtype,
 )
 
