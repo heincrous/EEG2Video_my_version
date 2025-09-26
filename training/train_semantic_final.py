@@ -64,7 +64,8 @@ class EEG2BLIPDataset(Dataset):
         self.Y = blip_feats.astype(np.float32)
     def __len__(self): return len(self.X)
     def __getitem__(self, idx):
-        return torch.from_numpy(self.X[idx]), torch.from_numpy(self.Y[idx])
+        return torch.from_numpy(self.X[idx]), torch.from_numpy(self.Y[idx]), idx
+
 
 # -------------------------------------------------
 # Loss functions
@@ -74,12 +75,23 @@ def cosine_loss(pred, target):
     target = F.normalize(target.view(target.size(0), -1), dim=-1)
     return 1 - (pred * target).sum(-1).mean()
 
-def contrastive_loss(pred, target, temperature=0.07):
+def supervised_contrastive_loss(pred, target, idxs, num_classes=40, clips_per_class=5, temperature=0.07):
     pred = F.normalize(pred.view(pred.size(0), -1), dim=-1)
     target = F.normalize(target.view(target.size(0), -1), dim=-1)
-    logits = pred @ target.t() / temperature
-    labels = torch.arange(pred.size(0), device=pred.device)
-    return F.cross_entropy(logits, labels)
+    feats = torch.cat([pred, target], dim=0)  # (2N, D)
+
+    # derive class labels from index (every 5 clips = one class)
+    labels = (idxs // clips_per_class).to(feats.device)
+    labels = torch.cat([labels, labels], dim=0)
+
+    sim = torch.matmul(feats, feats.T) / temperature
+    mask = torch.eq(labels.unsqueeze(1), labels.unsqueeze(0)).float().to(feats.device)
+    logits = sim - torch.eye(sim.size(0), device=feats.device) * 1e9
+
+    log_prob = logits - torch.logsumexp(logits, dim=1, keepdim=True)
+    mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-6)
+    return -mean_log_prob_pos.mean()
+
 
 # -------------------------------------------------
 # Variance utilities
@@ -102,6 +114,7 @@ def compute_within_between_variance(embeds, num_classes=40, clips_per_class=5):
     within_var = np.mean(within_vars)
     return within_var, between_var
 
+
 # -------------------------------------------------
 # Train loop (no early stopping)
 # -------------------------------------------------
@@ -118,36 +131,40 @@ def train(model, train_loader, val_loader, device, cfg, feat_name, subj_name):
     for ep in range(cfg["epochs"]):
         # Training
         model.train(); total_loss = 0
-        for eeg, blip in train_loader:
-            eeg, blip = eeg.to(device), blip.to(device)
+        for eeg, blip, idxs in train_loader:
+            eeg, blip, idxs = eeg.to(device), blip.to(device), idxs.to(device)
             pred = model(eeg)
             if cfg["loss_type"] == "mse":
                 loss = F.mse_loss(pred, blip)
             elif cfg["loss_type"] == "cosine":
                 loss = cosine_loss(pred, blip)
             elif cfg["loss_type"] == "contrastive":
-                loss = contrastive_loss(pred, blip)
-            # variance regularizer only for mse/cosine if enabled
-            if cfg["use_var_reg"] and cfg["loss_type"] in ["mse", "cosine"]:
-                var = pred.view(pred.size(0), -1).var(dim=0).mean()
-                target_var = blip.view(blip.size(0), -1).var(dim=0).mean()
-                var_loss = (var - target_var).pow(2)
-                loss += 0.01 * var_loss
+                loss = supervised_contrastive_loss(pred, blip, idxs)
+
+            # variance regularizer (applied for all loss types if enabled)
+            if cfg["use_var_reg"]:
+                pred_within, pred_between = compute_within_between_variance(pred.view(pred.size(0), -1))
+                blip_within, blip_between = compute_within_between_variance(blip.view(blip.size(0), -1))
+                pred_ratio = pred_between / (pred_within + 1e-6)
+                blip_ratio = blip_between / (blip_within + 1e-6)
+                ratio_loss = (pred_ratio - blip_ratio)**2
+                loss += 0.01 * ratio_loss
+
             opt.zero_grad(); loss.backward(); opt.step(); scheduler.step()
             total_loss += loss.item()
 
         # Validation
         model.eval(); val_loss=0; preds=[]
         with torch.no_grad():
-            for eeg, blip in val_loader:
-                eeg, blip = eeg.to(device), blip.to(device)
+            for eeg, blip, idxs in val_loader:
+                eeg, blip, idxs = eeg.to(device), blip.to(device), idxs.to(device)
                 pred = model(eeg)
                 if cfg["loss_type"] == "mse":
                     val_loss += F.mse_loss(pred, blip).item()
                 elif cfg["loss_type"] == "cosine":
                     val_loss += cosine_loss(pred, blip).item()
                 else:
-                    val_loss += contrastive_loss(pred, blip).item()
+                    val_loss += supervised_contrastive_loss(pred, blip, idxs).item()
                 preds.append(pred.view(pred.size(0), -1).cpu())
         preds = torch.cat(preds, dim=0)
         val_loss /= len(val_loader)
@@ -173,7 +190,7 @@ def train(model, train_loader, val_loader, device, cfg, feat_name, subj_name):
               f"Between {stats['between_var']:.6f}")
         history.append(stats)
 
-        # Track best state but do not print every time
+        # Track best state
         if val_loss < best_val:
             best_val = val_loss
             best_state = copy.deepcopy(model.state_dict())
@@ -222,21 +239,22 @@ def train(model, train_loader, val_loader, device, cfg, feat_name, subj_name):
 
     return history, ckpt_path
 
+
 # -------------------------------------------------
 # Evaluate on held-out test set
 # -------------------------------------------------
 def evaluate(model, test_loader, device, cfg, feat_name):
     model.eval(); test_loss=0; preds=[]
     with torch.no_grad():
-        for eeg, blip in test_loader:
-            eeg, blip = eeg.to(device), blip.to(device)
+        for eeg, blip, idxs in test_loader:
+            eeg, blip, idxs = eeg.to(device), blip.to(device), idxs.to(device)
             pred = model(eeg)
             if cfg["loss_type"] == "mse":
                 test_loss += F.mse_loss(pred, blip).item()
             elif cfg["loss_type"] == "cosine":
                 test_loss += cosine_loss(pred, blip).item()
             else:
-                test_loss += contrastive_loss(pred, blip).item()
+                test_loss += supervised_contrastive_loss(pred, blip, idxs).item()
             preds.append(pred.view(pred.size(0), -1).cpu())
     preds = torch.cat(preds, dim=0)
 
@@ -256,6 +274,7 @@ def evaluate(model, test_loader, device, cfg, feat_name):
           f"Between {stats['between_var']:.6f}")
     return stats
 
+
 # -------------------------------------------------
 # Utility to load features
 # -------------------------------------------------
@@ -274,6 +293,7 @@ def load_features(choice_list, subj_name, drive_root):
         seg = np.load(os.path.join(drive_root,"EEG_segments",f"{subj_name}.npy"))
         feat_dict["segments"] = seg.reshape(-1, 62*400)
     return feat_dict
+
 
 # -------------------------------------------------
 # Main
@@ -328,12 +348,13 @@ def main():
         else:
             print(f"[{feat_name}] No best checkpoint found, skipping evaluation.")
 
+
 # -------------------------------------------------
 # Config
 # -------------------------------------------------
 CFG = {
     "loss_type": "contrastive",  # mse / cosine / contrastive
-    "use_var_reg": False,
+    "use_var_reg": True,
     "use_dropout": False,
     "lr": 5e-4,
     "batch_size": 512,
