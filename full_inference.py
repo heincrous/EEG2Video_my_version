@@ -6,13 +6,8 @@ import os, sys, gc, glob, random, imageio, torch, shutil
 import numpy as np
 import joblib
 
-from core_files.models import (
-    eegnet, shallownet, deepnet, tsconv, conformer, mlpnet,
-    glfnet, glfnet_mlp, glmnet
-)
 from core_files.unet import UNet3DConditionModel
 from training.train_semantic_final import WindowEncoderWrapper, ReshapeWrapper
-from core_files.add_noise import Diffusion
 from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 
 drive_root            = "/content/drive/MyDrive/EEG2Video_data/processed"
