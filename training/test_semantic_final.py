@@ -65,7 +65,7 @@ def evaluate_topk_classlevel(predictor, eeg_feats, labels, class_embeds, k=5):
 if __name__ == "__main__":
     # load predictor
     predictor = SemanticPredictor(in_dim=310)  # adjust in_dim to match training
-    ckpt_path = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints/semantic_predictor.pt"
+    ckpt_path = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints/semantic_predictor_sub1_de_best.pt"
     predictor.load_state_dict(torch.load(ckpt_path, map_location=device))
     predictor.to(device)
 
