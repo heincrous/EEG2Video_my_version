@@ -1,5 +1,5 @@
 # ==========================================
-# Class-Averaged Embeddings → Video (One Class, fp16)
+# Class-Averaged Embeddings → Video (One Class, fp16, patched)
 # ==========================================
 import os, sys, torch, numpy as np, imageio
 from einops import rearrange
@@ -22,11 +22,12 @@ save_dir              = "/content/drive/MyDrive/EEG2Video_outputs/class_test"
 os.makedirs(save_dir, exist_ok=True)
 
 device = "cuda"
+dtype  = torch.float16
 
-# --- Load pipeline (fp16 everywhere) ---
-vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae").to(device, dtype=torch.float16)
+# --- Load pipeline (force fp16) ---
+vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae").to(device, dtype=dtype)
 scheduler = DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
-unet = UNet3DConditionModel.from_pretrained_2d(finetuned_model_path, subfolder="unet").to(device, dtype=torch.float16)
+unet = UNet3DConditionModel.from_pretrained_2d(finetuned_model_path, subfolder="unet").to(device, dtype=dtype)
 tokenizer = CLIPTokenizer.from_pretrained(pretrained_model_path, subfolder="tokenizer")
 
 pipe = TuneAVideoPipeline(
@@ -38,7 +39,7 @@ pipe = TuneAVideoPipeline(
 pipe.enable_vae_slicing()
 
 # --- Load embeddings (7,40,5,77,768) ---
-all_embeds = np.load(embeddings_path, mmap_mode="r")  # safe on RAM
+all_embeds = np.load(embeddings_path, mmap_mode="r")
 print("Original embeddings shape:", all_embeds.shape)
 
 # --- Average over blocks (7) and clips (5) → (40,77,768) ---
@@ -47,24 +48,26 @@ print("Class-averaged embeddings shape:", class_embeds.shape)
 
 # --- Pick one class (e.g. class 0) ---
 chosen_class = 0
-embed = class_embeds[chosen_class]        # (77,768)
+embed = class_embeds[chosen_class]  # (77,768)
 
 # --- Prepare tensor for pipeline ---
-embed = torch.tensor(embed, dtype=torch.float16).unsqueeze(0).to(device)  # (1,77,768)
+embed = torch.tensor(embed, dtype=dtype, device=device).unsqueeze(0)  # (1,77,768)
 
-# --- Run inference ---
-video_length = 6   # frames (→ ~2s at 3fps)
+# --- Run inference (force fp16 throughout) ---
+video_length = 6
 result = pipe(
     model=None,
-    eeg=embed,
+    eeg=embed.to(device=device, dtype=dtype),
     video_length=video_length,
     height=288,
     width=512,
     num_inference_steps=50,
     guidance_scale=12.5,
+    generator=torch.manual_seed(42),
+    dtype=dtype,
 )
 
-video_tensor = result.videos  # (B,C,F,H,W)
+video_tensor = result["videos"]  # (B,C,F,H,W)
 frames = (video_tensor[0] * 255).clamp(0,255).to(torch.uint8)
 frames = rearrange(frames, "c f h w -> f h w c").cpu().numpy()
 
