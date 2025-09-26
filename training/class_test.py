@@ -17,7 +17,7 @@ from unet import UNet3DConditionModel
 # --- Paths ---
 pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 finetuned_model_path  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final"
-embeddings_path       = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/sub1.npy"
+embeddings_path       = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/BLIP_embeddings.npy"
 save_dir              = "/content/drive/MyDrive/EEG2Video_outputs/class_test"
 os.makedirs(save_dir, exist_ok=True)
 
