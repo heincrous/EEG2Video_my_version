@@ -35,18 +35,22 @@ class FusionModel(nn.Module):
         return self.classifier(fused)
 
 # -------------------------------------------------
-# Semantic predictor
+# Semantic predictor (deep MLP)
 # -------------------------------------------------
 class SemanticPredictor(nn.Module):
-    def __init__(self, input_dim=512, hidden_dims=[1024, 2048], out_dim=77*768):
+    def __init__(self, input_dim=512, out_dim=77*768):
         super().__init__()
-        layers = []
-        prev = input_dim
-        for h in hidden_dims:
-            layers += [nn.Linear(prev, h), nn.ReLU(), nn.Dropout(0.2)]
-            prev = h
-        layers.append(nn.Linear(prev, out_dim))
-        self.net = nn.Sequential(*layers)
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, out_dim)
+        )
     def forward(self, x):
         return self.net(x)
 
@@ -71,12 +75,14 @@ class EEG2BLIPDataset(Dataset):
         return out, target
 
 # -------------------------------------------------
-# Train 1 fold
+# Train 1 fold (with scheduler + best checkpoint tracking)
 # -------------------------------------------------
-def train_one_fold(fusion, predictor, train_loader, val_loader, device, num_epochs=30, lr=1e-4):
+def train_one_fold(fusion, predictor, train_loader, val_loader, device, subj_name, num_epochs=30, lr=5e-4):
     criterion = nn.MSELoss()
     optimizer = optim.AdamW(predictor.parameters(), lr=lr)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(train_loader))
     best_val = 1e9
+    best_state_dict = None
 
     for epoch in range(num_epochs):
         fusion.eval(); predictor.train()
@@ -88,6 +94,7 @@ def train_one_fold(fusion, predictor, train_loader, val_loader, device, num_epoc
             pred = predictor(feats)
             loss = criterion(pred, blip)
             optimizer.zero_grad(); loss.backward(); optimizer.step()
+            scheduler.step()
 
         predictor.eval(); val_loss = 0; count = 0
         all_preds = []
@@ -110,20 +117,25 @@ def train_one_fold(fusion, predictor, train_loader, val_loader, device, num_epoc
 
         if val_loss < best_val:
             best_val = val_loss
+            best_state_dict = predictor.state_dict()
 
-    return best_val, predictor
+    # Save best model after training
+    save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, f"semantic_checkpoint_{subj_name}.pt")
+    torch.save(best_state_dict, save_path)
+    print(f"Best semantic predictor saved to: {save_path}")
+    return best_val
 
 # -------------------------------------------------
 # K-Fold CV
 # -------------------------------------------------
 def run_cv(subj_name, drive_root, device):
-    # Load EEG
     de       = np.load(os.path.join(drive_root, "EEG_DE", f"{subj_name}.npy"))
     psd      = np.load(os.path.join(drive_root, "EEG_PSD", f"{subj_name}.npy"))
     windows  = np.load(os.path.join(drive_root, "EEG_windows", f"{subj_name}.npy"))
     segments = np.load(os.path.join(drive_root, "EEG_segments", f"{subj_name}.npy"))
 
-    # Load BLIP
     blip_raw = np.load(os.path.join(drive_root, "BLIP_embeddings", "BLIP_embeddings.npy"))
     assert blip_raw.shape == (7, 40, 5, 77, 768), f"BLIP shape mismatch: {blip_raw.shape}"
 
@@ -144,7 +156,9 @@ def run_cv(subj_name, drive_root, device):
                         Xs["windows"].append(windows[b,c,k].mean(0))
                         Xs["segments"].append(segments[b,c,k])
                         Ys.append(blip_raw[b, c, k].reshape(-1))
-            return {k: np.array(v) for k,v in Xs.items()}, np.array(Ys)
+            Xs = {k: np.array(v) for k,v in Xs.items()}
+            Ys = np.array(Ys)
+            return Xs, Ys
 
         print(f"\n--- Fold {test_block+1}/7 ---")
         X_train, Y_train = collect(train_blocks)
@@ -156,12 +170,13 @@ def run_cv(subj_name, drive_root, device):
         test_loader  = DataLoader(EEG2BLIPDataset(X_test,Y_test), batch_size=16)
 
         fusion = FusionModel().to(device)
-        fusion_ckpt = f"/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints/fusion_checkpoint_{subj_name}.pt"
-        fusion.load_state_dict(torch.load(fusion_ckpt, map_location=device))
+        ckpt_path = os.path.join("/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints",
+                                 f"fusion_checkpoint_{subj_name}.pt")
+        fusion.load_state_dict(torch.load(ckpt_path, map_location=device))
         for p in fusion.parameters(): p.requires_grad = False
 
         predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
-        val_loss, predictor = train_one_fold(fusion, predictor, train_loader, val_loader, device)
+        val_loss = train_one_fold(fusion, predictor, train_loader, val_loader, device, subj_name)
 
         # Test
         predictor.eval(); test_loss = 0; count = 0
@@ -183,12 +198,41 @@ def run_cv(subj_name, drive_root, device):
     print(f"Avg Val Loss:  {np.mean(all_val_losses):.4f}")
     print(f"Avg Test Loss: {np.mean(all_test_losses):.4f}")
 
-    # === Save predictor ===
-    save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
-    os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, f"semantic_checkpoint_{subj_name}.pt")
-    torch.save(predictor.state_dict(), save_path)
-    print(f"Semantic predictor saved to: {save_path}")
+    # === Collapse Check on Final Model (Test Set) ===
+    print("\n=== Collapse Check on Final Test Set ===")
+
+    # Reload best checkpoint
+    predictor.load_state_dict(torch.load(
+        os.path.join("/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints",
+                    f"semantic_checkpoint_{subj_name}.pt")
+    ))
+
+    predictor.eval()
+    all_preds, all_targets = [], []
+
+    with torch.no_grad():
+        for Xs, blip in test_loader:
+            Xs = {k: v.to(device) for k, v in Xs.items()}
+            blip = blip.to(device)
+            feats = fusion(Xs, return_feats=True)
+            pred = predictor(feats)
+            all_preds.append(pred.cpu())
+            all_targets.append(blip.cpu())
+
+    preds = torch.cat(all_preds, dim=0)
+    targets = torch.cat(all_targets, dim=0)
+
+    # Variance
+    var_dim = preds.var(dim=0).mean().item()
+    var_samples = preds.var(dim=1).mean().item()
+
+    # Cosine similarity with ground truth BLIP
+    cos_sim = torch.nn.functional.cosine_similarity(preds, targets, dim=-1).mean().item()
+
+    print(f"PredVar(dim):     {var_dim:.6f}")
+    print(f"PredVar(samples): {var_samples:.6f}")
+    print(f"Cosine Similarity: {cos_sim:.4f}")
+
 
 # -------------------------------------------------
 # Main
