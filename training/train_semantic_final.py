@@ -283,7 +283,7 @@ def main():
 # Config dictionary
 # -------------------------------------------------
 CFG = {
-    "loss_type": "cosine",        # "mse", "cosine", "contrastive"
+    "loss_type": "mse",        # "mse", "cosine", "contrastive"
     "use_var_reg": False, # False default
     "use_dropout": False,
     "lr": 5e-4, # 5e-4 default
