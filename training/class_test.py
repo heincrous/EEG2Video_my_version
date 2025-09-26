@@ -1,5 +1,6 @@
 # ==========================================
 # Diffusion Inference from ONE Class-Average CLIP Embedding
+# Handles (7,40,5,77,768) BLIP/CLIP embeddings
 # ==========================================
 import os, sys, gc, torch, imageio
 import numpy as np
@@ -49,22 +50,21 @@ pipe = pipe.to("cuda")
 # ==========================================
 # Load CLIP-space embeddings
 # ==========================================
-# Expected shape: (num_samples=1400, 77, 768)
+# Shape: (7 blocks, 40 classes, 5 clips, 77 tokens, 768 dims)
 all_embeds = np.load(embed_path)
-assert all_embeds.ndim == 3 and all_embeds.shape[1:] == (77,768), f"Unexpected shape {all_embeds.shape}"
+assert all_embeds.ndim == 5 and all_embeds.shape[1:] == (40,5,77,768), f"Unexpected shape {all_embeds.shape}"
+print("Original embeddings shape:", all_embeds.shape)
 
-num_classes = 40
-clips_per_class = all_embeds.shape[0] // num_classes
-print("Embeddings shape:", all_embeds.shape, "Clips per class:", clips_per_class)
+# Average across blocks (axis=0) and clips (axis=2)
+# Result: (40,77,768) → one embedding per class
+class_embeds = all_embeds.mean(axis=(0,2))
+print("Class-averaged embeddings shape:", class_embeds.shape)
 
 # ==========================================
 # Pick ONE class
 # ==========================================
-target_class = 5  # <--- change this to whichever class you want
-start = target_class * clips_per_class
-end   = start + clips_per_class
-class_embeds = all_embeds[start:end]   # (35,77,768)
-avg_embed = class_embeds.mean(axis=0, keepdims=True)  # (1,77,768)
+target_class = 5  # <--- change this index (0–39) to whichever class you want
+avg_embed = class_embeds[target_class:target_class+1]  # (1,77,768)
 
 clip_embeds = torch.tensor(avg_embed, dtype=torch.float16).to("cuda")
 
