@@ -137,14 +137,30 @@ def train(model, train_loader, val_loader, device, cfg, feat_name):
     val_losses = [h["val_loss"] for h in history]
     var_dims = [h["pred_var_dim"] for h in history]
 
+    # Ignore early epochs (burn-in = 30)
+    burnin = 30
+    eff_epochs = epochs[burnin:]
+    eff_vars = var_dims[burnin:]
+
+    # Compute slope of variance trend
+    if len(eff_epochs) > 1:
+        slope = np.polyfit(eff_epochs, eff_vars, 1)[0]
+    else:
+        slope = 0
+
     plt.figure(figsize=(10,4))
     plt.subplot(1,2,1)
     plt.plot(epochs, val_losses, marker="o")
     plt.xlabel("Epoch"); plt.ylabel("Val Loss"); plt.title("Validation Loss")
+    plt.text(epochs[-1], val_losses[-1],
+             f"Final={val_losses[-1]:.4f}", ha="left", va="bottom")
 
     plt.subplot(1,2,2)
     plt.plot(epochs, var_dims, marker="o", color="orange")
+    plt.axvline(burnin, color="gray", linestyle="--", alpha=0.5)
     plt.xlabel("Epoch"); plt.ylabel("Variance (dim)"); plt.title("Prediction Variance")
+    plt.text(epochs[-1], var_dims[-1],
+             f"Final={var_dims[-1]:.4f}\nSlope={slope:.5f}", ha="left", va="bottom")
 
     plt.tight_layout()
 
