@@ -283,8 +283,8 @@ def main():
 # -------------------------------------------------
 CFG = {
     "loss_type": "cosine",  # mse / cosine / contrastive
-    "use_var_reg": False,
-    "use_dropout": True,
+    "use_var_reg": True,
+    "use_dropout": False,
     "lr": 5e-4,
     "batch_size": 16,
     "epochs": 50,
