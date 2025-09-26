@@ -46,7 +46,7 @@ class_embeds = all_embeds.mean(axis=(0,2))
 print("Class-averaged embeddings shape:", class_embeds.shape)
 
 # --- Pick one class (e.g. class 0) ---
-chosen_class = 1
+chosen_class = 10
 embed = class_embeds[chosen_class]  # (77,768)
 
 # --- Prepare tensor for pipeline (mimic text pipeline) ---
