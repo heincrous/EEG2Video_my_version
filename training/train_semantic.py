@@ -77,7 +77,7 @@ class EEG2BLIPDataset(Dataset):
 # -------------------------------------------------
 # Mixed loss (MSE + cosine dissimilarity)
 # -------------------------------------------------
-def mixed_loss(pred, target, alpha=0.1):
+def mixed_loss(pred, target, alpha=0.5):
     mse = F.mse_loss(pred, target)
     cos = 1 - F.cosine_similarity(pred, target, dim=-1).mean()
     return mse + alpha * cos
