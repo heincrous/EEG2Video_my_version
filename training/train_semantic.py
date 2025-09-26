@@ -190,7 +190,7 @@ def main():
         use_infonce=False,
         normalise_preds=False,
         use_multitask=True,   # enable multitask
-        lambda_cls=0.1        # weight for classification loss
+        lambda_cls=1        # weight for classification loss
     )
 
     train_one_fold(fusion,predictor,train_loader,val_loader,
