@@ -283,15 +283,16 @@ def main():
 # Config dictionary
 # -------------------------------------------------
 CFG = {
-    "loss_type": "contrastive",        # "mse", "cosine", "contrastive"
+    "loss_type": "cosine",        # "mse", "cosine", "contrastive"
     "use_var_reg": True, # False default
     "use_dropout": False,
-    "lr": 1e-4, # 5e-4 default
-    "batch_size": 256, #32 default
-    "epochs": 100,
+    "lr": 5e-4, # 5e-4 default
+    "batch_size": 64, #32 default
+    "epochs": 50,
 }
 
 if __name__ == "__main__":
     main()
 
 # DE & PSD together is redundant (both frequency domain)
+# contrastive makes variance blow-up
