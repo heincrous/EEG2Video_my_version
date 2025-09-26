@@ -165,9 +165,9 @@ def run_cv(subj_name, drive_root, device):
         X_val,   Y_val   = collect([val_block])
         X_test,  Y_test  = collect([test_block])
 
-        train_loader = DataLoader(EEG2BLIPDataset(X_train,Y_train), batch_size=16, shuffle=True)
-        val_loader   = DataLoader(EEG2BLIPDataset(X_val,Y_val), batch_size=16)
-        test_loader  = DataLoader(EEG2BLIPDataset(X_test,Y_test), batch_size=16)
+        train_loader = DataLoader(EEG2BLIPDataset(X_train,Y_train), batch_size=32, shuffle=True)
+        val_loader   = DataLoader(EEG2BLIPDataset(X_val,Y_val), batch_size=32)
+        test_loader  = DataLoader(EEG2BLIPDataset(X_test,Y_test), batch_size=32)
 
         fusion = FusionModel().to(device)
         ckpt_path = os.path.join("/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints",
