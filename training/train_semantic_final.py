@@ -336,7 +336,7 @@ CFG = {
     "use_var_reg": False,
     "use_dropout": False,
     "lr": 5e-4,
-    "batch_size": 16,
+    "batch_size": 512,
     "epochs": 50,
 }
 
