@@ -1,17 +1,12 @@
 # ==========================================
-# train_semantic_multi_feat_configurable.py
-# Author-style semantic predictor (EEG → BLIP)
-# Configurable with toggles + Chart Output
+# Semantic predictor (EEG → BLIP)
+# Only best checkpoint saved
 # ==========================================
-import os
-import itertools
-import numpy as np
-import torch
+import os, itertools, numpy as np, torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import StandardScaler
-import matplotlib.pyplot as plt
 
 # -------------------------------------------------
 # Semantic Predictor MLP
@@ -20,10 +15,7 @@ class SemanticPredictor(nn.Module):
     def __init__(self, in_dim, out_shape=(77,768), use_dropout=False):
         super().__init__()
         out_dim = out_shape[0] * out_shape[1]
-        layers = [
-            nn.Linear(in_dim, 10000),
-            nn.ReLU(),
-        ]
+        layers = [nn.Linear(in_dim, 10000), nn.ReLU()]
         for _ in range(3):
             layers.append(nn.Linear(10000, 10000))
             layers.append(nn.ReLU())
@@ -32,7 +24,6 @@ class SemanticPredictor(nn.Module):
         layers.append(nn.Linear(10000, out_dim))
         self.mlp = nn.Sequential(*layers)
         self.out_shape = out_shape
-
     def forward(self, x):
         out = self.mlp(x)
         return out.view(-1, *self.out_shape)
@@ -52,7 +43,6 @@ class EEG2BLIPDataset(Dataset):
         X = np.concatenate(proc_feats, axis=1)
         self.X = X.astype(np.float32)
         self.Y = blip_feats.astype(np.float32)
-
     def __len__(self): return len(self.X)
     def __getitem__(self, idx):
         return torch.from_numpy(self.X[idx]), torch.from_numpy(self.Y[idx])
@@ -73,37 +63,38 @@ def contrastive_loss(pred, target, temperature=0.07):
     return F.cross_entropy(logits, labels)
 
 # -------------------------------------------------
-# Train loop
+# Train loop with early stopping
 # -------------------------------------------------
-def train(model, train_loader, val_loader, device, cfg, feat_name):
+def train(model, train_loader, val_loader, device, cfg, feat_name, subj_name):
     opt = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         opt, T_max=cfg["epochs"] * len(train_loader)
     )
-    history = []
+    best_val = float("inf")
+    patience, wait = 20, 0
+    ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
+    os.makedirs(ckpt_dir, exist_ok=True)
+    ckpt_path = os.path.join(ckpt_dir, f"semantic_predictor_{subj_name}_{feat_name}_best.pt")
 
     for ep in range(cfg["epochs"]):
+        # Training
         model.train(); total_loss = 0
         for eeg, blip in train_loader:
             eeg, blip = eeg.to(device), blip.to(device)
             pred = model(eeg)
-
             if cfg["loss_type"] == "mse":
                 loss = F.mse_loss(pred, blip)
             elif cfg["loss_type"] == "cosine":
                 loss = cosine_loss(pred, blip)
             elif cfg["loss_type"] == "contrastive":
                 loss = contrastive_loss(pred, blip)
-            else:
-                raise ValueError("Unknown loss type")
-
             if cfg["use_var_reg"]:
                 var_loss = 1.0 / (pred.view(pred.size(0), -1).var(dim=0).mean() + 1e-6)
                 loss += 0.01 * var_loss
-
             opt.zero_grad(); loss.backward(); opt.step(); scheduler.step()
             total_loss += loss.item()
 
+        # Validation
         model.eval(); val_loss=0; preds=[]
         with torch.no_grad():
             for eeg, blip in val_loader:
@@ -116,55 +107,25 @@ def train(model, train_loader, val_loader, device, cfg, feat_name):
                 else:
                     val_loss += contrastive_loss(pred, blip).item()
                 preds.append(pred.view(pred.size(0), -1).cpu())
-        preds = torch.cat(preds, dim=0)
+        val_loss /= len(val_loader)
 
-        stats = {
-            "epoch": ep+1,
-            "train_loss": total_loss/len(train_loader),
-            "val_loss": val_loss/len(val_loader),
-            "pred_var_dim": preds.var(dim=0).mean().item(),
-            "pred_var_samp": preds.var(dim=1).mean().item()
-        }
-        print(f"[{feat_name}] Epoch {stats['epoch']}, "
-              f"TrainLoss {stats['train_loss']:.4f}, "
-              f"ValLoss {stats['val_loss']:.4f}, "
-              f"Var(dim) {stats['pred_var_dim']:.6f}, "
-              f"Var(samples) {stats['pred_var_samp']:.6f}")
-        history.append(stats)
+        print(f"[{feat_name}] Epoch {ep+1}, "
+              f"TrainLoss {total_loss/len(train_loader):.4f}, "
+              f"ValLoss {val_loss:.4f}")
 
-    # Plot after training (drop first 30 epochs completely)
-    epochs = [h["epoch"] for h in history][30:]
-    val_losses = [h["val_loss"] for h in history][30:]
-    var_dims = [h["pred_var_dim"] for h in history][30:]
+        # Checkpointing
+        if val_loss < best_val:
+            best_val = val_loss
+            wait = 0
+            torch.save({'state_dict': model.state_dict()}, ckpt_path)
+            print(f"New best checkpoint saved at epoch {ep+1}")
+        else:
+            wait += 1
+            if wait >= patience:
+                print("Early stopping triggered")
+                break
 
-    if len(epochs) > 1:
-        slope = np.polyfit(epochs, var_dims, 1)[0]
-    else:
-        slope = 0
-
-    plt.figure(figsize=(10,4))
-    plt.subplot(1,2,1)
-    plt.plot(epochs, val_losses, marker="o")
-    plt.xlabel("Epoch"); plt.ylabel("Val Loss"); plt.title("Validation Loss")
-    plt.text(epochs[-1], val_losses[-1],
-             f"Final={val_losses[-1]:.4f}", ha="left", va="bottom")
-
-    plt.subplot(1,2,2)
-    plt.plot(epochs, var_dims, marker="o", color="orange")
-    plt.xlabel("Epoch"); plt.ylabel("Variance (dim)"); plt.title("Prediction Variance")
-    plt.text(epochs[-1], var_dims[-1],
-             f"Final={var_dims[-1]:.4f}\nSlope={slope:.5f}", ha="left", va="bottom")
-
-    plt.tight_layout()
-
-    plot_dir = "/content/drive/MyDrive/EEG2Video_outputs/semantic_predictor_plots"
-    os.makedirs(plot_dir, exist_ok=True)
-    plot_path = os.path.join(plot_dir, f"training_plot_{feat_name}_{cfg['loss_type']}.png")
-    plt.savefig(plot_path)
-    print(f"Saved plot to {plot_path}")
-    plt.close()
-
-    return history
+    return ckpt_path
 
 # -------------------------------------------------
 # Evaluate on held-out test set
@@ -183,7 +144,6 @@ def evaluate(model, test_loader, device, cfg, feat_name):
                 test_loss += contrastive_loss(pred, blip).item()
             preds.append(pred.view(pred.size(0), -1).cpu())
     preds = torch.cat(preds, dim=0)
-
     stats = {
         "test_loss": test_loss/len(test_loader),
         "pred_var_dim": preds.var(dim=0).mean().item(),
@@ -229,10 +189,7 @@ def main():
         combos = [choices]
     else:
         base = ["de","psd","windows","segments"]
-        combos = []
-        for r in range(1, len(base)+1):
-            for combo in itertools.combinations(base, r):
-                combos.append(list(combo))
+        combos = [list(combo) for r in range(1, len(base)+1) for combo in itertools.combinations(base, r)]
 
     blip = np.load(os.path.join(drive_root,"BLIP_embeddings","BLIP_embeddings.npy"))
     blip_flat = blip.reshape(-1, 77, 768)
@@ -241,53 +198,33 @@ def main():
         feat_dict = load_features(combo, subj_name, drive_root)
         ds = EEG2BLIPDataset(feat_dict, blip_flat)
 
-        # --- Fixed block-wise split ---
         block_size = 200
-        train_blocks = [0,1,2,3,4]
-        val_blocks   = [5]
-        test_blocks  = [6]
-
+        train_blocks, val_blocks, test_blocks = [0,1,2,3,4], [5], [6]
         def block_indices(block_list):
-            idxs = []
-            for b in block_list:
-                start = b * block_size
-                end   = (b+1) * block_size
-                idxs.extend(range(start, end))
-            return idxs
+            return [i for b in block_list for i in range(b*block_size,(b+1)*block_size)]
+        train_idx, val_idx, test_idx = block_indices(train_blocks), block_indices(val_blocks), block_indices(test_blocks)
 
-        train_idx = block_indices(train_blocks)
-        val_idx   = block_indices(val_blocks)
-        test_idx  = block_indices(test_blocks)
-
-        train_loader = DataLoader(torch.utils.data.Subset(ds, train_idx),
-                                  batch_size=CFG["batch_size"], shuffle=True)
-        val_loader   = DataLoader(torch.utils.data.Subset(ds, val_idx),
-                                  batch_size=CFG["batch_size"])
-        test_loader  = DataLoader(torch.utils.data.Subset(ds, test_idx),
-                                  batch_size=CFG["batch_size"])
+        train_loader = DataLoader(torch.utils.data.Subset(ds, train_idx), batch_size=CFG["batch_size"], shuffle=True)
+        val_loader   = DataLoader(torch.utils.data.Subset(ds, val_idx), batch_size=CFG["batch_size"])
+        test_loader  = DataLoader(torch.utils.data.Subset(ds, test_idx), batch_size=CFG["batch_size"])
 
         in_dim = ds.X.shape[1]
-        model = SemanticPredictor(in_dim=in_dim, out_shape=(77,768),
-                                  use_dropout=CFG["use_dropout"]).to(device)
+        model = SemanticPredictor(in_dim=in_dim, out_shape=(77,768), use_dropout=CFG["use_dropout"]).to(device)
         feat_name = "_".join(combo)
-        train(model, train_loader, val_loader, device, CFG, feat_name)
 
-        out_path = f"/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints/semantic_predictor_{subj_name}_{feat_name}.pt"
-        torch.save({'state_dict': model.state_dict()}, out_path)
-        print(f"Saved model to {out_path}")
-
-        # Evaluate on held-out block 7
+        ckpt_path = train(model, train_loader, val_loader, device, CFG, feat_name, subj_name)
+        model.load_state_dict(torch.load(ckpt_path)['state_dict'])
         evaluate(model, test_loader, device, CFG, feat_name)
 
 # -------------------------------------------------
-# Config dictionary
+# Config
 # -------------------------------------------------
 CFG = {
-    "loss_type": "mse",        # "mse", "cosine", "contrastive"
-    "use_var_reg": False, # False default
+    "loss_type": "mse",
+    "use_var_reg": False,
     "use_dropout": False,
-    "lr": 5e-4, # 5e-4 default
-    "batch_size": 128, #32 default
+    "lr": 5e-4,
+    "batch_size": 128,
     "epochs": 200,
 }
 
