@@ -288,7 +288,7 @@ CFG = {
     "use_dropout": False,
     "lr": 5e-4,
     "batch_size": 32,
-    "epochs": 100,
+    "epochs": 50,
 }
 
 if __name__ == "__main__":
