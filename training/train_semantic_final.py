@@ -14,7 +14,7 @@ import copy
 # Semantic Predictor MLP (adaptive hidden sizes)
 # -------------------------------------------------
 class SemanticPredictor(nn.Module):
-    def __init__(self, in_dim, out_shape=(77,768), use_dropout=False, feat_name="de"):
+    def __init__(self, in_dim, out_shape=(77,768), use_dropout=None, feat_name="de"):
         super().__init__()
         out_dim = out_shape[0] * out_shape[1]
 
@@ -33,8 +33,9 @@ class SemanticPredictor(nn.Module):
         for h in hidden:
             layers.append(nn.Linear(prev, h))
             layers.append(nn.ReLU())
-            if use_dropout:
-                layers.append(nn.Dropout(0.3))
+            if use_dropout:  # will use exactly what CFG passes
+                p = min(0.5, 0.1 + 0.00005 * h)
+                layers.append(nn.Dropout(p))
             prev = h
         layers.append(nn.Linear(prev, out_dim))
         self.mlp = nn.Sequential(*layers)
