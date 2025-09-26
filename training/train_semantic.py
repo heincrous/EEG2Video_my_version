@@ -65,13 +65,13 @@ class EEG2BLIPDataset(Dataset):
         for k in self.keys:
             x = torch.tensor(self.Xs[k][idx], dtype=torch.float32)
             if k in ["windows", "segments"]:
-                x = x.unsqueeze(0)  # CNN input
+                x = x.unsqueeze(0)
             out[k] = x
         target = torch.tensor(self.Ys[idx], dtype=torch.float32)
         return out, target
 
 # -------------------------------------------------
-# Train 1 fold (with collapse check)
+# Train 1 fold
 # -------------------------------------------------
 def train_one_fold(fusion, predictor, train_loader, val_loader, device, num_epochs=30, lr=1e-4):
     criterion = nn.MSELoss()
@@ -111,19 +111,19 @@ def train_one_fold(fusion, predictor, train_loader, val_loader, device, num_epoc
         if val_loss < best_val:
             best_val = val_loss
 
-    return best_val
+    return best_val, predictor
 
 # -------------------------------------------------
 # K-Fold CV
 # -------------------------------------------------
 def run_cv(subj_name, drive_root, device):
-    # Load EEG features
-    de       = np.load(os.path.join(drive_root, "EEG_DE", f"{subj_name}.npy"))         # (7,40,5,62,5)
-    psd      = np.load(os.path.join(drive_root, "EEG_PSD", f"{subj_name}.npy"))        # (7,40,5,62,5)
-    windows  = np.load(os.path.join(drive_root, "EEG_windows", f"{subj_name}.npy"))    # (7,40,5,7,62,100)
-    segments = np.load(os.path.join(drive_root, "EEG_segments", f"{subj_name}.npy"))   # (7,40,5,62,400)
+    # Load EEG
+    de       = np.load(os.path.join(drive_root, "EEG_DE", f"{subj_name}.npy"))
+    psd      = np.load(os.path.join(drive_root, "EEG_PSD", f"{subj_name}.npy"))
+    windows  = np.load(os.path.join(drive_root, "EEG_windows", f"{subj_name}.npy"))
+    segments = np.load(os.path.join(drive_root, "EEG_segments", f"{subj_name}.npy"))
 
-    # Load BLIP embeddings (7,40,5,77,768)
+    # Load BLIP
     blip_raw = np.load(os.path.join(drive_root, "BLIP_embeddings", "BLIP_embeddings.npy"))
     assert blip_raw.shape == (7, 40, 5, 77, 768), f"BLIP shape mismatch: {blip_raw.shape}"
 
@@ -141,30 +141,27 @@ def run_cv(subj_name, drive_root, device):
                     for k in range(5):
                         Xs["de"].append(de[b,c,k])
                         Xs["psd"].append(psd[b,c,k])
-                        Xs["windows"].append(windows[b,c,k].mean(0))  # (7,62,100) → (62,100)
+                        Xs["windows"].append(windows[b,c,k].mean(0))
                         Xs["segments"].append(segments[b,c,k])
-                        Ys.append(blip_raw[b, c, k].reshape(-1))  # (77,768) → (59136,)
-            Xs = {k: np.array(v) for k,v in Xs.items()}
-            Ys = np.array(Ys)
-            return Xs, Ys
+                        Ys.append(blip_raw[b, c, k].reshape(-1))
+            return {k: np.array(v) for k,v in Xs.items()}, np.array(Ys)
 
         print(f"\n--- Fold {test_block+1}/7 ---")
         X_train, Y_train = collect(train_blocks)
         X_val,   Y_val   = collect([val_block])
         X_test,  Y_test  = collect([test_block])
 
-        train_loader = DataLoader(EEG2BLIPDataset(X_train,Y_train), batch_size=256, shuffle=True)
-        val_loader   = DataLoader(EEG2BLIPDataset(X_val,Y_val), batch_size=256)
-        test_loader  = DataLoader(EEG2BLIPDataset(X_test,Y_test), batch_size=256)
+        train_loader = DataLoader(EEG2BLIPDataset(X_train,Y_train), batch_size=16, shuffle=True)
+        val_loader   = DataLoader(EEG2BLIPDataset(X_val,Y_val), batch_size=16)
+        test_loader  = DataLoader(EEG2BLIPDataset(X_test,Y_test), batch_size=16)
 
         fusion = FusionModel().to(device)
-        ckpt_path = os.path.join("/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints",
-                                 f"fusion_checkpoint_{subj_name}.pt")
-        fusion.load_state_dict(torch.load(ckpt_path, map_location=device))
+        fusion_ckpt = f"/content/drive/MyDrive/EEG2Video_checkpoints/fusion_checkpoints/fusion_checkpoint_{subj_name}.pt"
+        fusion.load_state_dict(torch.load(fusion_ckpt, map_location=device))
         for p in fusion.parameters(): p.requires_grad = False
 
         predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
-        val_loss = train_one_fold(fusion, predictor, train_loader, val_loader, device)
+        val_loss, predictor = train_one_fold(fusion, predictor, train_loader, val_loader, device)
 
         # Test
         predictor.eval(); test_loss = 0; count = 0
@@ -185,6 +182,13 @@ def run_cv(subj_name, drive_root, device):
     print("\n=== Final Results ===")
     print(f"Avg Val Loss:  {np.mean(all_val_losses):.4f}")
     print(f"Avg Test Loss: {np.mean(all_test_losses):.4f}")
+
+    # === Save predictor ===
+    save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, f"semantic_checkpoint_{subj_name}.pt")
+    torch.save(predictor.state_dict(), save_path)
+    print(f"Semantic predictor saved to: {save_path}")
 
 # -------------------------------------------------
 # Main
