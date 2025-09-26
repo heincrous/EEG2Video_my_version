@@ -1,6 +1,6 @@
 # ==========================================
-# train_semantic_experiments.py
-# Minimal baseline + toggles + multi-task
+# train_semantic_aux.py
+# sub1 only, auxiliary classifier signal
 # ==========================================
 import os, sys
 import numpy as np
@@ -37,10 +37,10 @@ class FusionModel(nn.Module):
         return self.classifier(fused)
 
 # -------------------------------------------------
-# Semantic predictor
+# Semantic predictor (input = feats + classifier logits)
 # -------------------------------------------------
 class SemanticPredictor(nn.Module):
-    def __init__(self, input_dim=512, out_dim=(77,768)):
+    def __init__(self, input_dim=512+40, out_dim=(77,768)):
         super().__init__()
         self.fc1 = nn.Linear(input_dim, 1024)
         self.fc2 = nn.Linear(1024, out_dim[0]*out_dim[1])
@@ -54,10 +54,9 @@ class SemanticPredictor(nn.Module):
 # Dataset
 # -------------------------------------------------
 class EEG2BLIPDataset(Dataset):
-    def __init__(self, Xs, Ys, normalise_targets=False):
+    def __init__(self, Xs, Ys):
         self.Xs = Xs
-        if normalise_targets:
-            Ys = Ys / (np.linalg.norm(Ys, axis=-1, keepdims=True) + 1e-8)
+        Ys = Ys / (np.linalg.norm(Ys, axis=-1, keepdims=True) + 1e-8)
         self.Ys = Ys.astype(np.float32)
         self.keys = list(Xs.keys())
     def __len__(self): return len(self.Ys)
@@ -72,62 +71,33 @@ class EEG2BLIPDataset(Dataset):
         return out, target
 
 # -------------------------------------------------
-# Loss builder
+# Loss (MSE + cosine)
 # -------------------------------------------------
-def build_loss(use_mse=True, use_cosine=False, use_var=False, use_infonce=False,
-               alpha=0.5, beta=0.01, tau=0.07, normalise_preds=False,
-               use_multitask=False, lambda_cls=0.1):
-    ce_loss = nn.CrossEntropyLoss()
-
-    def loss_fn(pred, target, feats=None, fusion=None, Xs=None):
-        # pred: semantic predictor output [B,77,768]
-        if normalise_preds:
-            pred = F.normalize(pred, dim=-1)
-        target = F.normalize(target, dim=-1)
-
-        pred_flat = pred.view(pred.size(0), -1)
-        target_flat = target.view(target.size(0), -1)
-
-        loss = 0.0
-        if use_mse:
-            loss += F.mse_loss(pred, target)
-        if use_cosine:
-            cos = 1 - F.cosine_similarity(pred_flat, target_flat, dim=-1).mean()
-            loss += alpha * cos
-        if use_var:
-            var_loss = -pred_flat.var(dim=0).mean()
-            loss += beta * var_loss
-        if use_infonce:
-            logits = pred_flat @ target_flat.T / tau
-            labels = torch.arange(pred_flat.size(0), device=pred.device)
-            infonce = F.cross_entropy(logits, labels)
-            loss += infonce
-
-        if use_multitask and fusion is not None and feats is not None:
-            # classifier logits from fusion
-            cls_logits = fusion.classifier(feats)
-            labels = torch.arange(cls_logits.size(0), device=cls_logits.device) % 40
-            cls_loss = ce_loss(cls_logits, labels)
-            loss += lambda_cls * cls_loss
-
-        return loss
-    return loss_fn
+def semantic_loss(pred, target, alpha=0.5):
+    pred = F.normalize(pred, dim=-1)
+    target = F.normalize(target, dim=-1)
+    mse = F.mse_loss(pred, target)
+    cos = 1 - F.cosine_similarity(
+        pred.view(pred.size(0), -1), target.view(target.size(0), -1), dim=-1
+    ).mean()
+    return mse + alpha * cos
 
 # -------------------------------------------------
 # Train loop
 # -------------------------------------------------
-def train_one_fold(fusion, predictor, train_loader, val_loader, device,
-                   loss_fn, epochs=10, lr=1e-3,
-                   use_multitask=False):
+def train(fusion, predictor, train_loader, val_loader, device, epochs=10, lr=1e-3):
     opt = optim.AdamW(predictor.parameters(), lr=lr)
     for ep in range(epochs):
         predictor.train()
         for Xs, Ys in train_loader:
             Xs = {k:v.to(device) for k,v in Xs.items()}
             Ys = Ys.to(device)
-            with torch.no_grad(): feats = fusion(Xs, return_feats=True)
-            pred = predictor(feats)
-            loss = loss_fn(pred, Ys, feats=feats, fusion=fusion, Xs=Xs)
+            with torch.no_grad():
+                feats = fusion(Xs, return_feats=True)
+                cls_logits = fusion.classifier(feats)
+            aux = torch.cat([feats, cls_logits], dim=-1)
+            pred = predictor(aux)
+            loss = semantic_loss(pred, Ys)
             opt.zero_grad(); loss.backward(); opt.step()
         # validation
         predictor.eval(); all_preds=[]; val_loss,n=0,0
@@ -136,8 +106,10 @@ def train_one_fold(fusion, predictor, train_loader, val_loader, device,
                 Xs = {k:v.to(device) for k,v in Xs.items()}
                 Ys = Ys.to(device)
                 feats = fusion(Xs, return_feats=True)
-                pred = predictor(feats)
-                val_loss += loss_fn(pred, Ys, feats=feats, fusion=fusion, Xs=Xs).item(); n+=1
+                cls_logits = fusion.classifier(feats)
+                aux = torch.cat([feats, cls_logits], dim=-1)
+                pred = predictor(aux)
+                val_loss += semantic_loss(pred, Ys).item(); n+=1
                 all_preds.append(F.normalize(pred,dim=-1).view(pred.size(0),-1).cpu())
         preds = torch.cat(all_preds,dim=0)
         print(f"Epoch {ep+1}, ValLoss {val_loss/n:.4f}, "
@@ -149,7 +121,7 @@ def train_one_fold(fusion, predictor, train_loader, val_loader, device,
 # -------------------------------------------------
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    subj_name = input("Enter subject name: ").strip()
+    subj_name = "sub1"  # fixed
     drive_root = "/content/drive/MyDrive/EEG2Video_data/processed"
 
     # load data
@@ -170,7 +142,7 @@ def main():
                 Ys.append(blip_raw[b,c,k])
     Xs={k:np.array(v) for k,v in Xs.items()}; Ys=np.array(Ys)
 
-    ds = EEG2BLIPDataset(Xs,Ys,normalise_targets=True)
+    ds = EEG2BLIPDataset(Xs,Ys)
     n = len(ds); split=int(0.8*n)
     train_loader=DataLoader(torch.utils.data.Subset(ds,range(split)),batch_size=32,shuffle=True)
     val_loader=DataLoader(torch.utils.data.Subset(ds,range(split,n)),batch_size=32)
@@ -180,21 +152,8 @@ def main():
     fusion.load_state_dict(torch.load(fusion_ckpt,map_location=device))
     for p in fusion.parameters(): p.requires_grad=False
 
-    predictor = SemanticPredictor(input_dim=fusion.total_dim).to(device)
-
-    # choose options
-    loss_fn = build_loss(
-        use_mse=True,
-        use_cosine=True,
-        use_var=False,
-        use_infonce=True,
-        normalise_preds=False,
-        use_multitask=True,   # enable multitask
-        lambda_cls=0.5        # weight for classification loss
-    )
-
-    train_one_fold(fusion,predictor,train_loader,val_loader,
-                   device,loss_fn,epochs=10, use_multitask=True)
+    predictor = SemanticPredictor(input_dim=fusion.total_dim+40).to(device)
+    train(fusion,predictor,train_loader,val_loader,device,epochs=10)
 
 if __name__=="__main__":
     main()
