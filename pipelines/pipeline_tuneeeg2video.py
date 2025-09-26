@@ -149,30 +149,71 @@ class TuneAVideoPipeline(DiffusionPipeline):
                 return torch.device(module._hf_hook.execution_device)
         return self.device
 
-    def _encode_eeg(self, model, eeg, device, num_videos_per_eeg, do_classifier_guidance, negative_eeg):
-        eeg_embeddings = eeg
-        eeg_embeddings  = torch.reshape(eeg_embeddings, [eeg_embeddings.shape[0], 77,  768])
-        eeg_embeddings = eeg_embeddings.cuda().to(dtype=torch.float32)
+    # def _encode_eeg(self, model, eeg, device, num_videos_per_eeg, do_classifier_guidance, negative_eeg):
+    #     eeg_embeddings = eeg
+    #     eeg_embeddings  = torch.reshape(eeg_embeddings, [eeg_embeddings.shape[0], 77,  768])
+    #     eeg_embeddings = eeg_embeddings.cuda().to(dtype=torch.float32)
 
-        bs_embed, seq_len, _ = eeg_embeddings.shape
+    #     bs_embed, seq_len, _ = eeg_embeddings.shape
+    #     eeg_embeddings = eeg_embeddings.repeat(1, num_videos_per_eeg, 1)
+    #     eeg_embeddings = eeg_embeddings.view(bs_embed * num_videos_per_eeg, seq_len, -1)
+
+    #     if do_classifier_guidance:
+    #         # --- NEW CODE: create negative.npy if it doesn’t exist ---
+    #         import os
+    #         negative_path = os.path.join(os.path.dirname(__file__), '..', 'core_files', 'negative.npy')
+    #         negative_path = os.path.abspath(negative_path)
+    #         if not os.path.exists(negative_path):
+    #             dummy = np.zeros((1, 77, 768), dtype=np.float32)
+    #             np.save(negative_path, dummy)
+
+    #         uncond_embeddings = np.load(negative_path)
+    #         uncond_embeddings = torch.from_numpy(uncond_embeddings).cuda()
+    #         # ----------------------------------------------------------
+    #         eeg_embeddings = torch.cat([uncond_embeddings, eeg_embeddings])
+
+    #     return eeg_embeddings
+
+    def _encode_eeg(
+        self,
+        model,
+        eeg: torch.FloatTensor,
+        device,
+        num_videos_per_eeg: int,
+        do_classifier_guidance: bool,
+        negative_eeg: Optional[torch.FloatTensor] = None,
+    ):
+        """
+        EEG embedding preparation, mirroring _encode_prompt for text.
+        Expects eeg of shape (batch, 77, 768).
+        """
+
+        # Ensure correct dtype/device
+        eeg_embeddings = eeg.to(device=device, dtype=torch.float32)
+
+        # Duplicate for num_videos_per_eeg
+        bs_embed, seq_len, dim = eeg_embeddings.shape  # (B,77,768)
         eeg_embeddings = eeg_embeddings.repeat(1, num_videos_per_eeg, 1)
-        eeg_embeddings = eeg_embeddings.view(bs_embed * num_videos_per_eeg, seq_len, -1)
+        eeg_embeddings = eeg_embeddings.view(bs_embed * num_videos_per_eeg, seq_len, dim)
 
         if do_classifier_guidance:
-            # --- NEW CODE: create negative.npy if it doesn’t exist ---
-            import os
-            negative_path = os.path.join(os.path.dirname(__file__), '..', 'core_files', 'negative.npy')
-            negative_path = os.path.abspath(negative_path)
-            if not os.path.exists(negative_path):
-                dummy = np.zeros((1, 77, 768), dtype=np.float32)
-                np.save(negative_path, dummy)
+            # If no negative EEG provided, use zeros
+            if negative_eeg is None:
+                uncond_embeddings = torch.zeros_like(eeg_embeddings, device=device, dtype=torch.float32)
+            else:
+                uncond_embeddings = negative_eeg.to(device=device, dtype=torch.float32)
 
-            uncond_embeddings = np.load(negative_path)
-            uncond_embeddings = torch.from_numpy(uncond_embeddings).cuda()
-            # ----------------------------------------------------------
-            eeg_embeddings = torch.cat([uncond_embeddings, eeg_embeddings])
+                # Ensure shape matches (bs * num_videos_per_eeg, 77, 768)
+                if uncond_embeddings.shape[1:] != (seq_len, dim):
+                    raise ValueError(
+                        f"negative_eeg must have shape (*,77,768), got {uncond_embeddings.shape}"
+                    )
+
+            # Concatenate unconditional + conditional
+            eeg_embeddings = torch.cat([uncond_embeddings, eeg_embeddings], dim=0)
 
         return eeg_embeddings
+
 
     def decode_latents(self, latents):
         video_length = latents.shape[2]
