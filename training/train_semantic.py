@@ -1,6 +1,6 @@
 # ==========================================
-# train_semantic_aux_strong.py
-# sub1 only, classifier emphasized
+# train_semantic_aux_strong_anchor.py
+# sub1 only, classifier as anchor
 # ==========================================
 import os, sys
 import numpy as np
@@ -37,7 +37,7 @@ class FusionModel(nn.Module):
         return self.classifier(fused)
 
 # -------------------------------------------------
-# Semantic predictor (input = feats + scaled classifier logits)
+# Semantic predictor
 # -------------------------------------------------
 class SemanticPredictor(nn.Module):
     def __init__(self, input_dim=512+40, out_dim=(77,768)):
@@ -73,7 +73,7 @@ class EEG2BLIPDataset(Dataset):
         return out, target, label
 
 # -------------------------------------------------
-# Loss
+# Semantic loss (MSE + cosine)
 # -------------------------------------------------
 def semantic_loss(pred, target, alpha=0.5):
     pred = F.normalize(pred, dim=-1)
@@ -83,11 +83,6 @@ def semantic_loss(pred, target, alpha=0.5):
         pred.view(pred.size(0), -1), target.view(target.size(0), -1), dim=-1
     ).mean()
     return mse + alpha * cos
-
-def joint_loss(pred, target, cls_logits, labels, alpha=0.5, beta=1.0):
-    sem = semantic_loss(pred, target, alpha)
-    ce = F.cross_entropy(cls_logits, labels)
-    return sem + beta * ce
 
 # -------------------------------------------------
 # Train loop
@@ -100,13 +95,31 @@ def train(fusion, predictor, train_loader, val_loader, device,
         for Xs, Ys, labels in train_loader:
             Xs = {k:v.to(device) for k,v in Xs.items()}
             Ys, labels = Ys.to(device), labels.to(device)
+
+            # feats are frozen
             with torch.no_grad():
                 feats = fusion(Xs, return_feats=True)
                 cls_logits = fusion.classifier(feats)
-            aux = torch.cat([feats, logit_scale * cls_logits], dim=-1)
+
+            # aux input to predictor (scaled logits dominate)
+            aux = torch.cat([feats, logit_scale * cls_logits], dim=-1).detach()
+
+            # predictor forward
             pred = predictor(aux)
-            loss = joint_loss(pred, Ys, cls_logits, labels, beta=beta)
-            opt.zero_grad(); loss.backward(); opt.step()
+
+            # semantic alignment loss
+            sem = semantic_loss(pred, Ys)
+
+            # CE anchor loss (no gradient to predictor, just value)
+            ce_anchor = F.cross_entropy(cls_logits, labels)
+
+            # total loss = semantic + weighted anchor
+            loss = sem + beta * ce_anchor
+
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+
         # validation
         predictor.eval(); all_preds=[]; val_loss,n=0,0
         with torch.no_grad():
@@ -117,7 +130,9 @@ def train(fusion, predictor, train_loader, val_loader, device,
                 cls_logits = fusion.classifier(feats)
                 aux = torch.cat([feats, logit_scale * cls_logits], dim=-1)
                 pred = predictor(aux)
-                val_loss += joint_loss(pred, Ys, cls_logits, labels, beta=beta).item(); n+=1
+                sem = semantic_loss(pred, Ys)
+                ce = F.cross_entropy(cls_logits, labels)
+                val_loss += (sem + beta*ce).item(); n+=1
                 all_preds.append(F.normalize(pred,dim=-1).view(pred.size(0),-1).cpu())
         preds = torch.cat(all_preds,dim=0)
         print(f"Epoch {ep+1}, ValLoss {val_loss/n:.4f}, "
@@ -148,7 +163,7 @@ def main():
                 Xs["windows"].append(windows[b,c,k].mean(0))
                 Xs["segments"].append(segments[b,c,k])
                 Ys.append(blip_raw[b,c,k])
-                labels.append(c)  # class label
+                labels.append(c)
     Xs={k:np.array(v) for k,v in Xs.items()}
     Ys=np.array(Ys); labels=np.array(labels)
 
@@ -163,7 +178,8 @@ def main():
     for p in fusion.parameters(): p.requires_grad=False
 
     predictor = SemanticPredictor(input_dim=fusion.total_dim+40).to(device)
-    train(fusion,predictor,train_loader,val_loader,device,epochs=10,logit_scale=5.0,beta=1.0)
+    train(fusion,predictor,train_loader,val_loader,device,
+          epochs=10,logit_scale=5.0,beta=1.0)
 
 if __name__=="__main__":
     main()
