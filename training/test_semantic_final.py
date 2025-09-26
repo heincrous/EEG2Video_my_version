@@ -2,25 +2,24 @@
 # evaluate_semantic_predictor_block7_classlevel.py
 # ==========================================
 import os, torch, numpy as np
+import torch.nn as nn
 import torch.nn.functional as F
 from transformers import CLIPTokenizer, CLIPTextModel
 
-# === Semantic Predictor ===
-class SemanticPredictor(torch.nn.Module):
-    def __init__(self, in_dim, out_shape=(77,768)):
+# === Semantic Predictor (configurable) ===
+class SemanticPredictor(nn.Module):
+    def __init__(self, in_dim, out_shape=(77,768), hidden_layers=[512,512,512]):
         super().__init__()
         out_dim = out_shape[0] * out_shape[1]
-        layers = [
-            torch.nn.Linear(in_dim, 10000),
-            torch.nn.ReLU(),
-        ]
-        for _ in range(3):
-            layers.append(torch.nn.Linear(10000, 10000))
-            layers.append(torch.nn.ReLU())
-        layers.append(torch.nn.Linear(10000, out_dim))
-        self.mlp = torch.nn.Sequential(*layers)
+        layers = []
+        prev = in_dim
+        for h in hidden_layers:
+            layers.append(nn.Linear(prev, h))
+            layers.append(nn.ReLU())
+            prev = h
+        layers.append(nn.Linear(prev, out_dim))
+        self.mlp = nn.Sequential(*layers)
         self.out_shape = out_shape
-
     def forward(self, x):
         return self.mlp(x).view(-1, *self.out_shape)
 
@@ -50,7 +49,6 @@ def evaluate_topk_classlevel(predictor, eeg_feats, labels, class_embeds, k=5):
     predictor.eval()
     correct = 0
     total = len(labels)
-
     with torch.no_grad():
         for x, y in zip(eeg_feats, labels):
             x = torch.tensor(x, dtype=torch.float32).unsqueeze(0).to(device)
@@ -61,23 +59,26 @@ def evaluate_topk_classlevel(predictor, eeg_feats, labels, class_embeds, k=5):
                 correct += 1
     return correct/total
 
-# === Example usage ===
+# === Main evaluation ===
 if __name__ == "__main__":
-    # load predictor
-    predictor = SemanticPredictor(in_dim=310)  # adjust in_dim if needed
-    ckpt_path = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints/semantic_predictor_sub1_de_best.pt"
+    # build predictor from config
+    predictor = SemanticPredictor(
+        in_dim=EVAL_CFG["in_dim"],
+        out_shape=EVAL_CFG["out_shape"],
+        hidden_layers=EVAL_CFG["hidden_layers"]
+    ).to(device)
 
-    ckpt = torch.load(ckpt_path, map_location=device)
-    if "state_dict" in ckpt:   # unwrap if checkpoint is dict with 'state_dict'
+    # load checkpoint
+    ckpt = torch.load(EVAL_CFG["checkpoint_path"], map_location=device)
+    if "state_dict" in ckpt:
         ckpt = ckpt["state_dict"]
     predictor.load_state_dict(ckpt, strict=False)
-    predictor.to(device)
 
     # load EEG features (sub1.npy) and select block 7
-    eeg_all = np.load("/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE/sub1.npy")  # [7,40,5,62,5]
+    eeg_all = np.load(f"/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE/{EVAL_CFG['subject']}.npy")  # [7,40,5,62,5]
     eeg_block7 = eeg_all[6]  # block index 6 = 7th block -> [40,5,62,5]
-    eeg_feats = eeg_block7.reshape(-1, 62*5)  # [200,310]
-    labels = np.repeat(np.arange(40), 5)      # [200]
+    eeg_feats = eeg_block7.reshape(-1, EVAL_CFG["in_dim"])  # [200,310]
+    labels = np.repeat(np.arange(40), 5)                   # [200]
 
     # load BLIP embeddings and select block 7
     blip_all = np.load("/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/BLIP_embeddings.npy")  # [7,40,5,77,768]
@@ -92,3 +93,21 @@ if __name__ == "__main__":
 
     print(f"Block 7 Class-Level Top-1 Accuracy: {acc1*100:.2f}%")
     print(f"Block 7 Class-Level Top-5 Accuracy: {acc5*100:.2f}%")
+
+# -------------------------------------------------
+# Config Table (manual reference for checkpoint setup)
+# -------------------------------------------------
+EVAL_CFG = {
+    "feature": "de",           
+    "in_dim": 62*5,            
+    "out_shape": (77, 768),    
+    "hidden_layers": [512,512,512],
+    "loss_type": "cosine",     
+    "use_dropout": False,      
+    "use_var_reg": True,       
+    "epochs": 50,              
+    "batch_size": 16,          
+    "lr": 5e-4,                
+    "subject": "sub1",         
+    "checkpoint_path": "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints/semantic_predictor_sub1_de_best.pt"
+}
