@@ -89,6 +89,7 @@ def train(model, train_loader, val_loader, device, cfg, feat_name, subj_name):
     history = []
     best_val = float("inf")
     best_state = None
+    best_epoch = -1
 
     for ep in range(cfg["epochs"]):
         # Training
@@ -138,11 +139,11 @@ def train(model, train_loader, val_loader, device, cfg, feat_name, subj_name):
               f"Var(samples) {stats['pred_var_samp']:.6f}")
         history.append(stats)
 
-        # Track best state but do not stop
+        # Track best state but do not print every time
         if val_loss < best_val:
             best_val = val_loss
             best_state = copy.deepcopy(model.state_dict())
-            print(f"New best model found at epoch {ep+1}")
+            best_epoch = ep+1
 
     # Save once to Drive after all epochs
     ckpt_path = None
@@ -151,7 +152,7 @@ def train(model, train_loader, val_loader, device, cfg, feat_name, subj_name):
         os.makedirs(ckpt_dir, exist_ok=True)
         ckpt_path = os.path.join(ckpt_dir, f"semantic_predictor_{subj_name}_{feat_name}_best.pt")
         torch.save({'state_dict': best_state}, ckpt_path)
-        print(f"Best checkpoint saved to {ckpt_path}")
+        print(f"Best checkpoint (epoch {best_epoch}) saved to {ckpt_path}")
 
     # Plot validation loss + variance
     if history:
@@ -280,7 +281,7 @@ def main():
 # Config
 # -------------------------------------------------
 CFG = {
-    "loss_type": "mse",
+    "loss_type": "cosine",  # mse / cosine / contrastive
     "use_var_reg": False,
     "use_dropout": True,
     "lr": 5e-4,
