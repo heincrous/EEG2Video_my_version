@@ -271,8 +271,8 @@ CFG = {
     "loss_type": "mse",
     "use_var_reg": False,
     "use_dropout": False,
-    "lr": 5e-4,
-    "batch_size": 128,
+    "lr": 1e-4,
+    "batch_size": 64,
     "epochs": 200,
 }
 
