@@ -257,8 +257,8 @@ def main():
     # dataset
     ds = EEG2BLIPDataset(feat_dict, blip_flat)
     n = len(ds); split=int(0.8*n)
-    train_loader = DataLoader(torch.utils.data.Subset(ds, range(split)), batch_size=512, shuffle=True)
-    val_loader   = DataLoader(torch.utils.data.Subset(ds, range(split,n)), batch_size=512)
+    train_loader = DataLoader(torch.utils.data.Subset(ds, range(split)), batch_size=32, shuffle=True)
+    val_loader   = DataLoader(torch.utils.data.Subset(ds, range(split,n)), batch_size=32)
 
     # model
     in_dim = ds.X.shape[1]
