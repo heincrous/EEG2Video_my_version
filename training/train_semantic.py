@@ -179,7 +179,7 @@ def main():
 
     predictor = SemanticPredictor(input_dim=fusion.total_dim+40).to(device)
     train(fusion,predictor,train_loader,val_loader,device,
-          epochs=10,logit_scale=5.0,beta=1.0)
+          epochs=10,logit_scale=1.0,beta=1.0)
 
 if __name__=="__main__":
     main()
