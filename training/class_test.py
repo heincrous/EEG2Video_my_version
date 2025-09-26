@@ -1,5 +1,5 @@
 # ==========================================
-# Class-Averaged Embeddings → Video (One Class, fp16, fixed)
+# Class-Averaged Embeddings → Video (EEG mimic text pipeline)
 # ==========================================
 import os, sys, torch, numpy as np, imageio
 from einops import rearrange
@@ -22,12 +22,11 @@ save_dir              = "/content/drive/MyDrive/EEG2Video_outputs/class_test"
 os.makedirs(save_dir, exist_ok=True)
 
 device = "cuda"
-dtype  = torch.float16
 
-# --- Load pipeline (fp16 everywhere) ---
-vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae", torch_dtype=dtype).to(device)
+# --- Load pipeline ---
+vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae")
 scheduler = DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
-unet = UNet3DConditionModel.from_pretrained_2d(finetuned_model_path, subfolder="unet").to(device, dtype=dtype)
+unet = UNet3DConditionModel.from_pretrained_2d(finetuned_model_path, subfolder="unet")
 tokenizer = CLIPTokenizer.from_pretrained(pretrained_model_path, subfolder="tokenizer")
 
 pipe = TuneAVideoPipeline(
@@ -50,8 +49,12 @@ print("Class-averaged embeddings shape:", class_embeds.shape)
 chosen_class = 0
 embed = class_embeds[chosen_class]  # (77,768)
 
-# --- Prepare tensor for pipeline ---
-embed = torch.tensor(embed, dtype=dtype).unsqueeze(0).to(device)  # (1,77,768)
+# --- Prepare tensor for pipeline (mimic text pipeline) ---
+embed = torch.tensor(embed, dtype=torch.float32, device=device).unsqueeze(0)  # (1,77,768)
+num_videos_per_eeg = 1
+embed = embed.repeat(num_videos_per_eeg, 1, 1)  # (1,77,768) still, but expandable if >1
+
+print("Final embed shape:", embed.shape, "dtype:", embed.dtype)
 
 # --- Run inference ---
 video_length = 6
@@ -59,7 +62,7 @@ generator = torch.Generator(device=device).manual_seed(42)
 
 result = pipe(
     model=None,
-    eeg=embed.to(device=device, dtype=dtype),
+    eeg=embed,
     video_length=video_length,
     height=288,
     width=512,
