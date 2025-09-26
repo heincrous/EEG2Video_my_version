@@ -27,9 +27,14 @@ class FusionModel(nn.Module):
             "segments": conformer(out_dim=128, C=62, T=400),
         })
         self.total_dim = 128 * 4
-    def forward(self, inputs):
+        self.classifier = nn.Linear(self.total_dim, 40)
+
+    def forward(self, inputs, return_feats=False):
         feats = [enc(inputs[name]) for name, enc in self.encoders.items()]
-        return torch.cat(feats, dim=-1)
+        fused = torch.cat(feats, dim=-1)
+        if return_feats:
+            return fused
+        return self.classifier(fused)
 
 # -------------------------------------------------
 # Predictor
