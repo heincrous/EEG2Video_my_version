@@ -5,8 +5,14 @@ import os, sys, gc, torch, imageio
 import numpy as np
 
 from diffusers import AutoencoderKL, DDIMScheduler
-from core_files.unet import UNet3DConditionModel
-from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
+
+# === Repo imports ===
+repo_root = "/content/EEG2Video_my_version"
+sys.path.append(os.path.join(repo_root, "core_files"))
+from unet import UNet3DConditionModel
+
+sys.path.append(os.path.join(repo_root, "pipelines"))
+from pipeline_tuneeeg2video import TuneAVideoPipeline
 
 # ==========================================
 # Paths
