@@ -53,19 +53,25 @@ embed = class_embeds[chosen_class]  # (77,768)
 # --- Prepare tensor for pipeline ---
 embed = torch.tensor(embed, dtype=dtype, device=device).unsqueeze(0)  # (1,77,768)
 
-# --- Run inference (force fp16 throughout) ---
+# --- Run inference ---
 video_length = 6
-result = pipe(
-    model=None,
-    eeg=embed.to(device=device, dtype=dtype),
-    video_length=video_length,
-    height=288,
-    width=512,
-    num_inference_steps=50,
-    guidance_scale=12.5,
-    generator=torch.Generator(device="cuda").manual_seed(42),
-    dtype=dtype,
-)
+
+# generator on CUDA
+gen = torch.Generator(device=device).manual_seed(42)
+
+# call pipeline and make sure everything is fp16
+with torch.autocast(device_type="cuda", dtype=dtype):
+    result = pipe(
+        model=None,
+        eeg=embed.to(device=dtype),
+        video_length=video_length,
+        height=288,
+        width=512,
+        num_inference_steps=50,
+        guidance_scale=12.5,
+        generator=gen,
+        dtype=dtype,
+    )
 
 video_tensor = result["videos"]  # (B,C,F,H,W)
 frames = (video_tensor[0] * 255).clamp(0,255).to(torch.uint8)
