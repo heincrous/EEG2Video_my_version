@@ -260,14 +260,14 @@ def main():
         test_loader  = DataLoader(torch.utils.data.Subset(ds, test_idx), batch_size=CFG["batch_size"])
 
         in_dim = ds.X.shape[1]
+        feat_name = "_".join(combo)
         model = SemanticPredictor(
             in_dim=in_dim,
             out_shape=(77,768),
             use_dropout=CFG["use_dropout"],
             feat_name=feat_name
         ).to(device)
-        feat_name = "_".join(combo)
-
+        
         history, ckpt_path = train(model, train_loader, val_loader, device, CFG, feat_name, subj_name)
 
         if ckpt_path:
