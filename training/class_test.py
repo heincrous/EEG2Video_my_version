@@ -1,12 +1,18 @@
 # ==========================================
 # Class-Averaged Embeddings → Video
 # ==========================================
-import os, torch, numpy as np, imageio
+import os, torch, numpy as np, imageio, sys
 from einops import rearrange
 from diffusers import AutoencoderKL, DDIMScheduler
 from transformers import CLIPTokenizer
-from core_files.unet import UNet3DConditionModel
-from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
+
+# === Repo imports ===
+repo_root = "/content/EEG2Video_my_version"
+sys.path.append(os.path.join(repo_root, "pipelines"))
+from pipeline_tuneeeg2video import TuneAVideoPipeline
+
+sys.path.append(os.path.join(repo_root, "core_files"))
+from unet import UNet3DConditionModel
 
 # --- Paths ---
 pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
