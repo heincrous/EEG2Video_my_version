@@ -81,7 +81,7 @@ pipe.enable_vae_slicing()
 # ==========================================
 # Load Semantic Predictor
 # ==========================================
-from training.train_semantic import SemanticPredictor
+from training.train_semantic_final import SemanticPredictor
 semantic_model = SemanticPredictor().to(device)
 semantic_model.load_state_dict(torch.load(semantic_ckpt)["state_dict"])
 semantic_model.eval()

@@ -11,7 +11,7 @@ from core_files.models import (
     glfnet, glfnet_mlp, glmnet
 )
 from core_files.unet import UNet3DConditionModel
-from training.train_semantic import WindowEncoderWrapper, ReshapeWrapper
+from training.train_semantic_final import WindowEncoderWrapper, ReshapeWrapper
 from core_files.add_noise import Diffusion
 from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 
