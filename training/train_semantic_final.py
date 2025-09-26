@@ -65,7 +65,7 @@ def contrastive_loss(pred, target, temperature=0.07):
     return F.cross_entropy(logits, labels)
 
 # -------------------------------------------------
-# Train loop with early stopping
+# Train loop (no early stopping)
 # -------------------------------------------------
 def train(model, train_loader, val_loader, device, cfg, feat_name, subj_name):
     opt = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
@@ -75,7 +75,6 @@ def train(model, train_loader, val_loader, device, cfg, feat_name, subj_name):
     history = []
     best_val = float("inf")
     best_state = None
-    patience, wait = 20, 0
 
     for ep in range(cfg["epochs"]):
         # Training
@@ -125,19 +124,13 @@ def train(model, train_loader, val_loader, device, cfg, feat_name, subj_name):
               f"Var(samples) {stats['pred_var_samp']:.6f}")
         history.append(stats)
 
-        # Save best in memory
+        # Track best state but do not stop
         if val_loss < best_val:
             best_val = val_loss
             best_state = copy.deepcopy(model.state_dict())
-            wait = 0
             print(f"New best model found at epoch {ep+1}")
-        else:
-            wait += 1
-            if wait >= patience:
-                print("Early stopping triggered")
-                break
 
-    # Save once to Drive if we found a best state
+    # Save once to Drive after all epochs
     ckpt_path = None
     if best_state is not None:
         ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
