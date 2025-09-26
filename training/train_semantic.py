@@ -4,6 +4,7 @@
 # Configurable with toggles + Chart Output
 # ==========================================
 import os
+import itertools
 import numpy as np
 import torch
 import torch.nn as nn
@@ -74,7 +75,7 @@ def contrastive_loss(pred, target, temperature=0.07):
 # -------------------------------------------------
 # Train loop
 # -------------------------------------------------
-def train(model, train_loader, val_loader, device, cfg):
+def train(model, train_loader, val_loader, device, cfg, feat_name):
     opt = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         opt, T_max=cfg["epochs"] * len(train_loader)
@@ -124,7 +125,7 @@ def train(model, train_loader, val_loader, device, cfg):
             "pred_var_dim": preds.var(dim=0).mean().item(),
             "pred_var_samp": preds.var(dim=1).mean().item()
         }
-        print(f"Epoch {stats['epoch']}, "
+        print(f"[{feat_name}] Epoch {stats['epoch']}, "
               f"TrainLoss {stats['train_loss']:.4f}, "
               f"ValLoss {stats['val_loss']:.4f}, "
               f"Var(dim) {stats['pred_var_dim']:.6f}, "
@@ -146,9 +147,34 @@ def train(model, train_loader, val_loader, device, cfg):
     plt.xlabel("Epoch"); plt.ylabel("Variance (dim)"); plt.title("Prediction Variance")
 
     plt.tight_layout()
-    plt.show()
+
+    plot_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/plots"
+    os.makedirs(plot_dir, exist_ok=True)
+    plot_path = os.path.join(plot_dir, f"training_plot_{feat_name}_{cfg['loss_type']}.png")
+    plt.savefig(plot_path)
+    print(f"Saved plot to {plot_path}")
+    plt.close()
 
     return history
+
+# -------------------------------------------------
+# Utility to load features
+# -------------------------------------------------
+def load_features(choice_list, subj_name, drive_root):
+    feat_dict = {}
+    if "de" in choice_list:
+        de = np.load(os.path.join(drive_root,"EEG_DE",f"{subj_name}.npy"))
+        feat_dict["de"] = de.reshape(-1, 62*5)
+    if "psd" in choice_list:
+        psd = np.load(os.path.join(drive_root,"EEG_PSD",f"{subj_name}.npy"))
+        feat_dict["psd"] = psd.reshape(-1, 62*5)
+    if "windows" in choice_list:
+        win = np.load(os.path.join(drive_root,"EEG_windows",f"{subj_name}.npy"))
+        feat_dict["windows"] = win.mean(3).reshape(-1, 62*100)
+    if "segments" in choice_list:
+        seg = np.load(os.path.join(drive_root,"EEG_segments",f"{subj_name}.npy"))
+        feat_dict["segments"] = seg.reshape(-1, 62*400)
+    return feat_dict
 
 # -------------------------------------------------
 # Main
@@ -158,39 +184,37 @@ def main():
     subj_name = "sub1"
     drive_root = "/content/drive/MyDrive/EEG2Video_data/processed"
 
-    choices = input("Select features (comma separated from: de, psd, windows, segments, all): ")
-    choices = [c.strip() for c in choices.split(",")]
-    if "all" in choices: choices = ["de","psd","windows","segments"]
-
-    feat_dict = {}
-    if "de" in choices:
-        de = np.load(os.path.join(drive_root,"EEG_DE",f"{subj_name}.npy"))
-        feat_dict["de"] = de.reshape(-1, 62*5)
-    if "psd" in choices:
-        psd = np.load(os.path.join(drive_root,"EEG_PSD",f"{subj_name}.npy"))
-        feat_dict["psd"] = psd.reshape(-1, 62*5)
-    if "windows" in choices:
-        win = np.load(os.path.join(drive_root,"EEG_windows",f"{subj_name}.npy"))
-        feat_dict["windows"] = win.mean(3).reshape(-1, 62*100)
-    if "segments" in choices:
-        seg = np.load(os.path.join(drive_root,"EEG_segments",f"{subj_name}.npy"))
-        feat_dict["segments"] = seg.reshape(-1, 62*400)
+    mode = input("Run mode (one/max): ").strip().lower()
+    if mode == "one":
+        choices = input("Select features (comma separated from: de, psd, windows, segments, all): ")
+        choices = [c.strip() for c in choices.split(",")]
+        if "all" in choices: choices = ["de","psd","windows","segments"]
+        combos = [choices]
+    else:
+        base = ["de","psd","windows","segments"]
+        combos = []
+        for r in range(1, len(base)+1):
+            for combo in itertools.combinations(base, r):
+                combos.append(list(combo))
 
     blip = np.load(os.path.join(drive_root,"BLIP_embeddings","BLIP_embeddings.npy"))
     blip_flat = blip.reshape(-1, 77, 768)
 
-    ds = EEG2BLIPDataset(feat_dict, blip_flat)
-    n = len(ds); split=int(0.8*n)
-    train_loader = DataLoader(torch.utils.data.Subset(ds, range(split)), batch_size=CFG["batch_size"], shuffle=True)
-    val_loader   = DataLoader(torch.utils.data.Subset(ds, range(split,n)), batch_size=CFG["batch_size"])
+    for combo in combos:
+        feat_dict = load_features(combo, subj_name, drive_root)
+        ds = EEG2BLIPDataset(feat_dict, blip_flat)
+        n = len(ds); split=int(0.8*n)
+        train_loader = DataLoader(torch.utils.data.Subset(ds, range(split)), batch_size=CFG["batch_size"], shuffle=True)
+        val_loader   = DataLoader(torch.utils.data.Subset(ds, range(split,n)), batch_size=CFG["batch_size"])
 
-    in_dim = ds.X.shape[1]
-    model = SemanticPredictor(in_dim=in_dim, out_shape=(77,768), use_dropout=CFG["use_dropout"]).to(device)
-    train(model, train_loader, val_loader, device, CFG)
+        in_dim = ds.X.shape[1]
+        model = SemanticPredictor(in_dim=in_dim, out_shape=(77,768), use_dropout=CFG["use_dropout"]).to(device)
+        feat_name = "_".join(combo)
+        train(model, train_loader, val_loader, device, CFG, feat_name)
 
-    out_path = f"/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor_{subj_name}_{'_'.join(choices)}.pt"
-    torch.save({'state_dict': model.state_dict()}, out_path)
-    print(f"Saved model to {out_path}")
+        out_path = f"/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor_{subj_name}_{feat_name}.pt"
+        torch.save({'state_dict': model.state_dict()}, out_path)
+        print(f"Saved model to {out_path}")
 
 # -------------------------------------------------
 # Config dictionary
