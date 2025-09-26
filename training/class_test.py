@@ -1,27 +1,25 @@
 # ==========================================
-# Diffusion Inference (Class Average Test)
+# Diffusion Inference from ONE Class-Average CLIP Embedding
 # ==========================================
 import os, sys, gc, torch, imageio
 import numpy as np
-
-from diffusers import AutoencoderKL, DDIMScheduler
+from einops import rearrange
+from diffusers import DDIMScheduler, AutoencoderKL
 
 # === Repo imports ===
 repo_root = "/content/EEG2Video_my_version"
+sys.path.append(os.path.join(repo_root, "pipelines"))
+from pipeline_tuneavideo import TuneAVideoPipeline
 sys.path.append(os.path.join(repo_root, "core_files"))
 from unet import UNet3DConditionModel
-
-sys.path.append(os.path.join(repo_root, "pipelines"))
-from pipeline_tuneeeg2video import TuneAVideoPipeline
 
 # ==========================================
 # Paths
 # ==========================================
-drive_root            = "/content/drive/MyDrive/EEG2Video_data/processed"
 pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
-finetuned_model_path  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final"
-blip_path             = os.path.join(drive_root, "BLIP_embeddings", "BLIP_embeddings.npy")
-save_dir              = "/content/drive/MyDrive/EEG2Video_outputs/class_avg_test"
+trained_output_dir    = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final"
+save_dir              = "/content/drive/MyDrive/EEG2Video_outputs/class_avg_videos"
+embed_path            = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_embeddings/BLIP_embeddings.npy"
 
 os.makedirs(save_dir, exist_ok=True)
 
@@ -31,68 +29,77 @@ os.makedirs(save_dir, exist_ok=True)
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 gc.collect()
 torch.cuda.empty_cache()
-device = "cuda"
 
 # ==========================================
-# Load pipeline backbone
+# Load trained pipeline
 # ==========================================
-vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae").to(device, dtype=torch.float32)
-scheduler = DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
-unet = UNet3DConditionModel.from_pretrained_2d(pretrained_model_path, subfolder="unet").to(device, dtype=torch.float32)
-
-pipe = TuneAVideoPipeline.from_pretrained(
-    finetuned_model_path,
-    vae=vae,
-    unet=unet,
-    scheduler=scheduler,
-    torch_dtype=torch.float32,
-).to(device)
+pipe = TuneAVideoPipeline(
+    vae=AutoencoderKL.from_pretrained(
+        pretrained_model_path, subfolder="vae", torch_dtype=torch.float16
+    ),
+    text_encoder=None,    # not used here
+    tokenizer=None,       # not used here
+    unet=UNet3DConditionModel.from_pretrained_2d(trained_output_dir, subfolder="unet"),
+    scheduler=DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler"),
+)
+pipe.unet.to(torch.float16)
 pipe.enable_vae_slicing()
+pipe = pipe.to("cuda")
 
 # ==========================================
-# Load BLIP embeddings and compute class average
+# Load CLIP-space embeddings
 # ==========================================
-blip = np.load(blip_path)   # (7,40,5,77,768)
-assert blip.ndim == 5, f"Unexpected shape: {blip.shape}"
+# Expected shape: (num_samples=1400, 77, 768)
+all_embeds = np.load(embed_path)
+assert all_embeds.ndim == 3 and all_embeds.shape[1:] == (77,768), f"Unexpected shape {all_embeds.shape}"
 
-cls_idx = 0   # choose one class for test
-class_avg = blip[:, cls_idx, :, :, :].mean(axis=(0,1))   # (77,768)
+num_classes = 40
+clips_per_class = all_embeds.shape[0] // num_classes
+print("Embeddings shape:", all_embeds.shape, "Clips per class:", clips_per_class)
 
-semantic_pred = torch.tensor(class_avg, dtype=torch.float32, device=device).unsqueeze(0)
-negative = semantic_pred.mean(dim=0, keepdim=True).float().to(device)
+# ==========================================
+# Pick ONE class
+# ==========================================
+target_class = 5  # <--- change this to whichever class you want
+start = target_class * clips_per_class
+end   = start + clips_per_class
+class_embeds = all_embeds[start:end]   # (35,77,768)
+avg_embed = class_embeds.mean(axis=0, keepdims=True)  # (1,77,768)
 
-print("Class average embedding shape:", semantic_pred.shape)
+clip_embeds = torch.tensor(avg_embed, dtype=torch.float16).to("cuda")
+
+# Duplicate across frames
+video_length = 6   # frames (≈2s at 3fps)
+fps = 3
+clip_embeds = clip_embeds.repeat(video_length, 1, 1)  # (6,77,768)
 
 # ==========================================
 # Run inference
 # ==========================================
-video_length = 6
-fps = 3
+generator = torch.Generator(device="cuda").manual_seed(42)
 
-video = pipe(
-    model=None,
-    eeg=semantic_pred,
-    negative_eeg=negative,
-    latents=None,
+result = pipe(
+    prompt_embeds=clip_embeds,
     video_length=video_length,
-    height=288,
     width=512,
+    height=288,
     num_inference_steps=100,
-    guidance_scale=12.5,
-).videos
+    generator=generator,
+)
 
-frames = (video[0] * 255).clamp(0, 255).to(torch.uint8)
-frames = frames.permute(0, 2, 3, 1).cpu().numpy()
+video_tensor = result.videos
+frames = (video_tensor[0] * 255).clamp(0, 255).to(torch.uint8)
+frames = rearrange(frames, "c f h w -> f h w c").cpu().numpy()
 
 if frames.shape[-1] > 3:
     frames = frames[..., :3]
 elif frames.shape[-1] == 1:
-    frames = np.repeat(frames, 3, axis=-1)
+    frames = frames.repeat(3, axis=-1)
 
-mp4_path = os.path.join(save_dir, f"class{cls_idx}_avg_{video_length}f_{fps}fps.mp4")
+mp4_path = os.path.join(save_dir, f"class{target_class:02d}_avg.mp4")
 writer = imageio.get_writer(mp4_path, fps=fps, codec="libx264")
 for f in frames:
     writer.append_data(f)
 writer.close()
 
-print("Saved class-average reconstruction video:", mp4_path)
+print(f"Saved average video for class {target_class:02d} → {mp4_path}")
