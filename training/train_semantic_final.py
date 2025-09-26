@@ -293,3 +293,5 @@ CFG = {
 
 if __name__ == "__main__":
     main()
+
+# DE & PSD together is redundant (both frequency domain)
