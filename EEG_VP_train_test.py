@@ -16,13 +16,13 @@ import models
 # ==========================================
 batch_size   = 256
 num_epochs   = 100 # less epochs are better
-lr           = 0.0001
+lr           = 0.001
 C            = 62
 T            = 5
 run_device   = "cuda"
-emb_dim_segments = 1024
-emb_dim_DE = 512
-emb_dim_PSD = 512
+emb_dim_segments = 256
+emb_dim_DE = 64
+emb_dim_PSD = 64
 
 # Select feature type: "segments", "DE", or "PSD"
 FEATURE_TYPE = "DE"
