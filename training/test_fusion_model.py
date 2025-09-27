@@ -33,8 +33,8 @@ CONFIG = {
 
     # Choose which modalities to use
     "use_raw": True,
-    "use_de":  True,
-    "use_psd": True,
+    "use_de":  False,
+    "use_psd": False,
 
     # Encoder choices
     "raw_model": "glfnet",       # options: shallownet, deepnet, eegnet, tsconv, conformer, glfnet
