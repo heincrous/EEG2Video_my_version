@@ -27,14 +27,14 @@ CONFIG = {
     "optimizer":      "AdamW",
     "C":              62,       # EEG channels
     "T":              200,      # samples per 1s window (200 Hz)
-    "emb_dim":        128,
+    "emb_dim":        64,
     "out_dim":        40,       # 40 classes
     "device":         "cuda",
 
     # Choose which modalities to use
     "use_raw": True,
-    "use_de":  False,
-    "use_psd": False,
+    "use_de":  True,
+    "use_psd": True,
 
     # Encoder choices
     "raw_model": "glfnet",       # options: shallownet, deepnet, eegnet, tsconv, conformer, glfnet
