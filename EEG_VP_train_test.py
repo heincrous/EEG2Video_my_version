@@ -170,10 +170,10 @@ for subname in sub_list:
     # Flatten into trials
     if FEATURE_TYPE in ["DE", "PSD"]:
         X = rearrange(load_npy, "a b c d e f -> (a b c d) e f")
-        y = np.tile(np.arange(40).repeat(10), 7*2)  # 2800 labels
+        y = np.tile(np.arange(40).repeat(10), 7)  # 2800 labels
     elif FEATURE_TYPE == "segments":
         X = rearrange(load_npy, "a b c d (w t) -> (a b c w) d t", w=2)
-        y = np.tile(np.arange(40).repeat(10), 7*2)
+        y = np.tile(np.arange(40).repeat(10), 7*2)  # 2800 labels
 
     print("Final trial-level:", X.shape, y.shape)
 
