@@ -159,10 +159,10 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=F
             best_val, best_state = val_mse, net.state_dict()
 
         if epoch % 3 == 0:
-            test_mse, test_cos, between_var = evaluate(net, test_iter, device, fusion)
+            test_mse, test_cos, fisher_score = evaluate(net, test_iter, device, fusion)
             print(f"[{epoch+1}] train_loss={total_loss/len(train_iter.dataset):.4f}, "
                   f"val_mse={val_mse:.4f}, test_mse={test_mse:.4f}, "
-                  f"test_cos={test_cos:.4f}, between_var={between_var:.4f}")
+                  f"test_cos={test_cos:.4f}, between_var={fisher_score:.4f}")
 
     if best_state:
         net.load_state_dict(best_state)
