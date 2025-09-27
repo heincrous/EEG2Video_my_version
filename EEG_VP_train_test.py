@@ -25,7 +25,7 @@ emb_dim_DE       = 64
 emb_dim_PSD      = 64
 
 # Choose: "segments", "DE", "PSD", or "fusion"
-FEATURE_TYPE = "fusion"
+FEATURE_TYPE = "segments"
 LOSS_TYPE    = "crossentropy"
 
 USE_VAR_REG = False
