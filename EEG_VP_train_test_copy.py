@@ -1,6 +1,7 @@
 # ==========================================
 # EEG classification (FusionNet with independent scalers per feature & split)
 # Segments are split into halves so all features have 400 samples/block
+# Features are scaled separately for train/val/test
 # ==========================================
 import os
 import numpy as np
@@ -23,10 +24,17 @@ run_device   = "cuda"
 # Utilities
 # ==========================================
 def Get_Dataloader(features_dict, labels, istrain, batch_size):
-    tensors = {k: torch.tensor(v, dtype=torch.float32) for k, v in features_dict.items()}
-    labels  = torch.tensor(labels, dtype=torch.long)
+    tensors = {}
+    for k, v in features_dict.items():
+        t = torch.tensor(v, dtype=torch.float32)
+        if k == "segments":  # add channel dim for CNN encoder
+            t = t.unsqueeze(1)  # (N,1,62,200)
+        tensors[k] = t
+    labels = torch.tensor(labels, dtype=torch.long)
+
     lengths = [t.shape[0] for t in tensors.values()] + [labels.shape[0]]
     assert len(set(lengths)) == 1, f"Size mismatch: {lengths}"
+
     return data.DataLoader(data.TensorDataset(*(list(tensors.values()) + [labels])),
                            batch_size, shuffle=istrain)
 
