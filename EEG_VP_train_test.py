@@ -138,15 +138,22 @@ for subname in sub_list:
         test_data, test_label = All_train[test_set_id], All_label[test_set_id]
         val_data,  val_label  = All_train[val_set_id],  All_label[val_set_id]
 
-        # apply separate scalers to each split
-        train_scaler = StandardScaler().fit(train_data.reshape(train_data.shape[0], -1))
-        train_data   = train_scaler.transform(train_data.reshape(train_data.shape[0], -1)).reshape(train_data.shape)
+        # apply separate scalers to each split (flatten to [n_samples, C*T], then reshape back)
+        train_data = train_data.reshape(train_data.shape[0], C*T)
+        val_data   = val_data.reshape(val_data.shape[0], C*T)
+        test_data  = test_data.reshape(test_data.shape[0], C*T)
 
-        val_scaler   = StandardScaler().fit(val_data.reshape(val_data.shape[0], -1))
-        val_data     = val_scaler.transform(val_data.reshape(val_data.shape[0], -1)).reshape(val_data.shape)
+        train_scaler = StandardScaler()
+        train_scaler.fit(train_data)
+        train_data = train_scaler.transform(train_data).reshape(-1, C, T)
 
-        test_scaler  = StandardScaler().fit(test_data.reshape(test_data.shape[0], -1))
-        test_data    = test_scaler.transform(test_data.reshape(test_data.shape[0], -1)).reshape(test_data.shape)
+        val_scaler = StandardScaler()
+        val_scaler.fit(val_data)
+        val_data = val_scaler.transform(val_data).reshape(-1, C, T)
+
+        test_scaler = StandardScaler()
+        test_scaler.fit(test_data)
+        test_data = test_scaler.transform(test_data).reshape(-1, C, T)
 
         # model + dataloaders
         modelnet = models.glfnet_mlp(out_dim=40, emb_dim=64, input_dim=310)
