@@ -1,35 +1,35 @@
 # ==========================================
-# EEG classification (with internal best checkpoint, no saving to disk)
+# EEG classification (single feature or fusion)
 # ==========================================
-import os
+import os, random
 import numpy as np
 import torch
 from torch import nn
 from torch.utils import data
 from sklearn.preprocessing import StandardScaler
-from sklearn import metrics
 from einops import rearrange
 import models
-import random
 
 # ==========================================
 # Config
 # ==========================================
 batch_size   = 256
-num_epochs   = 200 # fewer epochs are often better
+num_epochs   = 100
 lr           = 0.001
 C            = 62
 T            = 5
 run_device   = "cuda"
-emb_dim_segments = 256
-emb_dim_DE   = 256
-emb_dim_PSD  = 64
 
-FEATURE_TYPE = "DE"   # "segments", "DE", or "PSD"
-LOSS_TYPE    = "cosine"  # "crossentropy", "mse", "cosine", "mse+cosine"
+emb_dim_segments = 128
+emb_dim_DE       = 64
+emb_dim_PSD      = 64
+
+# Choose: "segments", "DE", "PSD", or "fusion"
+FEATURE_TYPE = "fusion"
+LOSS_TYPE    = "crossentropy"
 
 USE_VAR_REG = False
-VAR_LAMBDA  = 0.01   # variance regularisation strength
+VAR_LAMBDA  = 0.01
 
 FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
@@ -43,73 +43,98 @@ MODEL_MAP = {
     "PSD":      lambda: models.glfnet_mlp(out_dim=40, emb_dim=emb_dim_PSD, input_dim=62*5),
 }
 
-data_path = FEATURE_PATHS[FEATURE_TYPE]
+# ==========================================
+# Fusion model
+# ==========================================
+class FusionNet(nn.Module):
+    def __init__(self, encoders, emb_dims, num_classes=40):
+        super().__init__()
+        self.encoders = nn.ModuleDict(encoders)
+        total_dim = sum(emb_dims.values())
+        self.classifier = nn.Linear(total_dim, num_classes)
+
+    def forward(self, inputs):
+        feats = []
+        for name, enc in self.encoders.items():
+            feats.append(enc(inputs[name]))
+        fused = torch.cat(feats, dim=-1)
+        return self.classifier(fused)
+
+# ==========================================
+# Dataset wrapper
+# ==========================================
+class FusionDataset(data.Dataset):
+    def __init__(self, features_dict, labels):
+        self.features = features_dict
+        self.labels   = labels
+    def __len__(self): return len(self.labels)
+    def __getitem__(self, idx):
+        return {ft: torch.tensor(self.features[ft][idx], dtype=torch.float32) for ft in self.features}, \
+               torch.tensor(self.labels[idx], dtype=torch.long)
 
 # ==========================================
 # Utilities
 # ==========================================
-def Get_Dataloader(datat, labelt, istrain, batch_size):
-    features = torch.tensor(datat, dtype=torch.float32)
-    labels   = torch.tensor(labelt, dtype=torch.long)
-    return data.DataLoader(data.TensorDataset(features, labels),
-                           batch_size, shuffle=istrain)
-
-class Accumulator:
-    def __init__(self, n): self.data = [0.0] * n
-    def add(self, *args): self.data = [a + float(b) for a, b in zip(self.data, args)]
-    def reset(self): self.data = [0.0] * len(self.data)
-    def __getitem__(self, idx): return self.data[idx]
+def Get_Dataloader(features, labels, istrain, batch_size, fusion=False):
+    if fusion:
+        return data.DataLoader(FusionDataset(features, labels), batch_size, shuffle=istrain)
+    else:
+        features = torch.tensor(features, dtype=torch.float32)
+        labels   = torch.tensor(labels, dtype=torch.long)
+        return data.DataLoader(data.TensorDataset(features, labels), batch_size, shuffle=istrain)
 
 def cal_accuracy(y_hat, y):
     if y_hat.ndim > 1 and y_hat.shape[1] > 1:
         y_hat = torch.argmax(y_hat, axis=1)
     return (y_hat == y).sum()
 
-def evaluate_accuracy_gpu(net, data_iter, device):
+def evaluate_accuracy_gpu(net, data_iter, device, fusion=False):
     net.eval()
-    metric = Accumulator(2)
+    correct, total = 0, 0
     with torch.no_grad():
         for X, y in data_iter:
-            X, y = X.to(device), y.to(device)
-            metric.add(cal_accuracy(net(X), y), y.numel())
-    return metric[0] / metric[1]
+            if fusion:
+                X = {ft: X[ft].to(device) for ft in X}
+            else:
+                X = X.to(device)
+            y = y.to(device)
+            correct += cal_accuracy(net(X), y)
+            total   += y.numel()
+    return correct / total
 
-def topk_accuracy(output, target, topk=(1,5)):       
+def topk_accuracy(output, target, topk=(1,5)):
     with torch.no_grad():
         maxk = max(topk)
         _, pred = output.topk(maxk, 1, True, True)
         pred = pred.t()
         correct = pred.eq(target.view(1, -1).expand_as(pred))
-        res = []
-        for k in topk:
-            correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
-            res.append((correct_k / target.size(0)).item())
-        return res
+        return [(correct[:k].reshape(-1).float().sum(0, keepdim=True) / target.size(0)).item() for k in topk]
 
 # ==========================================
-# Training loop (with in-memory checkpointing)
+# Training loop
 # ==========================================
-def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
+def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=False):
     def init_weights(m):
         if isinstance(m, (nn.Linear, nn.Conv2d)):
             nn.init.xavier_uniform_(m.weight)
     net.apply(init_weights)
     net.to(device)
-
-    optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=0)
-
+    optimizer = torch.optim.AdamW(net.parameters(), lr=lr)
     ce_loss   = nn.CrossEntropyLoss()
     mse_loss  = nn.MSELoss()
     cos_loss  = nn.CosineEmbeddingLoss()
 
-    best_val_acc = 0.0
-    best_state   = None
-
+    best_val_acc, best_state = 0.0, None
     for epoch in range(num_epochs):
         net.train()
-        metric = Accumulator(3)
+        total_loss, correct, total = 0, 0, 0
         for X, y in train_iter:
-            X, y = X.to(device), y.to(device)
+            if fusion:
+                X = {ft: X[ft].to(device) for ft in X}
+            else:
+                X = X.to(device)
+            y = y.to(device)
+
             optimizer.zero_grad()
             y_hat = net(X)
 
@@ -128,28 +153,24 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
                 loss = mse_loss(y_hat, y_onehot) + cos_loss(y_hat, y_onehot, target)
 
             if USE_VAR_REG:
-                var = torch.var(y_hat, dim=0).mean()
-                loss -= VAR_LAMBDA * var
+                loss -= VAR_LAMBDA * torch.var(y_hat, dim=0).mean()
 
             loss.backward()
             optimizer.step()
-            metric.add(loss.item() * X.shape[0], cal_accuracy(y_hat, y), X.shape[0])
 
-        train_loss = metric[0] / metric[2]
-        train_acc  = metric[1] / metric[2]
-        val_acc    = evaluate_accuracy_gpu(net, val_iter, device)
+            total_loss += loss.item() * y.size(0)
+            correct += cal_accuracy(y_hat, y)
+            total   += y.size(0)
 
+        val_acc = evaluate_accuracy_gpu(net, val_iter, device, fusion=fusion)
         if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            best_state   = net.state_dict()
+            best_val_acc, best_state = val_acc, net.state_dict()
 
         if epoch % 3 == 0:
-            test_acc = evaluate_accuracy_gpu(net, test_iter, device)
-            print(f"[{epoch+1}] loss={train_loss:.3f}, "
-                  f"train_acc={train_acc:.3f}, val_acc={val_acc:.3f}, test_acc={test_acc:.3f}")
+            test_acc = evaluate_accuracy_gpu(net, test_iter, device, fusion=fusion)
+            print(f"[{epoch+1}] loss={total_loss/total:.3f}, train_acc={correct/total:.3f}, val_acc={val_acc:.3f}, test_acc={test_acc:.3f}")
 
-    if best_state is not None:
-        net.load_state_dict(best_state)
+    if best_state: net.load_state_dict(best_state)
     return net
 
 # ==========================================
@@ -160,82 +181,108 @@ All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
 # ==========================================
 # Main
 # ==========================================
-all_subs = os.listdir(data_path)
-print("Available subjects:", all_subs)
-
-sub_choice = "sub1.npy"   # or "all"
-if sub_choice == "all":
-    sub_list = all_subs
+if FEATURE_TYPE == "fusion":
+    # run on all subjects
+    sub_list = os.listdir(FEATURE_PATHS["DE"])
 else:
-    sub_list = [sub_choice]
+    sub_list = ["sub1.npy"]  # or os.listdir(FEATURE_PATHS[FEATURE_TYPE])
 
 All_sub_top1, All_sub_top5 = [], []
 
 for subname in sub_list:
-    load_npy = np.load(os.path.join(data_path, subname))
-    print("Loaded:", subname, load_npy.shape)
+    # ----- Load -----
+    if FEATURE_TYPE == "fusion":
+        raw_data = {}
+        for ft in ["segments", "DE", "PSD"]:
+            raw_data[ft] = np.load(os.path.join(FEATURE_PATHS[ft], subname))
+    else:
+        load_npy = np.load(os.path.join(FEATURE_PATHS[FEATURE_TYPE], subname))
 
-    if FEATURE_TYPE in ["DE", "PSD"]:
-        All_train = rearrange(load_npy, "a b c d e f -> a (b c d) e f")
-    elif FEATURE_TYPE == "segments":
-        All_train = rearrange(load_npy, "a b c d (w t) -> a (b c w) d t", w=2)
+    # ----- Reshape -----
+    def reshape(ft, arr):
+        if ft == "DE" or ft == "PSD":
+            return rearrange(arr, "a b c d e f -> a (b c d) e f")
+        elif ft == "segments":
+            return rearrange(arr, "a b c d (w t) -> a (b c w) d t", w=2)
+        else:
+            raise ValueError
+    if FEATURE_TYPE == "fusion":
+        All_train = {ft: reshape(ft, raw_data[ft]) for ft in raw_data}
+    else:
+        All_train = reshape(FEATURE_TYPE, load_npy)
 
-    print("Reshaped:", All_train.shape)
     Top_1, Top_K = [], []
 
     for test_set_id in range(7):
-        candidate_ids = [i for i in range(7) if i != test_set_id]
-        val_set_id = random.choice(candidate_ids)
+        val_set_id = (test_set_id - 1) % 7
 
-        train_data = np.concatenate([All_train[i] for i in range(7) if i not in [test_set_id, val_set_id]])
-        train_label= np.concatenate([All_label[i] for i in range(7) if i not in [test_set_id, val_set_id]])
-        test_data, test_label = All_train[test_set_id], All_label[test_set_id]
-        val_data,  val_label  = All_train[val_set_id],  All_label[val_set_id]
+        if FEATURE_TYPE == "fusion":
+            train_data, val_data, test_data = {}, {}, {}
+            for ft in All_train:
+                train_data[ft] = np.concatenate([All_train[ft][i] for i in range(7) if i not in [test_set_id, val_set_id]])
+                val_data[ft]   = All_train[ft][val_set_id]
+                test_data[ft]  = All_train[ft][test_set_id]
+            train_label = np.concatenate([All_label[i] for i in range(7) if i not in [test_set_id, val_set_id]])
+            val_label   = All_label[val_set_id]
+            test_label  = All_label[test_set_id]
+            # Scale each feature separately
+            for ft in train_data:
+                tr = train_data[ft].reshape(train_data[ft].shape[0], -1)
+                va = val_data[ft].reshape(val_data[ft].shape[0], -1)
+                te = test_data[ft].reshape(test_data[ft].shape[0], -1)
+                scaler = StandardScaler()
+                train_data[ft] = scaler.fit_transform(tr).reshape(train_data[ft].shape)
+                val_data[ft]   = scaler.transform(va).reshape(val_data[ft].shape)
+                test_data[ft]  = scaler.transform(te).reshape(test_data[ft].shape)
+            train_iter = Get_Dataloader(train_data, train_label, True, batch_size, fusion=True)
+            val_iter   = Get_Dataloader(val_data,   val_label,   False, batch_size, fusion=True)
+            test_iter  = Get_Dataloader(test_data,  test_label,  False, batch_size, fusion=True)
+            encoders = {ft: MODEL_MAP[ft]() for ft in All_train}
+            emb_dims = {"segments": emb_dim_segments, "DE": emb_dim_DE, "PSD": emb_dim_PSD}
+            modelnet = FusionNet(encoders, emb_dims, num_classes=40)
 
-        # === Flatten ===
-        if FEATURE_TYPE in ["DE", "PSD"]:
-            train_data = train_data.reshape(train_data.shape[0], C*T)
-            val_data   = val_data.reshape(val_data.shape[0], C*T)
-            test_data  = test_data.reshape(test_data.shape[0], C*T)
-        elif FEATURE_TYPE == "segments":
-            train_data = train_data.reshape(train_data.shape[0], C*200)
-            val_data   = val_data.reshape(val_data.shape[0], C*200)
-            test_data  = test_data.reshape(test_data.shape[0], C*200)
+        else:
+            train_data = np.concatenate([All_train[i] for i in range(7) if i not in [test_set_id, val_set_id]])
+            val_data   = All_train[val_set_id]
+            test_data  = All_train[test_set_id]
+            train_label= np.concatenate([All_label[i] for i in range(7) if i not in [test_set_id, val_set_id]])
+            val_label  = All_label[val_set_id]
+            test_label = All_label[test_set_id]
+            # Scale
+            tr = train_data.reshape(train_data.shape[0], -1)
+            va = val_data.reshape(val_data.shape[0], -1)
+            te = test_data.reshape(test_data.shape[0], -1)
+            scaler = StandardScaler()
+            train_data = scaler.fit_transform(tr).reshape(train_data.shape)
+            val_data   = scaler.transform(va).reshape(val_data.shape)
+            test_data  = scaler.transform(te).reshape(test_data.shape)
+            # Reshape back
+            if FEATURE_TYPE in ["DE", "PSD"]:
+                train_data = train_data.reshape(-1, C, T)
+                val_data   = val_data.reshape(-1, C, T)
+                test_data  = test_data.reshape(-1, C, T)
+            elif FEATURE_TYPE == "segments":
+                train_data = train_data.reshape(-1, 1, C, 200)
+                val_data   = val_data.reshape(-1, 1, C, 200)
+                test_data  = test_data.reshape(-1, 1, C, 200)
+            train_iter = Get_Dataloader(train_data, train_label, True, batch_size)
+            val_iter   = Get_Dataloader(val_data,   val_label,   False, batch_size)
+            test_iter  = Get_Dataloader(test_data,  test_label,  False, batch_size)
+            modelnet   = MODEL_MAP[FEATURE_TYPE]()
 
-        # === Scaling: fit ONLY on training, transform val & test ===
-        scaler = StandardScaler()
-        train_data = scaler.fit_transform(train_data)
-        val_data   = scaler.transform(val_data)
-        test_data  = scaler.transform(test_data)
-
-        # === Reshape back ===
-        if FEATURE_TYPE in ["DE", "PSD"]:
-            train_data = train_data.reshape(-1, C, T)
-            val_data   = val_data.reshape(-1, C, T)
-            test_data  = test_data.reshape(-1, C, T)
-        elif FEATURE_TYPE == "segments":
-            train_data = train_data.reshape(-1, 1, C, 200)
-            val_data   = val_data.reshape(-1, 1, C, 200)
-            test_data  = test_data.reshape(-1, 1, C, 200)
-
-        # ==========================================
-        # Model + Dataloaders
-        # ==========================================
-        modelnet = MODEL_MAP[FEATURE_TYPE]()
-        train_iter = Get_Dataloader(train_data, train_label, True, batch_size)
-        val_iter   = Get_Dataloader(val_data,   val_label,   False, batch_size)
-        test_iter  = Get_Dataloader(test_data,  test_label,  False, batch_size)
-
-        modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr, run_device)
-
+        # Train & evaluate
+        modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr, run_device, fusion=(FEATURE_TYPE=="fusion"))
         block_top1, block_top5 = [], []
         with torch.no_grad():
             for X, y in test_iter:
-                X, y = X.to(run_device), y.to(run_device)
+                if FEATURE_TYPE=="fusion":
+                    X = {ft: X[ft].to(run_device) for ft in X}
+                else:
+                    X = X.to(run_device)
+                y = y.to(run_device)
                 logits = modelnet(X)
                 t1, t5 = topk_accuracy(logits, y, (1,5))
-                block_top1.append(t1)
-                block_top5.append(t5)
+                block_top1.append(t1); block_top5.append(t5)
         Top_1.append(np.mean(block_top1))
         Top_K.append(np.mean(block_top5))
 
