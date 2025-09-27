@@ -24,8 +24,8 @@ CONFIG = {
     "batch_size":     256,
     "num_epochs":     100,
     "lr":             0.001,
-    "weight_decay":   0.0,
-    "optimizer":      "Adam",
+    "weight_decay":   0.01,
+    "optimizer":      "AdamW",
     "C":              62,       # EEG channels
     "T":              200,      # 200 samples per 1s window (200 Hz)
     "emb_dim":        64,
@@ -150,7 +150,11 @@ def train_fusion(train_loader, val_loader, test_loader, cfg):
                                       weight_decay=cfg["weight_decay"])
     loss_fn = nn.CrossEntropyLoss()
 
+    best_val_top1 = 0.0
+    best_state = None
+
     for epoch in range(cfg["num_epochs"]):
+        # === Training ===
         model.train()
         total_loss, total_samples = 0.0, 0
         top1_list, top5_list = [], []
@@ -170,13 +174,34 @@ def train_fusion(train_loader, val_loader, test_loader, cfg):
         train_loss = total_loss / total_samples
         train_top1 = np.mean(top1_list)
         train_top5 = np.mean(top5_list)
+
+        # === Validation + Test ===
         val_loss, val_top1, val_top5 = evaluate(model, val_loader, device)
         test_loss, test_top1, test_top5 = evaluate(model, test_loader, device)
+
+        # === Save best checkpoint ===
+        if val_top1 > best_val_top1:
+            best_val_top1 = val_top1
+            best_state = {
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "epoch": epoch+1,
+                "val_top1": val_top1,
+                "val_top5": val_top5
+            }
 
         print(f"[Epoch {epoch+1}] "
               f"Train loss: {train_loss:.4f} | Top1: {train_top1:.3f}, Top5: {train_top5:.3f} || "
               f"Val loss: {val_loss:.4f} | Top1: {val_top1:.3f}, Top5: {val_top5:.3f} || "
               f"Test loss: {test_loss:.4f} | Top1: {test_top1:.3f}, Top5: {test_top5:.3f}")
+
+    # === Restore best checkpoint and re-test ===
+    if best_state:
+        model.load_state_dict(best_state["model"])
+        test_loss, test_top1, test_top5 = evaluate(model, test_loader, device)
+        print(f"\n>>> Restored best checkpoint (epoch {best_state['epoch']}) "
+              f"| Val Top1: {best_state['val_top1']:.3f} | Val Top5: {best_state['val_top5']:.3f}")
+        print(f">>> Final Test after restoring best: Top1={test_top1:.3f}, Top5={test_top5:.3f}")
 
     return model
 
