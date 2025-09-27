@@ -297,8 +297,10 @@ else:
 for subname in sub_list:
     print(f"\n=== Training subject {subname} ===")
     if FEATURE_TYPE == "fusion":
-        # --- If you trained a fusion checkpoint ---
-        fusion_ckpt = f"/content/drive/MyDrive/EEG2Video_checkpoints/classifier_checkpoints/fusion_{subname.replace('.npy','')}.pt"
+        # --- Fusion checkpoint naming ---
+        fusion_name = f"classifier_fusion_{'_'.join(sorted(MODEL_MAP.keys()))}_{subname.replace('.npy','')}.pt"
+        fusion_ckpt = os.path.join("/content/drive/MyDrive/EEG2Video_checkpoints/classifier_checkpoints", fusion_name)
+
         if os.path.exists(fusion_ckpt):
             print(f"Loading whole fusion encoder: {fusion_ckpt}")
             encoder = FusionNet({
@@ -308,30 +310,35 @@ for subname in sub_list:
             })
             enc_state = torch.load(fusion_ckpt, map_location=run_device)
             encoder.load_state_dict(enc_state["state_dict"] if "state_dict" in enc_state else enc_state, strict=False)
-            for p in encoder.parameters(): p.requires_grad = False
+            for p in encoder.parameters(): 
+                p.requires_grad = False
             input_dim = encoder.total_dim
+
         else:
-            # fallback: load individual encoders then fuse
-            encoders = {ft: MODEL_MAP[ft]() for ft in ["DE","PSD","segments"]}
+            # fallback: load individual encoders
+            encoders = {ft: MODEL_MAP[ft]() for ft in ["DE", "PSD", "segments"]}
             for ft, enc in encoders.items():
-                ckpt_path = f"/content/drive/MyDrive/EEG2Video_checkpoints/classifier_checkpoints/{ft}_{subname.replace('.npy','')}.pt"
+                ckpt_name = f"classifier_{ft}_{subname.replace('.npy','')}.pt"
+                ckpt_path = os.path.join("/content/drive/MyDrive/EEG2Video_checkpoints/classifier_checkpoints", ckpt_name)
                 if os.path.exists(ckpt_path):
                     print(f"Loading checkpoint for {ft}: {ckpt_path}")
                     enc_state = torch.load(ckpt_path, map_location=run_device)
                     enc.load_state_dict(enc_state["state_dict"] if "state_dict" in enc_state else enc_state, strict=False)
-                for p in enc.parameters(): p.requires_grad = False
+                for p in enc.parameters():
+                    p.requires_grad = False
             encoder = FusionNet(encoders)
             input_dim = encoder.total_dim
+
     else:
         encoder = MODEL_MAP[FEATURE_TYPE]()
-        ckpt_path = f"/content/drive/MyDrive/EEG2Video_checkpoints/classifier_checkpoints/{FEATURE_TYPE}_{subname.replace('.npy','')}.pt"
+        ckpt_name = f"classifier_{FEATURE_TYPE}_{subname.replace('.npy','')}.pt"
+        ckpt_path = os.path.join("/content/drive/MyDrive/EEG2Video_checkpoints/classifier_checkpoints", ckpt_name)
+
         if os.path.exists(ckpt_path):
             print(f"Loading encoder checkpoint: {ckpt_path}")
             enc_state = torch.load(ckpt_path, map_location=run_device)
             encoder.load_state_dict(enc_state["state_dict"] if "state_dict" in enc_state else enc_state, strict=False)
-        for p in encoder.parameters(): p.requires_grad = False
-        input_dim = emb_dim_DE if FEATURE_TYPE=="DE" else emb_dim_PSD if FEATURE_TYPE=="PSD" else emb_dim_segments
+        for p in encoder.parameters():
+            p.requires_grad = False
 
-    modelnet = SemanticPredictor(encoder, input_dim)
-    modelnet = train(modelnet, None, None, None, num_epochs, lr,
-                     run_device, fusion=(FEATURE_TYPE=="fusion"), subname=subname)
+        input_dim = emb_dim_DE if FEATURE_TYPE=="DE" else emb_dim_PSD if FEATURE_TYPE=="PSD" else emb_dim_segments
