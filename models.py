@@ -114,9 +114,15 @@ class shallownet(nn.Module):
             nn.AvgPool2d((1, 51), (1, 5)),
             nn.Dropout(0.5),
         )
-        self.out = nn.Linear(1040*(T//200), out_dim)
+        
+        # Dynamically infer flatten size
+        with torch.no_grad():
+            dummy = torch.zeros(1, 1, C, T)
+            flat_dim = self.net(dummy).view(1, -1).size(1)
+        
+        self.out = nn.Linear(flat_dim, out_dim)
     
-    def forward(self, x):               #input:(batch,1,C,T)
+    def forward(self, x):  # input:(batch,1,C,T)
         x = self.net(x)
         x = x.view(x.size(0), -1)
         x = self.out(x)
