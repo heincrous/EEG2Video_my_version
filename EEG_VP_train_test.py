@@ -1,5 +1,5 @@
 # ==========================================
-# EEG classification (with internal best checkpoint, no saving to disk)
+# EEG classification (trial-level 70/15/15 split, one fold)
 # ==========================================
 import os
 import numpy as np
@@ -7,23 +7,22 @@ import torch
 from torch import nn
 from torch.utils import data
 from sklearn.preprocessing import StandardScaler
-from sklearn import metrics
+from sklearn.model_selection import train_test_split
 from einops import rearrange
 import models
-import random
 
 # ==========================================
 # Config
 # ==========================================
 batch_size   = 256
-num_epochs   = 100 # less epochs are better
+num_epochs   = 100  # fewer epochs often better
 lr           = 0.001
 C            = 62
 T            = 5
 run_device   = "cuda"
 emb_dim_segments = 256
-emb_dim_DE = 64
-emb_dim_PSD = 64
+emb_dim_DE   = 64
+emb_dim_PSD  = 64
 
 # Select feature type: "segments", "DE", or "PSD"
 FEATURE_TYPE = "DE"
@@ -31,9 +30,9 @@ FEATURE_TYPE = "DE"
 # Loss type: "crossentropy", "mse", "cosine", "mse+cosine"
 LOSS_TYPE = "crossentropy"
 
-# Whether to add variance regularisation
+# Variance regularisation toggle
 USE_VAR_REG = False
-VAR_LAMBDA  = 0.01   # regularisation strength (~0.1 usually works well)
+VAR_LAMBDA  = 0.01
 
 FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
@@ -78,7 +77,7 @@ def evaluate_accuracy_gpu(net, data_iter, device):
             metric.add(cal_accuracy(net(X), y), y.numel())
     return metric[0] / metric[1]
 
-def topk_accuracy(output, target, topk=(1,5)):       
+def topk_accuracy(output, target, topk=(1,5)):
     with torch.no_grad():
         maxk = max(topk)
         _, pred = output.topk(maxk, 1, True, True)
@@ -91,7 +90,7 @@ def topk_accuracy(output, target, topk=(1,5)):
         return res
 
 # ==========================================
-# Training loop (with in-memory checkpointing)
+# Training loop
 # ==========================================
 def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
     def init_weights(m):
@@ -100,9 +99,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
     net.apply(init_weights)
     net.to(device)
 
-    optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=0) # 0.01 is also good
-
-    # define base loss functions
+    optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=0)
     ce_loss   = nn.CrossEntropyLoss()
     mse_loss  = nn.MSELoss()
     cos_loss  = nn.CosineEmbeddingLoss()
@@ -118,33 +115,23 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
             optimizer.zero_grad()
             y_hat = net(X)
 
-            # ------------------------------------------
-            # choose loss type
-            # ------------------------------------------
             if LOSS_TYPE == "crossentropy":
                 loss = ce_loss(y_hat, y)
-
             elif LOSS_TYPE == "mse":
-                # one-hot targets
                 y_onehot = torch.nn.functional.one_hot(y, num_classes=40).float()
                 loss = mse_loss(y_hat, y_onehot)
-
             elif LOSS_TYPE == "cosine":
                 y_onehot = torch.nn.functional.one_hot(y, num_classes=40).float()
                 target = torch.ones(y_hat.size(0), device=device)
                 loss = cos_loss(y_hat, y_onehot, target)
-
             elif LOSS_TYPE == "mse+cosine":
                 y_onehot = torch.nn.functional.one_hot(y, num_classes=40).float()
                 target = torch.ones(y_hat.size(0), device=device)
                 loss = mse_loss(y_hat, y_onehot) + cos_loss(y_hat, y_onehot, target)
 
-            # ------------------------------------------
-            # optional variance regularisation
-            # ------------------------------------------
             if USE_VAR_REG:
                 var = torch.var(y_hat, dim=0).mean()
-                loss -= VAR_LAMBDA * var  # encourage variance across predictions
+                loss -= VAR_LAMBDA * var
 
             loss.backward()
             optimizer.step()
@@ -168,120 +155,67 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
     return net
 
 # ==========================================
-# Label generation
-# ==========================================
-if FEATURE_TYPE == "segments":
-    # now 10 trials per class (40*10 = 400 per block)
-    All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
-else:  # DE/PSD
-    All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
-
-# ==========================================
 # Main
 # ==========================================
 all_subs = os.listdir(data_path)
 print("Available subjects:", all_subs)
 
-# Options:
-#   sub_choice = "sub1.npy"       # single subject
-#   sub_choice = "all"            # all subjects
-sub_choice = "sub1.npy"
-
-if sub_choice == "all":
-    sub_list = all_subs
-else:
-    sub_list = [sub_choice]
-
-All_sub_top1, All_sub_top5 = [], []
+sub_choice = "sub1.npy"  # choose one subject for now
+sub_list   = [sub_choice]
 
 for subname in sub_list:
     load_npy = np.load(os.path.join(data_path, subname))
     print("Loaded:", subname, load_npy.shape)
 
+    # Flatten into trials
     if FEATURE_TYPE in ["DE", "PSD"]:
-        # shape: (7,40,5,2,62,5) → (7,400,62,5)
-        All_train = rearrange(load_npy, "a b c d e f -> a (b c d) e f")
+        X = rearrange(load_npy, "a b c d e f -> (a b c d) e f")
+        y = np.tile(np.arange(40).repeat(10), 7*2)  # 2800 labels
     elif FEATURE_TYPE == "segments":
-        # input: (7,40,5,62,400)
-        # split last dim into 2x200 and double the trials
-        # output: (7,400,62,200)
-        All_train = rearrange(load_npy, "a b c d (w t) -> a (b c w) d t", w=2)
+        X = rearrange(load_npy, "a b c d (w t) -> (a b c w) d t", w=2)
+        y = np.tile(np.arange(40).repeat(10), 7*2)
 
-    print("Reshaped:", All_train.shape)
-    Top_1, Top_K = [], []
+    print("Final trial-level:", X.shape, y.shape)
 
-    for test_set_id in range(7):
-        # choose any block for validation except the test block
-        candidate_ids = [i for i in range(7) if i != test_set_id]
-        val_set_id = random.choice(candidate_ids)
+    # Stratified 70/15/15 split
+    X_train, X_tmp, y_train, y_tmp = train_test_split(
+        X, y, test_size=0.30, stratify=y, random_state=42
+    )
+    X_val, X_test, y_val, y_test = train_test_split(
+        X_tmp, y_tmp, test_size=0.50, stratify=y_tmp, random_state=42
+    )
 
-        train_data = np.concatenate([All_train[i] for i in range(7) if i!=test_set_id])
-        train_label= np.concatenate([All_label[i] for i in range(7) if i!=test_set_id])
-        test_data, test_label = All_train[test_set_id], All_label[test_set_id]
-        val_data,  val_label  = All_train[val_set_id],  All_label[val_set_id]
+    print("Train:", X_train.shape, "Val:", X_val.shape, "Test:", X_test.shape)
 
-        # === Shuffle training set (keeps EEG-label pairs aligned) ===
-        perm = np.random.permutation(train_data.shape[0])
-        train_data  = train_data[perm]
-        train_label = train_label[perm]
+    # Scaling
+    if FEATURE_TYPE in ["DE", "PSD"]:
+        scaler = StandardScaler()
+        X_train = scaler.fit_transform(X_train.reshape(len(X_train), -1)).reshape(-1, C, T)
+        X_val   = scaler.transform(X_val.reshape(len(X_val), -1)).reshape(-1, C, T)
+        X_test  = scaler.transform(X_test.reshape(len(X_test), -1)).reshape(-1, C, T)
+    elif FEATURE_TYPE == "segments":
+        scaler = StandardScaler()
+        X_train = scaler.fit_transform(X_train.reshape(len(X_train), -1)).reshape(-1, 1, C, 200)
+        X_val   = scaler.transform(X_val.reshape(len(X_val), -1)).reshape(-1, 1, C, 200)
+        X_test  = scaler.transform(X_test.reshape(len(X_test), -1)).reshape(-1, 1, C, 200)
 
-        # ==========================================
-        # Scaling and reshaping
-        # ==========================================
-        if FEATURE_TYPE in ["DE", "PSD"]:
-            # flatten
-            train_data = train_data.reshape(train_data.shape[0], C*T)
-            val_data   = val_data.reshape(val_data.shape[0], C*T)
-            test_data  = test_data.reshape(test_data.shape[0], C*T)
+    # Dataloaders
+    train_iter = Get_Dataloader(X_train, y_train, True, batch_size)
+    val_iter   = Get_Dataloader(X_val,   y_val,   False, batch_size)
+    test_iter  = Get_Dataloader(X_test,  y_test,  False, batch_size)
 
-            scaler = StandardScaler()
-            train_data = scaler.fit_transform(train_data).reshape(-1, C, T)
+    # Model + training
+    modelnet = MODEL_MAP[FEATURE_TYPE]()
+    modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr, run_device)
 
-            scaler = StandardScaler()
-            val_data = scaler.fit_transform(val_data).reshape(-1, C, T)
+    # Final test eval
+    top1_list, top5_list = [], []
+    with torch.no_grad():
+        for Xb, yb in test_iter:
+            Xb, yb = Xb.to(run_device), yb.to(run_device)
+            logits = modelnet(Xb)
+            t1, t5 = topk_accuracy(logits, yb, (1,5))
+            top1_list.append(t1)
+            top5_list.append(t5)
 
-            scaler = StandardScaler()
-            test_data = scaler.fit_transform(test_data).reshape(-1, C, T)
-
-        elif FEATURE_TYPE == "segments":
-            # flatten
-            train_data = train_data.reshape(train_data.shape[0], C*200)
-            val_data   = val_data.reshape(val_data.shape[0], C*200)
-            test_data  = test_data.reshape(test_data.shape[0], C*200)
-
-            scaler = StandardScaler()
-            train_data = scaler.fit_transform(train_data).reshape(-1, 1, C, 200)
-
-            scaler = StandardScaler()
-            val_data = scaler.fit_transform(val_data).reshape(-1, 1, C, 200)
-
-            scaler = StandardScaler()
-            test_data = scaler.fit_transform(test_data).reshape(-1, 1, C, 200)
-
-        # ==========================================
-        # Model + Dataloaders
-        # ==========================================
-        modelnet = MODEL_MAP[FEATURE_TYPE]()
-        train_iter = Get_Dataloader(train_data, train_label, True, batch_size)
-        val_iter   = Get_Dataloader(val_data,   val_label,   False, batch_size)
-        test_iter  = Get_Dataloader(test_data,  test_label,  False, batch_size)
-
-        modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr, run_device)
-
-        block_top1, block_top5 = [], []
-        with torch.no_grad():
-            for X, y in test_iter:
-                X, y = X.to(run_device), y.to(run_device)
-                logits = modelnet(X)
-                t1,t5 = topk_accuracy(logits,y,(1,5))
-                block_top1.append(t1); block_top5.append(t5)
-        Top_1.append(np.mean(block_top1))
-        Top_K.append(np.mean(block_top5))
-
-    print(f"{subname} | Top1={np.mean(Top_1):.3f}, Top5={np.mean(Top_K):.3f}")
-    All_sub_top1.append(np.mean(Top_1))
-    All_sub_top5.append(np.mean(Top_K))
-
-print("\nOverall:")
-print("TOP1:", np.mean(All_sub_top1), np.std(All_sub_top1))
-print("TOP5:", np.mean(All_sub_top5), np.std(All_sub_top5))
+    print(f"{subname} | Test Top1={np.mean(top1_list):.3f}, Top5={np.mean(top5_list):.3f}")
