@@ -182,11 +182,15 @@ All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
 # ==========================================
 # Main
 # ==========================================
+# ==========================================
+# Subject selection
+# ==========================================
+USE_ALL_SUBJECTS = False     # set True to train on all subjects
+
 if FEATURE_TYPE == "fusion":
-    # run on all subjects
-    sub_list = os.listdir(FEATURE_PATHS["DE"])
+    sub_list = os.listdir(FEATURE_PATHS["DE"]) if USE_ALL_SUBJECTS else ["sub1.npy"]
 else:
-    sub_list = ["sub1.npy"]  # or os.listdir(FEATURE_PATHS[FEATURE_TYPE])
+    sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPE]) if USE_ALL_SUBJECTS else ["sub1.npy"]
 
 All_sub_top1, All_sub_top5 = [], []
 
