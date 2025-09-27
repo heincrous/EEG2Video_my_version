@@ -21,7 +21,7 @@ from core.fusion_model import FusionNet
 # Config table
 # ==========================================
 CONFIG = {
-    "batch_size":     256,
+    "batch_size":     32,
     "num_epochs":     100,
     "lr":             0.001,
     "weight_decay":   0.01,
