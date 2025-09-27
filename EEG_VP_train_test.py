@@ -16,8 +16,8 @@ import random
 # Config
 # ==========================================
 batch_size   = 256
-num_epochs   = 100 # fewer epochs are often better
-lr           = 0.001
+num_epochs   = 200 # fewer epochs are often better
+lr           = 0.0001
 C            = 62
 T            = 5
 run_device   = "cuda"
