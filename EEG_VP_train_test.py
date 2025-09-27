@@ -41,7 +41,7 @@ FEATURE_PATHS = {
 }
 
 MODEL_MAP = {
-    "segments": lambda: models.glfnet(out_dim=40, emb_dim=emb_dim_segments, C=62, T=400),
+    "segments": lambda: models.glfnet(out_dim=40, emb_dim=emb_dim_segments, C=62, T=200),
     "DE":       lambda: models.glfnet_mlp(out_dim=40, emb_dim=emb_dim_DE, input_dim=62*5),
     "PSD":      lambda: models.glfnet_mlp(out_dim=40, emb_dim=emb_dim_PSD, input_dim=62*5),
 }
@@ -170,7 +170,8 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
 # Label generation
 # ==========================================
 if FEATURE_TYPE == "segments":
-    All_label = np.tile(np.arange(40).repeat(5), 7).reshape(7, 200)
+    # now 10 trials per class (40*10 = 400 per block)
+    All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
 else:  # DE/PSD
     All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
 
@@ -183,7 +184,7 @@ print("Available subjects:", all_subs)
 # Options:
 #   sub_choice = "sub1.npy"       # single subject
 #   sub_choice = "all"            # all subjects
-sub_choice = "sub1.npy"
+sub_choice = "all"
 
 if sub_choice == "all":
     sub_list = all_subs
@@ -201,8 +202,9 @@ for subname in sub_list:
         All_train = rearrange(load_npy, "a b c d e f -> a (b c d) e f")
     elif FEATURE_TYPE == "segments":
         # input: (7,40,5,62,400)
-        # output: (7,200,62,400)
-        All_train = rearrange(load_npy, "a b c d e -> a (b c) d e")
+        # split last dim into 2x200 and double the trials
+        # output: (7,400,62,200)
+        All_train = rearrange(load_npy, "a b c d (w t) -> a (b c w) d t", w=2)
 
     print("Reshaped:", All_train.shape)
     Top_1, Top_K = [], []
@@ -235,18 +237,18 @@ for subname in sub_list:
 
         elif FEATURE_TYPE == "segments":
             # flatten
-            train_data = train_data.reshape(train_data.shape[0], C*400)
-            val_data   = val_data.reshape(val_data.shape[0], C*400)
-            test_data  = test_data.reshape(test_data.shape[0], C*400)
+            train_data = train_data.reshape(train_data.shape[0], C*200)
+            val_data   = val_data.reshape(val_data.shape[0], C*200)
+            test_data  = test_data.reshape(test_data.shape[0], C*200)
 
             scaler = StandardScaler()
-            train_data = scaler.fit_transform(train_data).reshape(-1, 1, C, 400)
+            train_data = scaler.fit_transform(train_data).reshape(-1, 1, C, 200)
 
             scaler = StandardScaler()
-            val_data = scaler.fit_transform(val_data).reshape(-1, 1, C, 400)
+            val_data = scaler.fit_transform(val_data).reshape(-1, 1, C, 200)
 
             scaler = StandardScaler()
-            test_data = scaler.fit_transform(test_data).reshape(-1, 1, C, 400)
+            test_data = scaler.fit_transform(test_data).reshape(-1, 1, C, 200)
 
         # ==========================================
         # Model + Dataloaders
