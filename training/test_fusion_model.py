@@ -185,9 +185,9 @@ def train_fusion(train_loader, val_loader, test_loader, cfg):
 # Main with 7-fold CV
 # ==========================================
 if __name__ == "__main__":
-    segments = np.load(os.path.join(CONFIG["segments_dir"], subj_id))
-    de       = np.load(os.path.join(CONFIG["de_dir"], subj_id))
-    psd      = np.load(os.path.join(CONFIG["psd_dir"], subj_id))
+    segments = np.load(os.path.join(CONFIG["segments_dir"], CONFIG["subj_id"]))
+    de       = np.load(os.path.join(CONFIG["de_dir"], CONFIG["subj_id"]))
+    psd      = np.load(os.path.join(CONFIG["psd_dir"], CONFIG["subj_id"]))
 
     raw = split_segments_to_windows(segments)
     raw, de, psd, labels = flatten_and_labels(raw, de, psd)
