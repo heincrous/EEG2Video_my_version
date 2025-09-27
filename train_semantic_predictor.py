@@ -287,19 +287,19 @@ def load_subject_data(subname, feature_types):
 # Encoder checkpoint loader
 # ==========================================
 def load_encoder_with_ckpt(ft_list, subname):
+    def clean_state_dict(sd):
+        # Remove classifier head keys completely
+        return {k: v for k, v in sd.items() if "classifier" not in k and not k.startswith("out.")}
+
     if len(ft_list) > 1:
         encoders = {}
         for ft in ft_list:
             ckpt_path = os.path.join(CLASSIFIER_CKPT_DIR, f"classifier_{ft}_{subname.replace('.npy','')}.pt")
             ckpt = torch.load(ckpt_path, map_location=run_device)
-            model = MODEL_MAP[ft]()
-            state_dict = ckpt["state_dict"]
-
-            # --- Remove classifier head ---
-            state_dict = {k: v for k, v in state_dict.items()
-                          if not (k.endswith("weight") or k.endswith("bias")) or "classifier" not in k}
-
-            model.load_state_dict(state_dict, strict=False)
+            model = MODEL_MAP[ft]()  # builds encoder with correct embedding out_dim
+            state_dict = clean_state_dict(ckpt["state_dict"])
+            missing, unexpected = model.load_state_dict(state_dict, strict=False)
+            print(f"[{ft}] loaded encoder from {ckpt_path} | missing: {missing} | unexpected: {unexpected}")
             encoders[ft] = model
         total_dim = sum([encoders[ft].out_dim for ft in encoders])
         return FusionNet(encoders, total_dim), total_dim, True
@@ -308,13 +308,9 @@ def load_encoder_with_ckpt(ft_list, subname):
         ckpt_path = os.path.join(CLASSIFIER_CKPT_DIR, f"classifier_{ft}_{subname.replace('.npy','')}.pt")
         ckpt = torch.load(ckpt_path, map_location=run_device)
         model = MODEL_MAP[ft]()
-        state_dict = ckpt["state_dict"]
-
-        # --- Remove classifier head ---
-        state_dict = {k: v for k, v in state_dict.items()
-                      if not (k.endswith("weight") or k.endswith("bias")) or "classifier" not in k}
-
-        model.load_state_dict(state_dict, strict=False)
+        state_dict = clean_state_dict(ckpt["state_dict"])
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        print(f"[{ft}] loaded encoder from {ckpt_path} | missing: {missing} | unexpected: {unexpected}")
         return model, model.out_dim, False
 
 # ==========================================
