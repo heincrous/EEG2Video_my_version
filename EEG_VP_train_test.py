@@ -16,7 +16,7 @@ import models
 # ==========================================
 batch_size   = 1024
 num_epochs   = 50
-lr           = 0.0005
+lr           = 0.0001
 C            = 62
 T            = 5
 run_device   = "cuda"
@@ -25,11 +25,11 @@ run_device   = "cuda"
 FEATURE_TYPE = "DE"
 
 # Loss type: "crossentropy", "mse", "cosine", "mse+cosine"
-LOSS_TYPE = "mse"
+LOSS_TYPE = "cosine"
 
 # Whether to add variance regularisation
-USE_VAR_REG = True
-VAR_LAMBDA  = 0.01   # regularisation strength
+USE_VAR_REG = False
+VAR_LAMBDA  = 0.01   # regularisation strength (~0.1 usually works well)
 
 FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
