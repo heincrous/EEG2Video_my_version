@@ -244,7 +244,8 @@ clip_embeddings = np.expand_dims(clip_embeddings, axis=3)   # [7,40,5,1,77,768]
 clip_embeddings = np.repeat(clip_embeddings, 2, axis=3)     # [7,40,5,2,77,768]
 clip_embeddings = clip_embeddings.reshape(-1, 77*768)
 
-clip_embeddings = clip_embeddings.reshape(-1, 77*768)
+# Each block now has 400 samples instead of 200
+samples_per_block = clip_embeddings.shape[0] // 7
 
 if FEATURE_TYPE == "fusion":
     sub_list = os.listdir(FEATURE_PATHS["DE"]) if USE_ALL_SUBJECTS else ["sub1.npy"]
@@ -256,7 +257,8 @@ for subname in sub_list:
 
     # ----- Load EEG -----
     if FEATURE_TYPE == "fusion":
-        raw_data = {ft: np.load(os.path.join(FEATURE_PATHS[ft], subname)) for ft in ["segments", "DE", "PSD"]}
+        raw_data = {ft: np.load(os.path.join(FEATURE_PATHS[ft], subname)) 
+                    for ft in ["segments", "DE", "PSD"]}
     else:
         raw_data = np.load(os.path.join(FEATURE_PATHS[FEATURE_TYPE], subname))
 
@@ -269,7 +271,8 @@ for subname in sub_list:
         else:
             raise ValueError
 
-    All_train = {ft: reshape(ft, raw_data[ft]) for ft in raw_data} if FEATURE_TYPE=="fusion" else reshape(FEATURE_TYPE, raw_data)
+    All_train = {ft: reshape(ft, raw_data[ft]) for ft in raw_data} \
+                if FEATURE_TYPE=="fusion" else reshape(FEATURE_TYPE, raw_data)
 
     for test_set_id in range(7):
         val_set_id = (test_set_id - 1) % 7
@@ -277,13 +280,19 @@ for subname in sub_list:
         if FEATURE_TYPE == "fusion":
             train_data, val_data, test_data = {}, {}, {}
             for ft in All_train:
-                train_data[ft] = np.concatenate([All_train[ft][i] for i in range(7) if i not in [test_set_id, val_set_id]])
+                train_data[ft] = np.concatenate(
+                    [All_train[ft][i] for i in range(7) if i not in [test_set_id, val_set_id]]
+                )
                 val_data[ft]   = All_train[ft][val_set_id]
                 test_data[ft]  = All_train[ft][test_set_id]
 
-            train_targets = np.concatenate([clip_embeddings[i*200:(i+1)*200] for i in range(7) if i not in [test_set_id, val_set_id]])
-            val_targets   = clip_embeddings[val_set_id*200:(val_set_id+1)*200]
-            test_targets  = clip_embeddings[test_set_id*200:(test_set_id+1)*200]
+            # Clip embeddings aligned by block
+            train_targets = np.concatenate([
+                clip_embeddings[i*samples_per_block:(i+1)*samples_per_block]
+                for i in range(7) if i not in [test_set_id, val_set_id]
+            ])
+            val_targets  = clip_embeddings[val_set_id*samples_per_block:(val_set_id+1)*samples_per_block]
+            test_targets = clip_embeddings[test_set_id*samples_per_block:(test_set_id+1)*samples_per_block]
 
             for ft in train_data:
                 tr = train_data[ft].reshape(train_data[ft].shape[0], -1)
@@ -309,13 +318,19 @@ for subname in sub_list:
             input_dim = encoder.total_dim
 
         else:
-            train_data = np.concatenate([All_train[i] for i in range(7) if i not in [test_set_id, val_set_id]])
+            train_data = np.concatenate(
+                [All_train[i] for i in range(7) if i not in [test_set_id, val_set_id]]
+            )
             val_data   = All_train[val_set_id]
             test_data  = All_train[test_set_id]
 
-            train_targets = np.concatenate([clip_embeddings[i*200:(i+1)*200] for i in range(7) if i not in [test_set_id, val_set_id]])
-            val_targets   = clip_embeddings[val_set_id*200:(val_set_id+1)*200]
-            test_targets  = clip_embeddings[test_set_id*200:(test_set_id+1)*200]
+            # Clip embeddings aligned by block
+            train_targets = np.concatenate([
+                clip_embeddings[i*samples_per_block:(i+1)*samples_per_block]
+                for i in range(7) if i not in [test_set_id, val_set_id]
+            ])
+            val_targets  = clip_embeddings[val_set_id*samples_per_block:(val_set_id+1)*samples_per_block]
+            test_targets = clip_embeddings[test_set_id*samples_per_block:(test_set_id+1)*samples_per_block]
 
             tr = train_data.reshape(train_data.shape[0], -1)
             va = val_data.reshape(val_data.shape[0], -1)
@@ -340,5 +355,5 @@ for subname in sub_list:
             input_dim = encoder.out_dim
 
         modelnet = SemanticPredictor(encoder, input_dim)
-        modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr, run_device,
-                         fusion=(FEATURE_TYPE=="fusion"), subname=subname)
+        modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr,
+                         run_device, fusion=(FEATURE_TYPE=="fusion"), subname=subname)
