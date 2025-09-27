@@ -21,7 +21,7 @@ CHECKPOINT_DIR     = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_chec
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final"
 OUTPUT_DIR         = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference"
-BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP-text/BLIP_text.npy"
+BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 device = "cuda"
