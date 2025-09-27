@@ -32,7 +32,7 @@ USE_VAR_REG = True
 VAR_LAMBDA  = 0.01   # regularisation strength
 
 FEATURE_PATHS = {
-    "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments_1per1s",
+    "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
     "DE":       "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s",
     "PSD":      "/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s",
 }
@@ -177,7 +177,7 @@ print("Available subjects:", all_subs)
 # Options:
 #   sub_choice = "sub1.npy"       # single subject
 #   sub_choice = "all"            # all subjects
-sub_choice = "sub1"
+sub_choice = "sub1.npy"
 
 if sub_choice == "all":
     sub_list = all_subs
