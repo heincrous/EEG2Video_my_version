@@ -171,7 +171,24 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, multi=Fa
             test_acc = evaluate_accuracy_gpu(net, test_iter, device, multi=multi)
             print(f"[{epoch+1}] loss={total_loss/total:.3f}, train_acc={correct/total:.3f}, val_acc={val_acc:.3f}, test_acc={test_acc:.3f}")
 
-    if best_state: net.load_state_dict(best_state)
+    if best_state: 
+        net.load_state_dict(best_state)
+
+        # --- Save checkpoint ---
+        save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/classifier_checkpoints"
+        os.makedirs(save_dir, exist_ok=True)
+
+        if multi:
+            fname = f"classifier_fusion_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}.pt"
+        else:
+            fname = f"classifier_{FEATURE_TYPES[0]}_{subname.replace('.npy','')}.pt"
+
+        torch.save({
+            "state_dict": net.state_dict(),
+            "feature_types": FEATURE_TYPES,
+            "loss_type": LOSS_TYPE,
+            "subject": subname.replace(".npy","")
+        }, os.path.join(save_dir, fname))
     return net
 
 # ==========================================

@@ -208,11 +208,12 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=F
         net.load_state_dict(best_state)
         save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor"
         os.makedirs(save_dir, exist_ok=True)
+        fname = f"semantic_predictor_{FEATURE_TYPE}_{subname.replace('.npy','')}.pt"
         torch.save({
             "state_dict": net.state_dict(),
             "feature_type": FEATURE_TYPE,
             "input_dim": net.head.mlp[0].in_features,
-        }, os.path.join(save_dir, f"semantic_predictor_{subname.replace('.npy','')}.pt"))
+        }, os.path.join(save_dir, fname))
     return net
 
 # ==========================================
