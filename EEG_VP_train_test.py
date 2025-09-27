@@ -148,7 +148,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, multi=Fa
                 y_onehot = torch.nn.functional.one_hot(y, num_classes=40).float()
                 target = torch.ones(y_hat.size(0), device=device)
                 loss = cos_loss(y_hat, y_onehot, target)
-            elif LOSS_TYPE == "mse+cosine":
+            elif LOSS_TYPE in ["mse+cosine", "cosine+mse"]:
                 y_onehot = torch.nn.functional.one_hot(y, num_classes=40).float()
                 target = torch.ones(y_hat.size(0), device=device)
                 loss = mse_loss(y_hat, y_onehot) + cos_loss(y_hat, y_onehot, target)
