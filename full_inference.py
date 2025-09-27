@@ -15,7 +15,7 @@ from train_semantic_predictor import SemanticPredictor, FusionNet, MODEL_MAP, FE
 # Config (set these manually)
 # ==========================================
 SUBJECT       = "sub1.npy"          # e.g. "sub10.npy"
-FEATURE_TYPES = ["DE"]       # e.g. ["DE"], ["segments"], ["DE","PSD"], ["segments","DE","PSD"]
+FEATURE_TYPES = ["DE","PSD"]        # e.g. ["DE"], ["segments"], ["DE","PSD"]
 
 CHECKPOINT_DIR     = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
@@ -109,8 +109,8 @@ def load_features(subname, ft):
     return arr
 
 samples_per_block = 400
-train_idx = np.arange(0, 6 * samples_per_block)
-test_idx  = np.arange(6 * samples_per_block, 7 * samples_per_block)
+train_idx = np.arange(0, 5 * samples_per_block)   # blocks 0–4 only
+test_idx  = np.arange(6 * samples_per_block, 7 * samples_per_block)  # block 6
 
 if multi:
     feats_test = {}
