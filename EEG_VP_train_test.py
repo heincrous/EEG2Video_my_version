@@ -22,7 +22,7 @@ C            = 62
 T            = 5
 run_device   = "cuda"
 emb_dim_segments = 256
-emb_dim_DE   = 128
+emb_dim_DE   = 256
 emb_dim_PSD  = 64
 
 FEATURE_TYPE = "DE"   # "segments", "DE", or "PSD"
