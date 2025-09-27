@@ -14,9 +14,9 @@ import models
 # ==========================================
 # Config
 # ==========================================
-batch_size   = 256
+batch_size   = 1024
 num_epochs   = 100
-lr           = 0.001
+lr           = 0.0005
 C            = 62
 T            = 5
 run_device   = "cuda"
@@ -89,7 +89,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
     net.apply(init_weights)
     net.to(device)
 
-    optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=0)
+    optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=0.01)
     loss_fn   = nn.CrossEntropyLoss()
 
     best_val_acc = 0.0
@@ -134,7 +134,7 @@ All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
 all_subs = os.listdir(data_path)
 print("Available subjects:", all_subs)
 sub_choice = "sub1.npy"
-sub_list = [sub_choice]
+sub_list = [all_subs]
 
 All_sub_top1, All_sub_top5 = [], []
 
