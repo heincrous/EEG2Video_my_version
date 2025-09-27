@@ -15,7 +15,7 @@ import models
 # Hyperparameters
 # ==========================================
 batch_size   = 256
-num_epochs   = 50
+num_epochs   = 100
 lr           = 0.001
 C            = 62
 T            = 5
