@@ -169,7 +169,10 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
 # ==========================================
 # Label generation
 # ==========================================
-All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
+if FEATURE_TYPE == "segments":
+    All_label = np.tile(np.arange(40).repeat(5), 7).reshape(7, 200)
+else:  # DE/PSD
+    All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
 
 # ==========================================
 # Main
