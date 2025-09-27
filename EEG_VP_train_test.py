@@ -47,16 +47,17 @@ MODEL_MAP = {
 # Fusion model
 # ==========================================
 class FusionNet(nn.Module):
-    def __init__(self, encoders, emb_dims, num_classes=40):
+    def __init__(self, encoders, num_classes=40):
         super().__init__()
         self.encoders = nn.ModuleDict(encoders)
-        total_dim = sum(emb_dims.values())
+        # each encoder outputs 40 logits
+        total_dim = len(encoders) * num_classes
         self.classifier = nn.Linear(total_dim, num_classes)
 
     def forward(self, inputs):
         feats = []
         for name, enc in self.encoders.items():
-            feats.append(enc(inputs[name]))
+            feats.append(enc(inputs[name]))   # each is [batch, 40]
         fused = torch.cat(feats, dim=-1)
         return self.classifier(fused)
 
@@ -245,13 +246,14 @@ for subname in sub_list:
                     train_data[ft] = tr_scaled.reshape(-1, C, T)
                     val_data[ft]   = va_scaled.reshape(-1, C, T)
                     test_data[ft]  = te_scaled.reshape(-1, C, T)
-                    
+
             train_iter = Get_Dataloader(train_data, train_label, True, batch_size, fusion=True)
             val_iter   = Get_Dataloader(val_data,   val_label,   False, batch_size, fusion=True)
             test_iter  = Get_Dataloader(test_data,  test_label,  False, batch_size, fusion=True)
             encoders = {ft: MODEL_MAP[ft]() for ft in All_train}
             emb_dims = {"segments": emb_dim_segments, "DE": emb_dim_DE, "PSD": emb_dim_PSD}
-            modelnet = FusionNet(encoders, emb_dims, num_classes=40)
+            # fusion model just concatenates each encoder's logits
+            modelnet = FusionNet(encoders, num_classes=40)
 
         else:
             train_data = np.concatenate([All_train[i] for i in range(7) if i not in [test_set_id, val_set_id]])
