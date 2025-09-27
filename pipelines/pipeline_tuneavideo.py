@@ -31,7 +31,7 @@ import sys, os
 repo_root = "/content/EEG2Video_my_version"
 sys.path.append(os.path.join(repo_root, "core_files"))
 
-from unet import UNet3DConditionModel
+from core.unet import UNet3DConditionModel
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
