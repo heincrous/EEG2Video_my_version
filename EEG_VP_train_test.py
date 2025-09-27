@@ -1,5 +1,5 @@
 # ==========================================
-# EEG classification (trial-level 70/15/15 split, one fold)
+# EEG classification (with internal best checkpoint, no saving to disk)
 # ==========================================
 import os
 import numpy as np
@@ -7,15 +7,16 @@ import torch
 from torch import nn
 from torch.utils import data
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
+from sklearn import metrics
 from einops import rearrange
 import models
+import random
 
 # ==========================================
 # Config
 # ==========================================
 batch_size   = 256
-num_epochs   = 100  # fewer epochs often better
+num_epochs   = 100 # fewer epochs are often better
 lr           = 0.001
 C            = 62
 T            = 5
@@ -24,15 +25,11 @@ emb_dim_segments = 256
 emb_dim_DE   = 64
 emb_dim_PSD  = 64
 
-# Select feature type: "segments", "DE", or "PSD"
-FEATURE_TYPE = "DE"
+FEATURE_TYPE = "DE"   # "segments", "DE", or "PSD"
+LOSS_TYPE    = "crossentropy"  # "crossentropy", "mse", "cosine", "mse+cosine"
 
-# Loss type: "crossentropy", "mse", "cosine", "mse+cosine"
-LOSS_TYPE = "crossentropy"
-
-# Variance regularisation toggle
 USE_VAR_REG = False
-VAR_LAMBDA  = 0.01
+VAR_LAMBDA  = 0.01   # variance regularisation strength
 
 FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
@@ -77,7 +74,7 @@ def evaluate_accuracy_gpu(net, data_iter, device):
             metric.add(cal_accuracy(net(X), y), y.numel())
     return metric[0] / metric[1]
 
-def topk_accuracy(output, target, topk=(1,5)):
+def topk_accuracy(output, target, topk=(1,5)):       
     with torch.no_grad():
         maxk = max(topk)
         _, pred = output.topk(maxk, 1, True, True)
@@ -90,7 +87,7 @@ def topk_accuracy(output, target, topk=(1,5)):
         return res
 
 # ==========================================
-# Training loop
+# Training loop (with in-memory checkpointing)
 # ==========================================
 def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
     def init_weights(m):
@@ -100,6 +97,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
     net.to(device)
 
     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=0)
+
     ce_loss   = nn.CrossEntropyLoss()
     mse_loss  = nn.MSELoss()
     cos_loss  = nn.CosineEmbeddingLoss()
@@ -155,67 +153,96 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
     return net
 
 # ==========================================
+# Label generation
+# ==========================================
+All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
+
+# ==========================================
 # Main
 # ==========================================
 all_subs = os.listdir(data_path)
 print("Available subjects:", all_subs)
 
-sub_choice = "sub1.npy"  # choose one subject for now
-sub_list   = [sub_choice]
+sub_choice = "sub1.npy"   # or "all"
+if sub_choice == "all":
+    sub_list = all_subs
+else:
+    sub_list = [sub_choice]
+
+All_sub_top1, All_sub_top5 = [], []
 
 for subname in sub_list:
     load_npy = np.load(os.path.join(data_path, subname))
     print("Loaded:", subname, load_npy.shape)
 
-    # Flatten into trials
     if FEATURE_TYPE in ["DE", "PSD"]:
-        X = rearrange(load_npy, "a b c d e f -> (a b c d) e f")
-        y = np.tile(np.arange(40).repeat(10), 7)  # 2800 labels
+        All_train = rearrange(load_npy, "a b c d e f -> a (b c d) e f")
     elif FEATURE_TYPE == "segments":
-        X = rearrange(load_npy, "a b c d (w t) -> (a b c w) d t", w=2)
-        y = np.tile(np.arange(40).repeat(10), 7*2)  # 2800 labels
+        All_train = rearrange(load_npy, "a b c d (w t) -> a (b c w) d t", w=2)
 
-    print("Final trial-level:", X.shape, y.shape)
+    print("Reshaped:", All_train.shape)
+    Top_1, Top_K = [], []
 
-    # Stratified 70/15/15 split
-    X_train, X_tmp, y_train, y_tmp = train_test_split(
-        X, y, test_size=0.30, stratify=y, random_state=42
-    )
-    X_val, X_test, y_val, y_test = train_test_split(
-        X_tmp, y_tmp, test_size=0.50, stratify=y_tmp, random_state=42
-    )
+    for test_set_id in range(7):
+        candidate_ids = [i for i in range(7) if i != test_set_id]
+        val_set_id = random.choice(candidate_ids)
 
-    print("Train:", X_train.shape, "Val:", X_val.shape, "Test:", X_test.shape)
+        train_data = np.concatenate([All_train[i] for i in range(7) if i not in [test_set_id, val_set_id]])
+        train_label= np.concatenate([All_label[i] for i in range(7) if i not in [test_set_id, val_set_id]])
+        test_data, test_label = All_train[test_set_id], All_label[test_set_id]
+        val_data,  val_label  = All_train[val_set_id],  All_label[val_set_id]
 
-    # Scaling
-    if FEATURE_TYPE in ["DE", "PSD"]:
+        # === Flatten ===
+        if FEATURE_TYPE in ["DE", "PSD"]:
+            train_data = train_data.reshape(train_data.shape[0], C*T)
+            val_data   = val_data.reshape(val_data.shape[0], C*T)
+            test_data  = test_data.reshape(test_data.shape[0], C*T)
+        elif FEATURE_TYPE == "segments":
+            train_data = train_data.reshape(train_data.shape[0], C*200)
+            val_data   = val_data.reshape(val_data.shape[0], C*200)
+            test_data  = test_data.reshape(test_data.shape[0], C*200)
+
+        # === Scaling: fit ONLY on training, transform val & test ===
         scaler = StandardScaler()
-        X_train = scaler.fit_transform(X_train.reshape(len(X_train), -1)).reshape(-1, C, T)
-        X_val   = scaler.transform(X_val.reshape(len(X_val), -1)).reshape(-1, C, T)
-        X_test  = scaler.transform(X_test.reshape(len(X_test), -1)).reshape(-1, C, T)
-    elif FEATURE_TYPE == "segments":
-        scaler = StandardScaler()
-        X_train = scaler.fit_transform(X_train.reshape(len(X_train), -1)).reshape(-1, 1, C, 200)
-        X_val   = scaler.transform(X_val.reshape(len(X_val), -1)).reshape(-1, 1, C, 200)
-        X_test  = scaler.transform(X_test.reshape(len(X_test), -1)).reshape(-1, 1, C, 200)
+        train_data = scaler.fit_transform(train_data)
+        val_data   = scaler.transform(val_data)
+        test_data  = scaler.transform(test_data)
 
-    # Dataloaders
-    train_iter = Get_Dataloader(X_train, y_train, True, batch_size)
-    val_iter   = Get_Dataloader(X_val,   y_val,   False, batch_size)
-    test_iter  = Get_Dataloader(X_test,  y_test,  False, batch_size)
+        # === Reshape back ===
+        if FEATURE_TYPE in ["DE", "PSD"]:
+            train_data = train_data.reshape(-1, C, T)
+            val_data   = val_data.reshape(-1, C, T)
+            test_data  = test_data.reshape(-1, C, T)
+        elif FEATURE_TYPE == "segments":
+            train_data = train_data.reshape(-1, 1, C, 200)
+            val_data   = val_data.reshape(-1, 1, C, 200)
+            test_data  = test_data.reshape(-1, 1, C, 200)
 
-    # Model + training
-    modelnet = MODEL_MAP[FEATURE_TYPE]()
-    modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr, run_device)
+        # ==========================================
+        # Model + Dataloaders
+        # ==========================================
+        modelnet = MODEL_MAP[FEATURE_TYPE]()
+        train_iter = Get_Dataloader(train_data, train_label, True, batch_size)
+        val_iter   = Get_Dataloader(val_data,   val_label,   False, batch_size)
+        test_iter  = Get_Dataloader(test_data,  test_label,  False, batch_size)
 
-    # Final test eval
-    top1_list, top5_list = [], []
-    with torch.no_grad():
-        for Xb, yb in test_iter:
-            Xb, yb = Xb.to(run_device), yb.to(run_device)
-            logits = modelnet(Xb)
-            t1, t5 = topk_accuracy(logits, yb, (1,5))
-            top1_list.append(t1)
-            top5_list.append(t5)
+        modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr, run_device)
 
-    print(f"{subname} | Test Top1={np.mean(top1_list):.3f}, Top5={np.mean(top5_list):.3f}")
+        block_top1, block_top5 = [], []
+        with torch.no_grad():
+            for X, y in test_iter:
+                X, y = X.to(run_device), y.to(run_device)
+                logits = modelnet(X)
+                t1, t5 = topk_accuracy(logits, y, (1,5))
+                block_top1.append(t1)
+                block_top5.append(t5)
+        Top_1.append(np.mean(block_top1))
+        Top_K.append(np.mean(block_top5))
+
+    print(f"{subname} | Top1={np.mean(Top_1):.3f}, Top5={np.mean(Top_K):.3f}")
+    All_sub_top1.append(np.mean(Top_1))
+    All_sub_top5.append(np.mean(Top_K))
+
+print("\nOverall:")
+print("TOP1:", np.mean(All_sub_top1), np.std(All_sub_top1))
+print("TOP5:", np.mean(All_sub_top5), np.std(All_sub_top5))
