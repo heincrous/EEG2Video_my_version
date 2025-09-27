@@ -22,7 +22,7 @@ from core.fusion_model import FusionNet
 CONFIG = {
     "batch_size":     32,
     "num_epochs":     100,
-    "lr":             0.0005,
+    "lr":             0.001,
     "weight_decay":   0.05,
     "optimizer":      "AdamW",
     "C":              62,       # EEG channels
@@ -35,8 +35,8 @@ CONFIG = {
 
     # Encoders (configurable)
     "raw_model":      "glfnet",      # options: shallownet, deepnet, eegnet, tsconv, conformer, glfnet
-    "de_model":       "glfnet_mlp",  # options: mlpnet, glfnet_mlp
-    "psd_model":      "glfnet_mlp",  # options: mlpnet, glfnet_mlp
+    "de_model":       "mlpnet",      # options: mlpnet, glfnet_mlp
+    "psd_model":      "mlpnet",      # options: mlpnet, glfnet_mlp
 
     # Data paths
     "segments_dir": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
@@ -123,7 +123,7 @@ def topk_accuracy(output, target, topk=(1, 5)):
 
 def evaluate(model, dataloader, device):
     model.eval()
-    loss_fn = nn.CrossEntropyLoss()
+    loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1)
     total_loss, total_samples = 0.0, 0
     top1_list, top5_list = [], []
     with torch.no_grad():
