@@ -61,11 +61,18 @@ class FusionNet(nn.Module):
             if hasattr(enc, "get_output_dim"):
                 total_dim += enc.get_output_dim()
             else:
-                # fallback: last Linear
-                last_linear = [m for m in enc.modules() if isinstance(m, nn.Linear)][-1]
-                total_dim += last_linear.out_features
+                # try to find a Linear layer
+                linear_layers = [m for m in enc.modules() if isinstance(m, nn.Linear)]
+                if len(linear_layers) == 0:
+                    raise ValueError(f"Encoder {enc.__class__.__name__} "
+                                     f"does not expose output_dim and has no Linear layer")
+                total_dim += linear_layers[-1].out_features
 
         self.classifier = nn.Linear(total_dim, num_classes)
+        self._output_dim = total_dim  # optional, so FusionNet itself can report output size
+
+    def get_output_dim(self):
+        return self._output_dim
 
     def forward(self, inputs, return_feats=False):
         feats = []
@@ -73,6 +80,8 @@ class FusionNet(nn.Module):
             if name not in inputs:
                 continue
             feats.append(encoder(inputs[name]))
+        if not feats:
+            raise ValueError("No matching inputs provided to FusionNet forward()")
         fused = torch.cat(feats, dim=-1)
         if return_feats:
             return fused
