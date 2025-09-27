@@ -1,5 +1,5 @@
 # ==========================================
-# EEG → CLIP semantic predictor
+# EEG → CLIP semantic predictor (one-fold, corrected metrics)
 # ==========================================
 import os
 import numpy as np
@@ -27,8 +27,8 @@ emb_dim_PSD      = 64
 
 # Choose: "segments", "DE", "PSD", or "fusion"
 FEATURE_TYPE     = "DE"
-USE_ALL_SUBJECTS = False        # False = only sub1, True = all subjects
-LOSS_TYPE        = "mse"        # "mse", "cosine", "mse+cosine"
+USE_ALL_SUBJECTS = False
+LOSS_TYPE        = "mse"   # "mse", "cosine", "mse+cosine"
 
 USE_VAR_REG = False
 VAR_LAMBDA  = 0.01
@@ -68,14 +68,10 @@ class SemanticMLP(nn.Module):
     def __init__(self, input_dim):
         super().__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(input_dim, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, 10000),
-            nn.ReLU(),
+            nn.Linear(input_dim, 10000), nn.ReLU(),
+            nn.Linear(10000, 10000), nn.ReLU(),
+            nn.Linear(10000, 10000), nn.ReLU(),
+            nn.Linear(10000, 10000), nn.ReLU(),
             nn.Linear(10000, 77*768)   # final mapping to CLIP space
         )
     def forward(self, x):
@@ -127,7 +123,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=F
     mse_loss  = nn.MSELoss()
     cos_loss  = nn.CosineEmbeddingLoss()
 
-    best_val, best_state = 1e9, None
+    best_val, best_state = 1e12, None
     for epoch in range(num_epochs):
         net.train()
         total_loss = 0
@@ -170,24 +166,10 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=F
         net.load_state_dict(best_state)
         save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor"
         os.makedirs(save_dir, exist_ok=True)
-
         torch.save({
             "state_dict": net.state_dict(),
             "feature_type": FEATURE_TYPE,
             "input_dim": net.head.mlp[0].in_features,
-            "config": {
-                "emb_dim_segments": emb_dim_segments,
-                "emb_dim_DE": emb_dim_DE,
-                "emb_dim_PSD": emb_dim_PSD,
-                "C": C,
-                "T": T,
-                "lr": lr,
-                "batch_size": batch_size,
-                "num_epochs": num_epochs,
-                "loss_type": LOSS_TYPE,
-                "use_var_reg": USE_VAR_REG,
-                "var_lambda": VAR_LAMBDA,
-            }
         }, os.path.join(save_dir, f"semantic_predictor_{subname.replace('.npy','')}.pt"))
     return net
 
@@ -197,7 +179,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=F
 def evaluate_mse(net, data_iter, device, fusion=False):
     net.eval()
     mse_loss = nn.MSELoss(reduction="sum")
-    total, count = 0, 0
+    total, count, dim = 0, 0, None
     with torch.no_grad():
         for X, y in data_iter:
             if fusion: X = {ft: X[ft].to(device) for ft in X}
@@ -206,12 +188,13 @@ def evaluate_mse(net, data_iter, device, fusion=False):
             y_hat = net(X)
             total += mse_loss(y_hat, y).item()
             count += y.size(0)
-    return total / count
+            dim = y.size(1)
+    return total / (count * dim)
 
 def evaluate(net, data_iter, device, fusion=False):
     net.eval()
     cos = nn.CosineSimilarity(dim=-1)
-    total_mse, total_cos, count = 0, 0, 0
+    total_mse, total_cos, count, dim = 0, 0, 0, None
     preds_all, targets_all = [], []
     with torch.no_grad():
         for X, y in data_iter:
@@ -224,27 +207,30 @@ def evaluate(net, data_iter, device, fusion=False):
             preds_all.append(y_hat.cpu().numpy())
             targets_all.append(y.cpu().numpy())
             count += y.size(0)
+            dim = y.size(1)
     preds_all = np.concatenate(preds_all, axis=0)
-    # compute inter-class variance (group into 40 classes × 5 clips)
+
+    # --- Between-class variance ---
     try:
-        preds_all = preds_all.reshape(40, 5, -1)  # [40, 5, 59136]
-        class_means = preds_all.mean(axis=1)      # [40, 59136]
-        class_var = class_means.var()
+        preds_all = preds_all.reshape(40, 5, 2, -1)  # 40 classes × 5 clips × 2 windows × emb_dim
+        preds_all = preds_all.mean(axis=(1, 2))      # average across clips+windows → [40, emb_dim]
+        class_means = preds_all
+        overall_mean = class_means.mean(axis=0)
+        # variance across class means
+        class_var = np.mean(np.sum((class_means - overall_mean)**2, axis=1))
     except:
         class_var = 0.0
-    return total_mse / count, total_cos / count, class_var
+
+    return total_mse / (count * dim), total_cos / count, class_var
 
 # ==========================================
 # Main
 # ==========================================
 clip_embeddings = np.load(CLIP_EMB_PATH)   # [7,40,5,77,768]
-
-# Always duplicate for 2 EEG windows
 clip_embeddings = np.expand_dims(clip_embeddings, axis=3)   # [7,40,5,1,77,768]
 clip_embeddings = np.repeat(clip_embeddings, 2, axis=3)     # [7,40,5,2,77,768]
 clip_embeddings = clip_embeddings.reshape(-1, 77*768)
 
-# Each block now has 400 samples instead of 200
 samples_per_block = clip_embeddings.shape[0] // 7
 
 if FEATURE_TYPE == "fusion":
@@ -254,15 +240,11 @@ else:
 
 for subname in sub_list:
     print(f"\n=== Training subject {subname} ===")
-
-    # ----- Load EEG -----
     if FEATURE_TYPE == "fusion":
-        raw_data = {ft: np.load(os.path.join(FEATURE_PATHS[ft], subname)) 
-                    for ft in ["segments", "DE", "PSD"]}
+        raw_data = {ft: np.load(os.path.join(FEATURE_PATHS[ft], subname)) for ft in ["segments", "DE", "PSD"]}
     else:
         raw_data = np.load(os.path.join(FEATURE_PATHS[FEATURE_TYPE], subname))
 
-    # ----- Reshape -----
     def reshape(ft, arr):
         if ft in ["DE", "PSD"]:
             return rearrange(arr, "a b c d e f -> a (b c d) e f")
@@ -271,96 +253,78 @@ for subname in sub_list:
         else:
             raise ValueError
 
-    All_train = {ft: reshape(ft, raw_data[ft]) for ft in raw_data} \
-                if FEATURE_TYPE=="fusion" else reshape(FEATURE_TYPE, raw_data)
+    All_train = {ft: reshape(ft, raw_data[ft]) for ft in raw_data} if FEATURE_TYPE=="fusion" else reshape(FEATURE_TYPE, raw_data)
 
-    for test_set_id in range(7):
-        val_set_id = (test_set_id - 1) % 7
+    # --- One-fold split: 5 train, 1 val, 1 test ---
+    train_blocks = [0,1,2,3,4]
+    val_block    = 5
+    test_block   = 6
 
-        if FEATURE_TYPE == "fusion":
-            train_data, val_data, test_data = {}, {}, {}
-            for ft in All_train:
-                train_data[ft] = np.concatenate(
-                    [All_train[ft][i] for i in range(7) if i not in [test_set_id, val_set_id]]
-                )
-                val_data[ft]   = All_train[ft][val_set_id]
-                test_data[ft]  = All_train[ft][test_set_id]
+    if FEATURE_TYPE == "fusion":
+        train_data, val_data, test_data = {}, {}, {}
+        for ft in All_train:
+            train_data[ft] = np.concatenate([All_train[ft][i] for i in train_blocks])
+            val_data[ft]   = All_train[ft][val_block]
+            test_data[ft]  = All_train[ft][test_block]
 
-            # Clip embeddings aligned by block
-            train_targets = np.concatenate([
-                clip_embeddings[i*samples_per_block:(i+1)*samples_per_block]
-                for i in range(7) if i not in [test_set_id, val_set_id]
-            ])
-            val_targets  = clip_embeddings[val_set_id*samples_per_block:(val_set_id+1)*samples_per_block]
-            test_targets = clip_embeddings[test_set_id*samples_per_block:(test_set_id+1)*samples_per_block]
+        train_targets = np.concatenate([clip_embeddings[i*samples_per_block:(i+1)*samples_per_block] for i in train_blocks])
+        val_targets   = clip_embeddings[val_block*samples_per_block:(val_block+1)*samples_per_block]
+        test_targets  = clip_embeddings[test_block*samples_per_block:(test_block+1)*samples_per_block]
 
-            for ft in train_data:
-                tr = train_data[ft].reshape(train_data[ft].shape[0], -1)
-                va = val_data[ft].reshape(val_data[ft].shape[0], -1)
-                te = test_data[ft].reshape(test_data[ft].shape[0], -1)
-                scaler = StandardScaler()
-                tr = scaler.fit_transform(tr); va = scaler.transform(va); te = scaler.transform(te)
-                if ft == "segments":
-                    train_data[ft] = tr.reshape(-1, 1, C, 200)
-                    val_data[ft]   = va.reshape(-1, 1, C, 200)
-                    test_data[ft]  = te.reshape(-1, 1, C, 200)
-                else:
-                    train_data[ft] = tr.reshape(-1, C, T)
-                    val_data[ft]   = va.reshape(-1, C, T)
-                    test_data[ft]  = te.reshape(-1, C, T)
-
-            train_iter = Get_Dataloader(train_data, train_targets, True, batch_size, fusion=True)
-            val_iter   = Get_Dataloader(val_data,   val_targets,   False, batch_size, fusion=True)
-            test_iter  = Get_Dataloader(test_data,  test_targets,  False, batch_size, fusion=True)
-
-            encoders = {ft: MODEL_MAP[ft]() for ft in All_train}
-            encoder  = FusionNet(encoders)
-            input_dim = encoder.total_dim
-
-        else:
-            train_data = np.concatenate(
-                [All_train[i] for i in range(7) if i not in [test_set_id, val_set_id]]
-            )
-            val_data   = All_train[val_set_id]
-            test_data  = All_train[test_set_id]
-
-            # Clip embeddings aligned by block
-            train_targets = np.concatenate([
-                clip_embeddings[i*samples_per_block:(i+1)*samples_per_block]
-                for i in range(7) if i not in [test_set_id, val_set_id]
-            ])
-            val_targets  = clip_embeddings[val_set_id*samples_per_block:(val_set_id+1)*samples_per_block]
-            test_targets = clip_embeddings[test_set_id*samples_per_block:(test_set_id+1)*samples_per_block]
-
-            tr = train_data.reshape(train_data.shape[0], -1)
-            va = val_data.reshape(val_data.shape[0], -1)
-            te = test_data.reshape(test_data.shape[0], -1)
+        for ft in train_data:
+            tr = train_data[ft].reshape(train_data[ft].shape[0], -1)
+            va = val_data[ft].reshape(val_data[ft].shape[0], -1)
+            te = test_data[ft].reshape(test_data[ft].shape[0], -1)
             scaler = StandardScaler()
             tr = scaler.fit_transform(tr); va = scaler.transform(va); te = scaler.transform(te)
-
-            if FEATURE_TYPE == "segments":
-                train_data = tr.reshape(-1, 1, C, 200)
-                val_data   = va.reshape(-1, 1, C, 200)
-                test_data  = te.reshape(-1, 1, C, 200)
+            if ft == "segments":
+                train_data[ft] = tr.reshape(-1, 1, C, 200)
+                val_data[ft]   = va.reshape(-1, 1, C, 200)
+                test_data[ft]  = te.reshape(-1, 1, C, 200)
             else:
-                train_data = tr.reshape(-1, C, T)
-                val_data   = va.reshape(-1, C, T)
-                test_data  = te.reshape(-1, C, T)
+                train_data[ft] = tr.reshape(-1, C, T)
+                val_data[ft]   = va.reshape(-1, C, T)
+                test_data[ft]  = te.reshape(-1, C, T)
 
-            train_iter = Get_Dataloader(train_data, train_targets, True, batch_size)
-            val_iter   = Get_Dataloader(val_data,   val_targets,   False, batch_size)
-            test_iter  = Get_Dataloader(test_data,  test_targets,  False, batch_size)
+        train_iter = Get_Dataloader(train_data, train_targets, True, batch_size, fusion=True)
+        val_iter   = Get_Dataloader(val_data,   val_targets,   False, batch_size, fusion=True)
+        test_iter  = Get_Dataloader(test_data,  test_targets,  False, batch_size, fusion=True)
 
-            encoder   = MODEL_MAP[FEATURE_TYPE]()
-            if FEATURE_TYPE == "segments":
-                input_dim = emb_dim_segments
-            elif FEATURE_TYPE == "DE":
-                input_dim = emb_dim_DE
-            elif FEATURE_TYPE == "PSD":
-                input_dim = emb_dim_PSD
-            else:
-                raise ValueError("Unknown FEATURE_TYPE")
+        encoders = {ft: MODEL_MAP[ft]() for ft in All_train}
+        encoder  = FusionNet(encoders)
+        input_dim = encoder.total_dim
 
-        modelnet = SemanticPredictor(encoder, input_dim)
-        modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr,
-                         run_device, fusion=(FEATURE_TYPE=="fusion"), subname=subname)
+    else:
+        train_data = np.concatenate([All_train[i] for i in train_blocks])
+        val_data   = All_train[val_block]
+        test_data  = All_train[test_block]
+
+        train_targets = np.concatenate([clip_embeddings[i*samples_per_block:(i+1)*samples_per_block] for i in train_blocks])
+        val_targets   = clip_embeddings[val_block*samples_per_block:(val_block+1)*samples_per_block]
+        test_targets  = clip_embeddings[test_block*samples_per_block:(test_block+1)*samples_per_block]
+
+        tr = train_data.reshape(train_data.shape[0], -1)
+        va = val_data.reshape(val_data.shape[0], -1)
+        te = test_data.reshape(test_data.shape[0], -1)
+        scaler = StandardScaler()
+        tr = scaler.fit_transform(tr); va = scaler.transform(va); te = scaler.transform(te)
+
+        if FEATURE_TYPE == "segments":
+            train_data = tr.reshape(-1, 1, C, 200)
+            val_data   = va.reshape(-1, 1, C, 200)
+            test_data  = te.reshape(-1, 1, C, 200)
+        else:
+            train_data = tr.reshape(-1, C, T)
+            val_data   = va.reshape(-1, C, T)
+            test_data  = te.reshape(-1, C, T)
+
+        train_iter = Get_Dataloader(train_data, train_targets, True, batch_size)
+        val_iter   = Get_Dataloader(val_data,   val_targets,   False, batch_size)
+        test_iter  = Get_Dataloader(test_data,  test_targets,  False, batch_size)
+
+        encoder   = MODEL_MAP[FEATURE_TYPE]()
+        input_dim = emb_dim_DE if FEATURE_TYPE=="DE" else emb_dim_PSD if FEATURE_TYPE=="PSD" else emb_dim_segments
+
+    modelnet = SemanticPredictor(encoder, input_dim)
+    modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr,
+                     run_device, fusion=(FEATURE_TYPE=="fusion"), subname=subname)
