@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 
 # === Repo imports ===
-from models import glfnet, glfnet_mlp
+from .models import glfnet, glfnet_mlp
 
 
 # ==========================================
