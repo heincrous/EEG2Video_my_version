@@ -1,6 +1,6 @@
 # ==========================================
 # fusion_train_full.py
-# End-to-end FusionNet training with 7-fold CV
+# End-to-end FusionNet training with 7-fold CV + feature-wise normalisation
 # ==========================================
 
 # === Standard libraries ===
@@ -92,13 +92,13 @@ def flatten_and_labels(raw, de, psd):
     return raw, de, psd, labels
 
 
-def apply_scaling(train, val, test):
+def scale_feature(train, val, test):
     scaler = StandardScaler()
     scaler.fit(train.reshape(len(train), -1))
     train = scaler.transform(train.reshape(len(train), -1)).reshape(train.shape)
     val   = scaler.transform(val.reshape(len(val), -1)).reshape(val.shape)
     test  = scaler.transform(test.reshape(len(test), -1)).reshape(test.shape)
-    return train, val, test
+    return train, val, test, scaler
 
 
 # ==========================================
@@ -218,9 +218,10 @@ if __name__ == "__main__":
         psd_test = psd[test_block].reshape(-1, CONFIG["C"], 5)
         y_test   = labels[test_block].reshape(-1)
 
-        raw_train, raw_val, raw_test = apply_scaling(raw_train, raw_val, raw_test)
-        de_train, de_val, de_test    = apply_scaling(de_train, de_val, de_test)
-        psd_train, psd_val, psd_test = apply_scaling(psd_train, psd_val, psd_test)
+        # Feature-wise scaling (separate scaler per feature type)
+        raw_train, raw_val, raw_test, _ = scale_feature(raw_train, raw_val, raw_test)
+        de_train, de_val, de_test, _    = scale_feature(de_train, de_val, de_test)
+        psd_train, psd_val, psd_test, _ = scale_feature(psd_train, psd_val, psd_test)
 
         train_loader = get_dataloader(raw_train, de_train, psd_train, y_train, True, CONFIG["batch_size"])
         val_loader   = get_dataloader(raw_val,   de_val,   psd_val,   y_val,   False, CONFIG["batch_size"])
