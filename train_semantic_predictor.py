@@ -28,7 +28,9 @@ emb_dim_PSD      = 64
 # Choose: "segments", "DE", "PSD", or "fusion"
 FEATURE_TYPE     = "DE"
 USE_ALL_SUBJECTS = False
-LOSS_TYPE        = "mse"   # "mse", "cosine", "mse+cosine"
+
+# Loss type: "mse", "cosine", "mse+cosine", "contrastive"
+LOSS_TYPE        = "mse"
 
 USE_VAR_REG = True
 VAR_LAMBDA  = 0.01
@@ -90,24 +92,50 @@ class SemanticPredictor(nn.Module):
         return self.head(feats)
 
 # ==========================================
-# Dataset
+# Dataset (with class labels)
 # ==========================================
 class FusionDataset(data.Dataset):
-    def __init__(self, features_dict, clip_targets):
+    def __init__(self, features_dict, clip_targets, class_labels):
         self.features = features_dict
         self.targets  = clip_targets
+        self.labels   = class_labels
     def __len__(self): return len(self.targets)
     def __getitem__(self, idx):
         return {ft: torch.tensor(self.features[ft][idx], dtype=torch.float32) for ft in self.features}, \
-               torch.tensor(self.targets[idx], dtype=torch.float32)
+               torch.tensor(self.targets[idx], dtype=torch.float32), \
+               torch.tensor(self.labels[idx], dtype=torch.long)
 
-def Get_Dataloader(features, targets, istrain, batch_size, fusion=False):
+class SimpleDataset(data.Dataset):
+    def __init__(self, features, clip_targets, class_labels):
+        self.features = features
+        self.targets  = clip_targets
+        self.labels   = class_labels
+    def __len__(self): return len(self.targets)
+    def __getitem__(self, idx):
+        return torch.tensor(self.features[idx], dtype=torch.float32), \
+               torch.tensor(self.targets[idx], dtype=torch.float32), \
+               torch.tensor(self.labels[idx], dtype=torch.long)
+
+def Get_Dataloader(features, targets, labels, istrain, batch_size, fusion=False):
     if fusion:
-        return data.DataLoader(FusionDataset(features, targets), batch_size, shuffle=istrain)
+        return data.DataLoader(FusionDataset(features, targets, labels), batch_size, shuffle=istrain)
     else:
-        features = torch.tensor(features, dtype=torch.float32)
-        targets  = torch.tensor(targets, dtype=torch.float32)
-        return data.DataLoader(data.TensorDataset(features, targets), batch_size, shuffle=istrain)
+        return data.DataLoader(SimpleDataset(features, targets, labels), batch_size, shuffle=istrain)
+
+# ==========================================
+# Contrastive loss helper
+# ==========================================
+def contrastive_loss_fn(y_hat, y, margin=1.0):
+    # Normalise embeddings
+    y_hat = F.normalize(y_hat, dim=-1)
+    y     = F.normalize(y, dim=-1)
+    # Cosine similarity matrix
+    sim_matrix = torch.matmul(y_hat, y.t())
+    # Positive = diagonal
+    pos = torch.diag(sim_matrix)
+    # Contrastive: push off-diagonal lower than margin
+    loss = torch.mean(F.relu(margin - pos[:, None] + sim_matrix))
+    return loss
 
 # ==========================================
 # Training loop
@@ -127,12 +155,15 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=F
     for epoch in range(num_epochs):
         net.train()
         total_loss = 0
-        for X, y in train_iter:
+        for batch in train_iter:
             if fusion:
+                X, y, y_class = batch
                 X = {ft: X[ft].to(device) for ft in X}
             else:
+                X, y, y_class = batch
                 X = X.to(device)
-            y = y.to(device)
+            y       = y.to(device)
+            y_class = y_class.to(device)
 
             optimizer.zero_grad()
             y_hat = net(X)
@@ -145,9 +176,21 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=F
             elif LOSS_TYPE == "mse+cosine":
                 target = torch.ones(y_hat.size(0), device=device)
                 loss = mse_loss(y_hat, y) + cos_loss(y_hat, y, target)
+            elif LOSS_TYPE == "contrastive":
+                loss = contrastive_loss_fn(y_hat, y)
 
             if USE_VAR_REG:
-                loss -= VAR_LAMBDA * torch.var(y_hat, dim=0).mean()
+                pred_vars, target_vars = [], []
+                for cls in torch.unique(y_class):
+                    mask = (y_class == cls)
+                    if mask.sum() > 1:
+                        pred_vars.append(torch.var(y_hat[mask], dim=0).mean())
+                        target_vars.append(torch.var(y[mask], dim=0).mean())
+                if pred_vars:
+                    pred_var   = torch.stack(pred_vars).mean()
+                    target_var = torch.stack(target_vars).mean()
+                    var_ratio  = pred_var / (target_var + 1e-8)
+                    loss -= VAR_LAMBDA * var_ratio
 
             loss.backward()
             optimizer.step()
@@ -162,7 +205,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=F
             test_mse, test_cos, fisher_score = evaluate(net, test_iter, device, fusion)
             print(f"[{epoch+1}] train_loss={total_loss/len(train_iter.dataset):.4f}, "
                   f"val_mse={val_mse:.4f}, test_mse={test_mse:.4f}, "
-                  f"test_cos={test_cos:.4f}, between_var={fisher_score:.4f}")
+                  f"test_cos={test_cos:.4f}, fisher_score={fisher_score:.4f}")
 
     if best_state:
         net.load_state_dict(best_state)
@@ -183,10 +226,12 @@ def evaluate_mse(net, data_iter, device, fusion=False):
     mse_loss = nn.MSELoss(reduction="sum")
     total, count, dim = 0, 0, None
     with torch.no_grad():
-        for X, y in data_iter:
+        for batch in data_iter:
             if fusion:
+                X, y, _ = batch
                 X = {ft: X[ft].to(device) for ft in X}
             else:
+                X, y, _ = batch
                 X = X.to(device)
             y = y.to(device)
             y_hat = net(X)
@@ -202,10 +247,12 @@ def evaluate(net, data_iter, device, fusion=False):
     preds_all, targets_all = [], []
 
     with torch.no_grad():
-        for X, y in data_iter:
+        for batch in data_iter:
             if fusion:
+                X, y, _ = batch
                 X = {ft: X[ft].to(device) for ft in X}
             else:
+                X, y, _ = batch
                 X = X.to(device)
             y = y.to(device)
             y_hat = net(X)
@@ -222,22 +269,13 @@ def evaluate(net, data_iter, device, fusion=False):
 
     # --- Fisher-style variance ratio ---
     try:
-        # Reshape: [classes=40, clips=5, windows=2, emb_dim]
         preds_all = preds_all.reshape(40, 5, 2, -1)
-
-        # Collect per-class samples
-        class_samples = preds_all.reshape(40, -1, preds_all.shape[-1])  # [40, 10, emb_dim]
-
-        class_means = class_samples.mean(axis=1)    # [40, emb_dim]
-        overall_mean = class_means.mean(axis=0)     # [emb_dim]
-
-        # Between-class scatter
+        class_samples = preds_all.reshape(40, -1, preds_all.shape[-1])
+        class_means = class_samples.mean(axis=1)
+        overall_mean = class_means.mean(axis=0)
         between = np.sum([len(c) * np.sum((m - overall_mean) ** 2)
-                          for m, c, in zip(class_means, class_samples)])
-
-        # Within-class scatter
+                          for m, c in zip(class_means, class_samples)])
         within = np.sum([np.sum((c - m) ** 2) for m, c in zip(class_means, class_samples)])
-
         fisher_score = between / (within + 1e-8)
     except Exception:
         fisher_score = 0.0
@@ -248,9 +286,13 @@ def evaluate(net, data_iter, device, fusion=False):
 # Main
 # ==========================================
 clip_embeddings = np.load(CLIP_EMB_PATH)   # [7,40,5,77,768]
-clip_embeddings = np.expand_dims(clip_embeddings, axis=3)   # [7,40,5,1,77,768]
-clip_embeddings = np.repeat(clip_embeddings, 2, axis=3)     # [7,40,5,2,77,768]
+clip_embeddings = np.expand_dims(clip_embeddings, axis=3)
+clip_embeddings = np.repeat(clip_embeddings, 2, axis=3)
 clip_embeddings = clip_embeddings.reshape(-1, 77*768)
+
+# class labels: 40 classes × 5 clips × 2 windows per block = 400
+labels_block = np.repeat(np.arange(40), 5*2)
+labels_all   = np.tile(labels_block, 7)
 
 samples_per_block = clip_embeddings.shape[0] // 7
 
@@ -281,6 +323,14 @@ for subname in sub_list:
     val_block    = 5
     test_block   = 6
 
+    train_targets = np.concatenate([clip_embeddings[i*samples_per_block:(i+1)*samples_per_block] for i in train_blocks])
+    val_targets   = clip_embeddings[val_block*samples_per_block:(val_block+1)*samples_per_block]
+    test_targets  = clip_embeddings[test_block*samples_per_block:(test_block+1)*samples_per_block]
+
+    train_labels = np.concatenate([labels_all[i*samples_per_block:(i+1)*samples_per_block] for i in train_blocks])
+    val_labels   = labels_all[val_block*samples_per_block:(val_block+1)*samples_per_block]
+    test_labels  = labels_all[test_block*samples_per_block:(test_block+1)*samples_per_block]
+
     if FEATURE_TYPE == "fusion":
         train_data, val_data, test_data = {}, {}, {}
         for ft in All_train:
@@ -288,11 +338,6 @@ for subname in sub_list:
             val_data[ft]   = All_train[ft][val_block]
             test_data[ft]  = All_train[ft][test_block]
 
-        train_targets = np.concatenate([clip_embeddings[i*samples_per_block:(i+1)*samples_per_block] for i in train_blocks])
-        val_targets   = clip_embeddings[val_block*samples_per_block:(val_block+1)*samples_per_block]
-        test_targets  = clip_embeddings[test_block*samples_per_block:(test_block+1)*samples_per_block]
-
-        for ft in train_data:
             tr = train_data[ft].reshape(train_data[ft].shape[0], -1)
             va = val_data[ft].reshape(val_data[ft].shape[0], -1)
             te = test_data[ft].reshape(test_data[ft].shape[0], -1)
@@ -307,22 +352,17 @@ for subname in sub_list:
                 val_data[ft]   = va.reshape(-1, C, T)
                 test_data[ft]  = te.reshape(-1, C, T)
 
-        train_iter = Get_Dataloader(train_data, train_targets, True, batch_size, fusion=True)
-        val_iter   = Get_Dataloader(val_data,   val_targets,   False, batch_size, fusion=True)
-        test_iter  = Get_Dataloader(test_data,  test_targets,  False, batch_size, fusion=True)
+        train_iter = Get_Dataloader(train_data, train_targets, train_labels, True, batch_size, fusion=True)
+        val_iter   = Get_Dataloader(val_data,   val_targets,   val_labels,   False, batch_size, fusion=True)
+        test_iter  = Get_Dataloader(test_data,  test_targets,  test_labels,  False, batch_size, fusion=True)
 
         encoders = {ft: MODEL_MAP[ft]() for ft in All_train}
         encoder  = FusionNet(encoders)
         input_dim = encoder.total_dim
-
     else:
         train_data = np.concatenate([All_train[i] for i in train_blocks])
         val_data   = All_train[val_block]
         test_data  = All_train[test_block]
-
-        train_targets = np.concatenate([clip_embeddings[i*samples_per_block:(i+1)*samples_per_block] for i in train_blocks])
-        val_targets   = clip_embeddings[val_block*samples_per_block:(val_block+1)*samples_per_block]
-        test_targets  = clip_embeddings[test_block*samples_per_block:(test_block+1)*samples_per_block]
 
         tr = train_data.reshape(train_data.shape[0], -1)
         va = val_data.reshape(val_data.shape[0], -1)
@@ -339,9 +379,9 @@ for subname in sub_list:
             val_data   = va.reshape(-1, C, T)
             test_data  = te.reshape(-1, C, T)
 
-        train_iter = Get_Dataloader(train_data, train_targets, True, batch_size)
-        val_iter   = Get_Dataloader(val_data,   val_targets,   False, batch_size)
-        test_iter  = Get_Dataloader(test_data,  test_targets,  False, batch_size)
+        train_iter = Get_Dataloader(train_data, train_targets, train_labels, True, batch_size)
+        val_iter   = Get_Dataloader(val_data,   val_targets,   val_labels,   False, batch_size)
+        test_iter  = Get_Dataloader(test_data,  test_targets,  test_labels,  False, batch_size)
 
         encoder   = MODEL_MAP[FEATURE_TYPE]()
         input_dim = emb_dim_DE if FEATURE_TYPE=="DE" else emb_dim_PSD if FEATURE_TYPE=="PSD" else emb_dim_segments
