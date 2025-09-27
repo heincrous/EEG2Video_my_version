@@ -352,7 +352,14 @@ for subname in sub_list:
             test_iter  = Get_Dataloader(test_data,  test_targets,  False, batch_size)
 
             encoder   = MODEL_MAP[FEATURE_TYPE]()
-            input_dim = encoder.out_dim
+            if FEATURE_TYPE == "segments":
+                input_dim = emb_dim_segments
+            elif FEATURE_TYPE == "DE":
+                input_dim = emb_dim_DE
+            elif FEATURE_TYPE == "PSD":
+                input_dim = emb_dim_PSD
+            else:
+                raise ValueError("Unknown FEATURE_TYPE")
 
         modelnet = SemanticPredictor(encoder, input_dim)
         modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr,
