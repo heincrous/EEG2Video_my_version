@@ -138,15 +138,11 @@ for subname in sub_list:
         test_data, test_label = All_train[test_set_id], All_label[test_set_id]
         val_data,  val_label  = All_train[val_set_id],  All_label[val_set_id]
 
-        # apply separate scalers to each split
-        train_scaler = StandardScaler().fit(train_data.reshape(train_data.shape[0], -1))
-        train_data   = train_scaler.transform(train_data.reshape(train_data.shape[0], -1)).reshape(train_data.shape)
-
-        val_scaler   = StandardScaler().fit(val_data.reshape(val_data.shape[0], -1))
-        val_data     = val_scaler.transform(val_data.reshape(val_data.shape[0], -1)).reshape(val_data.shape)
-
-        test_scaler  = StandardScaler().fit(test_data.reshape(test_data.shape[0], -1))
-        test_data    = test_scaler.transform(test_data.reshape(test_data.shape[0], -1)).reshape(test_data.shape)
+        # normalize each split
+        scaler = StandardScaler().fit(train_data.reshape(train_data.shape[0], -1))
+        train_data = scaler.transform(train_data.reshape(train_data.shape[0], -1)).reshape(train_data.shape)
+        test_data  = scaler.transform(test_data.reshape(test_data.shape[0], -1)).reshape(test_data.shape)
+        val_data   = scaler.transform(val_data.reshape(val_data.shape[0], -1)).reshape(val_data.shape)
 
         # model + dataloaders
         modelnet = models.glfnet_mlp(out_dim=40, emb_dim=64, input_dim=310)
