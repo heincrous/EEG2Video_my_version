@@ -20,7 +20,7 @@ lr           = 0.0001
 C            = 62
 T            = 5
 run_device   = "cuda"
-emb_dim_segments = 1024
+emb_dim_segments = 512
 emb_dim_DE = 512
 emb_dim_PSD = 128
 
