@@ -12,7 +12,7 @@ from einops import rearrange
 import models
 
 # ==========================================
-# Hyperparameters
+# Config
 # ==========================================
 batch_size   = 256
 num_epochs   = 100
@@ -20,6 +20,23 @@ lr           = 0.001
 C            = 62
 T            = 5
 run_device   = "cuda"
+
+# Select feature type: "segments", "DE", or "PSD"
+FEATURE_TYPE = "PSD"
+
+FEATURE_PATHS = {
+    "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments_1per1s",
+    "DE":       "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s",
+    "PSD":      "/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s",
+}
+
+MODEL_MAP = {
+    "segments": lambda: models.glfnet(out_dim=40, emb_dim=256, C=62, T=400),
+    "DE":       lambda: models.glfnet_mlp(out_dim=40, emb_dim=64, input_dim=62*5),
+    "PSD":      lambda: models.glfnet_mlp(out_dim=40, emb_dim=64, input_dim=62*5),
+}
+
+data_path = FEATURE_PATHS[FEATURE_TYPE]
 
 # ==========================================
 # Utilities
@@ -102,7 +119,6 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
             print(f"[{epoch+1}] loss={train_loss:.3f}, "
                   f"train_acc={train_acc:.3f}, val_acc={val_acc:.3f}, test_acc={test_acc:.3f}")
 
-    # restore best checkpoint before returning
     if best_state is not None:
         net.load_state_dict(best_state)
     return net
@@ -110,63 +126,83 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
 # ==========================================
 # Label generation
 # ==========================================
-# Each block = 40 classes × 10 clips = 400 samples
 All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
 
 # ==========================================
 # Main
 # ==========================================
-all_subs = os.listdir("/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s")
+all_subs = os.listdir(data_path)
 print("Available subjects:", all_subs)
-sub_choice = "sub1.npy"   # manually set here, or use input()
+sub_choice = "sub1.npy"
 sub_list = [sub_choice]
 
 All_sub_top1, All_sub_top5 = [], []
 
 for subname in sub_list:
-    load_npy = np.load(os.path.join("/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s", subname))
+    load_npy = np.load(os.path.join(data_path, subname))
     print("Loaded:", subname, load_npy.shape)
 
-    # shape: (7,40,5,2,62,5) → (7,400,62,5)
-    All_train = rearrange(load_npy, "a b c d e f -> a (b c d) e f")
-    print("Reshaped:", All_train.shape)
+    if FEATURE_TYPE in ["DE", "PSD"]:
+        # shape: (7,40,5,2,62,5) → (7,400,62,5)
+        All_train = rearrange(load_npy, "a b c d e f -> a (b c d) e f")
+    elif FEATURE_TYPE == "segments":
+        # shape: (7,40,5,62,400) → (7,400,62,400)
+        All_train = rearrange(load_npy, "a b c d e f -> a (b c) d e")
 
+    print("Reshaped:", All_train.shape)
     Top_1, Top_K = [], []
 
     for test_set_id in range(7):
         val_set_id = (test_set_id - 1) % 7
 
-        train_data = np.concatenate([All_train[i].reshape(400,62,5) for i in range(7) if i!=test_set_id])
+        train_data = np.concatenate([All_train[i] for i in range(7) if i!=test_set_id])
         train_label= np.concatenate([All_label[i] for i in range(7) if i!=test_set_id])
         test_data, test_label = All_train[test_set_id], All_label[test_set_id]
         val_data,  val_label  = All_train[val_set_id],  All_label[val_set_id]
 
-        # apply separate scalers to each split (flatten to [n_samples, C*T], then reshape back)
-        train_data = train_data.reshape(train_data.shape[0], C*T)
-        val_data   = val_data.reshape(val_data.shape[0], C*T)
-        test_data  = test_data.reshape(test_data.shape[0], C*T)
+        # ==========================================
+        # Scaling and reshaping
+        # ==========================================
+        if FEATURE_TYPE in ["DE", "PSD"]:
+            # flatten
+            train_data = train_data.reshape(train_data.shape[0], C*T)
+            val_data   = val_data.reshape(val_data.shape[0], C*T)
+            test_data  = test_data.reshape(test_data.shape[0], C*T)
 
-        train_scaler = StandardScaler()
-        train_scaler.fit(train_data)
-        train_data = train_scaler.transform(train_data).reshape(-1, C, T)
+            scaler = StandardScaler()
+            train_data = scaler.fit_transform(train_data).reshape(-1, C, T)
 
-        val_scaler = StandardScaler()
-        val_scaler.fit(val_data)
-        val_data = val_scaler.transform(val_data).reshape(-1, C, T)
+            scaler = StandardScaler()
+            val_data = scaler.fit_transform(val_data).reshape(-1, C, T)
 
-        test_scaler = StandardScaler()
-        test_scaler.fit(test_data)
-        test_data = test_scaler.transform(test_data).reshape(-1, C, T)
+            scaler = StandardScaler()
+            test_data = scaler.fit_transform(test_data).reshape(-1, C, T)
 
-        # model + dataloaders
-        modelnet = models.glfnet_mlp(out_dim=40, emb_dim=64, input_dim=310)
+        elif FEATURE_TYPE == "segments":
+            # flatten
+            train_data = train_data.reshape(train_data.shape[0], C*400)
+            val_data   = val_data.reshape(val_data.shape[0], C*400)
+            test_data  = test_data.reshape(test_data.shape[0], C*400)
+
+            scaler = StandardScaler()
+            train_data = scaler.fit_transform(train_data).reshape(-1, 1, C, 400)
+
+            scaler = StandardScaler()
+            val_data = scaler.fit_transform(val_data).reshape(-1, 1, C, 400)
+
+            scaler = StandardScaler()
+            test_data = scaler.fit_transform(test_data).reshape(-1, 1, C, 400)
+
+        # ==========================================
+        # Model + Dataloaders
+        # ==========================================
+        modelnet = MODEL_MAP[FEATURE_TYPE]()
         train_iter = Get_Dataloader(train_data, train_label, True, batch_size)
         val_iter   = Get_Dataloader(val_data,   val_label,   False, batch_size)
         test_iter  = Get_Dataloader(test_data,  test_label,  False, batch_size)
 
         modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr, run_device)
 
-        # final evaluation with best checkpoint
         block_top1, block_top5 = [], []
         with torch.no_grad():
             for X, y in test_iter:
