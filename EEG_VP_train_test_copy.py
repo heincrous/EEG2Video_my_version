@@ -1,5 +1,5 @@
 # ==========================================
-# EEG classification (with internal best checkpoint, no saving to disk)
+# EEG classification (FusionNet with independent scalers per feature & split)
 # ==========================================
 import os
 import numpy as np
@@ -7,7 +7,6 @@ import torch
 from torch import nn
 from torch.utils import data
 from sklearn.preprocessing import StandardScaler
-from sklearn import metrics
 from einops import rearrange
 import models
 
@@ -17,17 +16,15 @@ import models
 batch_size   = 256
 num_epochs   = 50
 lr           = 0.001
-C            = 62
-T            = 5
 run_device   = "cuda"
 
 # ==========================================
 # Utilities
 # ==========================================
-def Get_Dataloader(datat, labelt, istrain, batch_size):
-    features = torch.tensor(datat, dtype=torch.float32)
-    labels   = torch.tensor(labelt, dtype=torch.long)
-    return data.DataLoader(data.TensorDataset(features, labels),
+def Get_Dataloader(features_dict, labels, istrain, batch_size):
+    tensors = {k: torch.tensor(v, dtype=torch.float32) for k, v in features_dict.items()}
+    labels  = torch.tensor(labels, dtype=torch.long)
+    return data.DataLoader(data.TensorDataset(*(list(tensors.values()) + [labels])),
                            batch_size, shuffle=istrain)
 
 class Accumulator:
@@ -45,12 +42,13 @@ def evaluate_accuracy_gpu(net, data_iter, device):
     net.eval()
     metric = Accumulator(2)
     with torch.no_grad():
-        for X, y in data_iter:
-            X, y = X.to(device), y.to(device)
-            metric.add(cal_accuracy(net(X), y), y.numel())
+        for *Xs, y in data_iter:
+            Xs = {k: X.to(device) for k, X in zip(net.encoders.keys(), Xs)}
+            y  = y.to(device)
+            metric.add(cal_accuracy(net(Xs), y), y.numel())
     return metric[0] / metric[1]
 
-def topk_accuracy(output, target, topk=(1,5)):       
+def topk_accuracy(output, target, topk=(1,5)):
     with torch.no_grad():
         maxk = max(topk)
         _, pred = output.topk(maxk, 1, True, True)
@@ -63,7 +61,24 @@ def topk_accuracy(output, target, topk=(1,5)):
         return res
 
 # ==========================================
-# Training loop (with in-memory checkpointing)
+# FusionNet wrapper
+# ==========================================
+class FusionNet(nn.Module):
+    def __init__(self, encoders, out_dim):
+        super().__init__()
+        self.encoders = nn.ModuleDict(encoders)
+        total_dim = sum(e.out.out_features for e in encoders.values())
+        self.classifier = nn.Linear(total_dim, out_dim)
+
+    def forward(self, inputs):
+        feats = []
+        for k, enc in self.encoders.items():
+            feats.append(enc(inputs[k]))
+        fused = torch.cat(feats, dim=1)
+        return self.classifier(fused)
+
+# ==========================================
+# Training loop
 # ==========================================
 def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
     def init_weights(m):
@@ -81,14 +96,15 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
     for epoch in range(num_epochs):
         net.train()
         metric = Accumulator(3)
-        for X, y in train_iter:
-            X, y = X.to(device), y.to(device)
+        for *Xs, y in train_iter:
+            Xs = {k: X.to(device) for k, X in zip(net.encoders.keys(), Xs)}
+            y  = y.to(device)
             optimizer.zero_grad()
-            y_hat = net(X)
+            y_hat = net(Xs)
             loss  = loss_fn(y_hat, y)
             loss.backward()
             optimizer.step()
-            metric.add(loss.item() * X.shape[0], cal_accuracy(y_hat, y), X.shape[0])
+            metric.add(loss.item() * y.size(0), cal_accuracy(y_hat, y), y.size(0))
         train_loss = metric[0] / metric[2]
         train_acc  = metric[1] / metric[2]
         val_acc    = evaluate_accuracy_gpu(net, val_iter, device)
@@ -102,7 +118,6 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
             print(f"[{epoch+1}] loss={train_loss:.3f}, "
                   f"train_acc={train_acc:.3f}, val_acc={val_acc:.3f}, test_acc={test_acc:.3f}")
 
-    # restore best checkpoint before returning
     if best_state is not None:
         net.load_state_dict(best_state)
     return net
@@ -110,54 +125,81 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
 # ==========================================
 # Label generation
 # ==========================================
-# Each block = 40 classes × 10 clips = 400 samples
 All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
 
 # ==========================================
-# Main
+# Main (example with DE/PSD/segments dirs)
 # ==========================================
-sub_list = os.listdir("/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s")
+seg_root = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments"
+de_root  = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s"
+psd_root = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s"
+
+sub_list = os.listdir(de_root)
 
 All_sub_top1, All_sub_top5 = [], []
 
 for subname in sub_list:
-    load_npy = np.load(os.path.join("/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s", subname))
-    print("Loaded:", subname, load_npy.shape)
+    seg_npy = np.load(os.path.join(seg_root, subname))   # (40,7,5,62,400)
+    de_npy  = np.load(os.path.join(de_root,  subname))   # shape consistent with DE
+    psd_npy = np.load(os.path.join(psd_root, subname))   # shape consistent with PSD
 
-    # shape: (7,40,5,2,62,5) → (7,400,62,5)
-    All_train = rearrange(load_npy, "a b c d e f -> a (b c d) e f")
-    print("Reshaped:", All_train.shape)
+    # reshape to (7,400, ...)
+    seg_all = rearrange(seg_npy, "c b r ch t -> b (c r) ch t")
+    de_all  = rearrange(de_npy,  "a b c d e f -> a (b c d) e f")
+    psd_all = rearrange(psd_npy, "a b c d e f -> a (b c d) e f")
 
     Top_1, Top_K = [], []
 
     for test_set_id in range(7):
         val_set_id = (test_set_id - 1) % 7
 
-        train_data = np.concatenate([All_train[i].reshape(400,62,5) for i in range(7) if i!=test_set_id])
-        train_label= np.concatenate([All_label[i] for i in range(7) if i!=test_set_id])
-        test_data, test_label = All_train[test_set_id], All_label[test_set_id]
-        val_data,  val_label  = All_train[val_set_id],  All_label[val_set_id]
+        train_idx = [i for i in range(7) if i != test_set_id]
 
-        # normalize each split
-        scaler = StandardScaler().fit(train_data.reshape(train_data.shape[0], -1))
-        train_data = scaler.transform(train_data.reshape(train_data.shape[0], -1)).reshape(train_data.shape)
-        test_data  = scaler.transform(test_data.reshape(test_data.shape[0], -1)).reshape(test_data.shape)
-        val_data   = scaler.transform(val_data.reshape(val_data.shape[0], -1)).reshape(val_data.shape)
+        # split features
+        splits = {}
+        for feat_name, arr in zip(["segments","de","psd"], [seg_all,de_all,psd_all]):
+            train_data = np.concatenate([arr[i] for i in train_idx if i!=val_set_id])
+            val_data   = arr[val_set_id]
+            test_data  = arr[test_set_id]
 
-        # model + dataloaders
-        modelnet = models.glfnet_mlp(out_dim=40, emb_dim=64, input_dim=310)
-        train_iter = Get_Dataloader(train_data, train_label, True, batch_size)
-        val_iter   = Get_Dataloader(val_data,   val_label,   False, batch_size)
-        test_iter  = Get_Dataloader(test_data,  test_label,  False, batch_size)
+            # scale each split independently
+            train_scaler = StandardScaler().fit(train_data.reshape(train_data.shape[0], -1))
+            train_data   = train_scaler.transform(train_data.reshape(train_data.shape[0], -1)).reshape(train_data.shape)
+
+            val_scaler   = StandardScaler().fit(val_data.reshape(val_data.shape[0], -1))
+            val_data     = val_scaler.transform(val_data.reshape(val_data.shape[0], -1)).reshape(val_data.shape)
+
+            test_scaler  = StandardScaler().fit(test_data.reshape(test_data.shape[0], -1))
+            test_data    = test_scaler.transform(test_data.reshape(test_data.shape[0], -1)).reshape(test_data.shape)
+
+            splits[feat_name] = {"train": train_data, "val": val_data, "test": test_data}
+
+        train_label= np.concatenate([All_label[i] for i in train_idx if i!=val_set_id])
+        val_label  = All_label[val_set_id]
+        test_label = All_label[test_set_id]
+
+        # build dataloaders
+        train_iter = Get_Dataloader({k:v["train"] for k,v in splits.items()}, train_label, True, batch_size)
+        val_iter   = Get_Dataloader({k:v["val"]   for k,v in splits.items()}, val_label,   False, batch_size)
+        test_iter  = Get_Dataloader({k:v["test"]  for k,v in splits.items()}, test_label,  False, batch_size)
+
+        # encoders
+        encoders = {
+            "segments": models.glfnet(out_dim=40, emb_dim=64, C=62, T=400),
+            "de":       models.glfnet_mlp(out_dim=40, emb_dim=64, input_dim=310),
+            "psd":      models.glfnet_mlp(out_dim=40, emb_dim=64, input_dim=310),
+        }
+        modelnet = FusionNet(encoders, out_dim=40)
 
         modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr, run_device)
 
-        # final evaluation with best checkpoint
+        # final evaluation
         block_top1, block_top5 = [], []
         with torch.no_grad():
-            for X, y in test_iter:
-                X, y = X.to(run_device), y.to(run_device)
-                logits = modelnet(X)
+            for *Xs, y in test_iter:
+                Xs = {k: X.to(run_device) for k, X in zip(modelnet.encoders.keys(), Xs)}
+                y  = y.to(run_device)
+                logits = modelnet(Xs)
                 t1,t5 = topk_accuracy(logits,y,(1,5))
                 block_top1.append(t1); block_top5.append(t5)
         Top_1.append(np.mean(block_top1))
