@@ -20,7 +20,6 @@
 
 # === Standard libraries ===
 import os
-import sys
 
 # === Third-party libraries ===
 import numpy as np
