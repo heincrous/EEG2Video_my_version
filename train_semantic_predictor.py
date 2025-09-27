@@ -14,16 +14,16 @@ import models
 # ==========================================
 # Config
 # ==========================================
-batch_size   = 128
+batch_size   = 256
 num_epochs   = 50
 lr           = 0.0005
 C            = 62
 T            = 5
 run_device   = "cuda"
 
-emb_dim_segments = 128
-emb_dim_DE       = 64
-emb_dim_PSD      = 64
+emb_dim_segments = 256
+emb_dim_DE       = 128
+emb_dim_PSD      = 128
 
 # Choose: "segments", "DE", "PSD", or "fusion"
 FEATURE_TYPE     = "DE"
