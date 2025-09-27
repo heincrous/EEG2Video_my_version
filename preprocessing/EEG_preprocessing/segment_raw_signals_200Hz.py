@@ -26,7 +26,7 @@ import numpy as np
 from tqdm import tqdm
 
 # === Repo imports ===
-from core_files.gt_label import GT_LABEL   # shape (7,40), values 0–39
+from core.gt_label import GT_LABEL   # shape (7,40), values 0–39
 
 
 # ==========================================
