@@ -116,7 +116,10 @@ All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
 # ==========================================
 # Main
 # ==========================================
-sub_list = os.listdir("/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s")
+all_subs = os.listdir("/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s")
+print("Available subjects:", all_subs)
+sub_choice = "sub1.npy"   # manually set here, or use input()
+sub_list = [sub_choice]
 
 All_sub_top1, All_sub_top5 = [], []
 
