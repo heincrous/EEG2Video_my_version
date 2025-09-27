@@ -25,7 +25,7 @@ import numpy as np
 from tqdm import tqdm
 
 # === Repo imports ===
-from core.DE_PSD import DE_PSD
+from EEG_preprocessing.DE_PSD import DE_PSD
 
 
 # ==========================================
