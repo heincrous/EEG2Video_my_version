@@ -38,6 +38,7 @@ class shallownet(nn.Module):
             nn.LayerNorm(out_dim),
             nn.Dropout(dropout)
         )
+        self._output_dim = out_dim   # <–– add this
 
     def forward(self, x):
         x = self.net(x)
@@ -75,6 +76,7 @@ class deepnet(nn.Module):
             nn.LayerNorm(out_dim),
             nn.Dropout(dropout)
         )
+        self._output_dim = out_dim   # <–– add this
 
     def forward(self, x):
         x = self.net(x)
@@ -105,6 +107,7 @@ class eegnet(nn.Module):
             nn.LayerNorm(out_dim),
             nn.Dropout(dropout)
         )
+        self._output_dim = out_dim   # <–– add this
 
     def forward(self, x):
         x = self.net(x)
@@ -135,6 +138,7 @@ class tsconv(nn.Module):
             nn.LayerNorm(out_dim),
             nn.Dropout(dropout)
         )
+        self._output_dim = out_dim   # <–– add this
 
     def forward(self, x):
         x = self.net(x)
@@ -251,6 +255,7 @@ class conformer(nn.Module):
             feat_dim = self.patch(torch.zeros(1,1,C,T))
             feat_dim = self.encoder(feat_dim).view(1,-1).size(1)
         self.fc = nn.Linear(feat_dim, out_dim)
+        self._output_dim = out_dim   # <–– add this
 
     def forward(self, x):
         x = self.patch(x)
@@ -275,6 +280,7 @@ class glfnet(nn.Module):
             nn.LayerNorm(out_dim),
             nn.Dropout(dropout)
         )
+        self._output_dim = out_dim   # <–– add this
 
     def forward(self, x):
         global_feature = self.globalnet(x)
@@ -301,6 +307,7 @@ class mlpnet(nn.Module):
             nn.LayerNorm(out_dim),
             nn.Dropout(dropout)
         )
+        self._output_dim = out_dim   # <–– add this
 
     def forward(self, x):
         return self.net(x)
@@ -320,6 +327,7 @@ class glfnet_mlp(nn.Module):
             nn.LayerNorm(out_dim),
             nn.Dropout(dropout)
         )
+        self._output_dim = out_dim   # <–– add this
 
     def forward(self, x):
         global_feature = self.globalnet(x)
