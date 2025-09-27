@@ -226,14 +226,26 @@ for subname in sub_list:
             val_label   = All_label[val_set_id]
             test_label  = All_label[test_set_id]
             # Scale each feature separately
+            # Scale each feature separately and reshape correctly
             for ft in train_data:
                 tr = train_data[ft].reshape(train_data[ft].shape[0], -1)
                 va = val_data[ft].reshape(val_data[ft].shape[0], -1)
                 te = test_data[ft].reshape(test_data[ft].shape[0], -1)
+
                 scaler = StandardScaler()
-                train_data[ft] = scaler.fit_transform(tr).reshape(train_data[ft].shape)
-                val_data[ft]   = scaler.transform(va).reshape(val_data[ft].shape)
-                test_data[ft]  = scaler.transform(te).reshape(test_data[ft].shape)
+                tr_scaled = scaler.fit_transform(tr)
+                va_scaled = scaler.transform(va)
+                te_scaled = scaler.transform(te)
+
+                if ft == "segments":
+                    train_data[ft] = tr_scaled.reshape(-1, 1, C, 200)
+                    val_data[ft]   = va_scaled.reshape(-1, 1, C, 200)
+                    test_data[ft]  = te_scaled.reshape(-1, 1, C, 200)
+                else:  # DE or PSD
+                    train_data[ft] = tr_scaled.reshape(-1, C, T)
+                    val_data[ft]   = va_scaled.reshape(-1, C, T)
+                    test_data[ft]  = te_scaled.reshape(-1, C, T)
+                    
             train_iter = Get_Dataloader(train_data, train_label, True, batch_size, fusion=True)
             val_iter   = Get_Dataloader(val_data,   val_label,   False, batch_size, fusion=True)
             test_iter  = Get_Dataloader(test_data,  test_label,  False, batch_size, fusion=True)
