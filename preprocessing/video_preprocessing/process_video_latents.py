@@ -33,15 +33,15 @@ from diffusers import AutoencoderKL
 # CONFIGURATION (EDITABLE PARAMETERS)
 # ==========================================
 config = {
-    "fps":          24,
-    "resize_w":     512,
-    "resize_h":     288,
+    "fps":           24,
+    "resize_w":      512,
+    "resize_h":      288,
     "target_frames": 48,   # expected clip length @ 24 fps
-    "subsample":    True,  # downsample to 6 frames (3 FPS)
-    "batch_size":   32,    # frames per VAE forward pass
+    "subsample":     True, # downsample to 6 frames (3 FPS)
+    "batch_size":    32,   # frames per VAE forward pass
 
-    "drive_root":   "/content/drive/MyDrive/EEG2Video_data",
-    "vae_path":     "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4",
+    "drive_root": "/content/drive/MyDrive/EEG2Video_data",
+    "vae_path":   "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4",
 }
 
 # Derived values
@@ -72,7 +72,7 @@ for i, b in enumerate(all_blocks):
 
 
 # ==========================================
-# Allocate subject-level array
+# Allocate block-level array
 # ==========================================
 all_latents = np.zeros((7, 40, 5, 6, 4, 36, 64), dtype=np.float16)
 
@@ -131,10 +131,10 @@ for block_id, block in enumerate(all_blocks):
 
 
 # ==========================================
-# Save subject-level array
+# Save block-level array
 # ==========================================
 save_path = os.path.join(out_dir, "Video_latents.npy")
 np.save(save_path, all_latents)
-print(f"\nSaved subject-level latents → {save_path}, shape {all_latents.shape}")
+print(f"\nSaved block-level latents → {save_path}, shape {all_latents.shape}")
 
 print("\nProcessing complete.")
