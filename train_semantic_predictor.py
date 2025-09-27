@@ -8,6 +8,7 @@ from torch import nn
 from torch.utils import data
 from sklearn.preprocessing import StandardScaler
 import torch.nn.functional as F
+from einops import rearrange
 import models
 
 # ==========================================
@@ -285,12 +286,25 @@ def load_subject_data(subname, feature_type):
         for ft in FEATURE_PATHS:
             path = os.path.join(FEATURE_PATHS[ft], subname)
             arr = np.load(path)
-            feats[ft] = arr.reshape(-1, arr.shape[-1])
+            if ft in ["DE", "PSD"]:
+                arr = arr.reshape(-1, 62 * 5)   # 2800 × 310
+            elif ft == "segments":
+                # [7,40,5,62,400] → split 400 into 2×200 windows → [2800, 62*200]
+                arr = rearrange(arr, "a b c d (w t) -> (a b c w) d t", w=2, t=200)
+                arr = arr.reshape(arr.shape[0], 62 * 200)
+            feats[ft] = arr
         return feats
     else:
         path = os.path.join(FEATURE_PATHS[feature_type], subname)
         arr = np.load(path)
-        return arr.reshape(-1, arr.shape[-1])
+        if feature_type in ["DE", "PSD"]:
+            arr = arr.reshape(-1, 62 * 5)
+        elif feature_type == "segments":
+            arr = rearrange(arr, "a b c d (w t) -> (a b c w) d t", w=2, t=200)
+            arr = arr.reshape(arr.shape[0], 62 * 200)
+        else:
+            arr = arr.reshape(-1, arr.shape[-1])
+        return arr
 
 # ==========================================
 # Main
@@ -333,7 +347,7 @@ for subname in sub_list:
         feat_len     = features_all.shape[0]
 
     # Make sure length is divisible by 7
-    samples_per_block = 400        # always 400 per block
+    samples_per_block = 400
     valid_len = samples_per_block * 7  # 2800
 
     if FEATURE_TYPE == "fusion":
@@ -377,4 +391,3 @@ for subname in sub_list:
     modelnet = train(modelnet, train_iter, val_iter, test_iter,
                      num_epochs, lr, run_device,
                      fusion=(FEATURE_TYPE=="fusion"), subname=subname)
-
