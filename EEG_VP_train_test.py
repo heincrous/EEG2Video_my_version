@@ -1,5 +1,5 @@
 # ==========================================
-# EEG classification (single feature or fusion)
+# EEG classification (single, multi, or fusion)
 # ==========================================
 import os, random
 import numpy as np
@@ -13,21 +13,21 @@ import models
 # ==========================================
 # Config
 # ==========================================
-batch_size   = 256
-num_epochs   = 50
-lr           = 0.001
-C            = 62
-T            = 5
-run_device   = "cuda"
+batch_size    = 256
+num_epochs    = 50
+lr            = 0.001
+C             = 62
+T             = 5
+run_device    = "cuda"
 
 emb_dim_segments = 128
 emb_dim_DE       = 64
 emb_dim_PSD      = 64
 
-# Choose: "segments", "DE", "PSD", or "fusion"
-FEATURE_TYPE = "segments"
-USE_ALL_SUBJECTS = False        # False = only sub1, True = all subjects
-LOSS_TYPE    = "crossentropy"
+# Choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
+FEATURE_TYPES    = ["segments"]
+USE_ALL_SUBJECTS = False
+LOSS_TYPE        = "crossentropy"
 
 USE_VAR_REG = False
 VAR_LAMBDA  = 0.01
@@ -51,19 +51,18 @@ class FusionNet(nn.Module):
     def __init__(self, encoders, num_classes=40):
         super().__init__()
         self.encoders = nn.ModuleDict(encoders)
-        # each encoder outputs 40 logits
-        total_dim = len(encoders) * num_classes
+        total_dim     = len(encoders) * num_classes
         self.classifier = nn.Linear(total_dim, num_classes)
 
     def forward(self, inputs):
         feats = []
         for name, enc in self.encoders.items():
-            feats.append(enc(inputs[name]))   # each is [batch, 40]
+            feats.append(enc(inputs[name]))
         fused = torch.cat(feats, dim=-1)
         return self.classifier(fused)
 
 # ==========================================
-# Dataset wrapper
+# Dataset wrappers
 # ==========================================
 class FusionDataset(data.Dataset):
     def __init__(self, features_dict, labels):
@@ -77,8 +76,8 @@ class FusionDataset(data.Dataset):
 # ==========================================
 # Utilities
 # ==========================================
-def Get_Dataloader(features, labels, istrain, batch_size, fusion=False):
-    if fusion:
+def Get_Dataloader(features, labels, istrain, batch_size, multi=False):
+    if multi:
         return data.DataLoader(FusionDataset(features, labels), batch_size, shuffle=istrain)
     else:
         features = torch.tensor(features, dtype=torch.float32)
@@ -90,12 +89,12 @@ def cal_accuracy(y_hat, y):
         y_hat = torch.argmax(y_hat, axis=1)
     return (y_hat == y).sum()
 
-def evaluate_accuracy_gpu(net, data_iter, device, fusion=False):
+def evaluate_accuracy_gpu(net, data_iter, device, multi=False):
     net.eval()
     correct, total = 0, 0
     with torch.no_grad():
         for X, y in data_iter:
-            if fusion:
+            if multi:
                 X = {ft: X[ft].to(device) for ft in X}
             else:
                 X = X.to(device)
@@ -115,7 +114,7 @@ def topk_accuracy(output, target, topk=(1,5)):
 # ==========================================
 # Training loop
 # ==========================================
-def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=False):
+def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, multi=False):
     def init_weights(m):
         if isinstance(m, (nn.Linear, nn.Conv2d)):
             nn.init.xavier_uniform_(m.weight)
@@ -131,7 +130,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=F
         net.train()
         total_loss, correct, total = 0, 0, 0
         for X, y in train_iter:
-            if fusion:
+            if multi:
                 X = {ft: X[ft].to(device) for ft in X}
             else:
                 X = X.to(device)
@@ -164,12 +163,12 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=F
             correct += cal_accuracy(y_hat, y)
             total   += y.size(0)
 
-        val_acc = evaluate_accuracy_gpu(net, val_iter, device, fusion=fusion)
+        val_acc = evaluate_accuracy_gpu(net, val_iter, device, multi=multi)
         if val_acc > best_val_acc:
             best_val_acc, best_state = val_acc, net.state_dict()
 
         if epoch % 3 == 0:
-            test_acc = evaluate_accuracy_gpu(net, test_iter, device, fusion=fusion)
+            test_acc = evaluate_accuracy_gpu(net, test_iter, device, multi=multi)
             print(f"[{epoch+1}] loss={total_loss/total:.3f}, train_acc={correct/total:.3f}, val_acc={val_acc:.3f}, test_acc={test_acc:.3f}")
 
     if best_state: net.load_state_dict(best_state)
@@ -183,113 +182,77 @@ All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
 # ==========================================
 # Main
 # ==========================================
-if FEATURE_TYPE == "fusion":
-    sub_list = os.listdir(FEATURE_PATHS["DE"]) if USE_ALL_SUBJECTS else ["sub1.npy"]
-else:
-    sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPE]) if USE_ALL_SUBJECTS else ["sub1.npy"]
-
+sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else ["sub1.npy"]
 All_sub_top1, All_sub_top5 = [], []
 
 for subname in sub_list:
     # ----- Load -----
-    if FEATURE_TYPE == "fusion":
-        raw_data = {}
-        for ft in ["segments", "DE", "PSD"]:
-            raw_data[ft] = np.load(os.path.join(FEATURE_PATHS[ft], subname))
-    else:
-        load_npy = np.load(os.path.join(FEATURE_PATHS[FEATURE_TYPE], subname))
+    raw_data = {}
+    for ft in FEATURE_TYPES:
+        raw_data[ft] = np.load(os.path.join(FEATURE_PATHS[ft], subname))
 
     # ----- Reshape -----
     def reshape(ft, arr):
-        if ft == "DE" or ft == "PSD":
+        if ft in ["DE","PSD"]:
             return rearrange(arr, "a b c d e f -> a (b c d) e f")
         elif ft == "segments":
             return rearrange(arr, "a b c d (w t) -> a (b c w) d t", w=2)
         else:
             raise ValueError
-    if FEATURE_TYPE == "fusion":
-        All_train = {ft: reshape(ft, raw_data[ft]) for ft in raw_data}
-    else:
-        All_train = reshape(FEATURE_TYPE, load_npy)
+    All_train = {ft: reshape(ft, raw_data[ft]) for ft in raw_data}
 
     Top_1, Top_K = [], []
-
     for test_set_id in range(7):
         val_set_id = (test_set_id - 1) % 7
 
-        if FEATURE_TYPE == "fusion":
-            train_data, val_data, test_data = {}, {}, {}
-            for ft in All_train:
-                train_data[ft] = np.concatenate([All_train[ft][i] for i in range(7) if i not in [test_set_id, val_set_id]])
-                val_data[ft]   = All_train[ft][val_set_id]
-                test_data[ft]  = All_train[ft][test_set_id]
-            train_label = np.concatenate([All_label[i] for i in range(7) if i not in [test_set_id, val_set_id]])
-            val_label   = All_label[val_set_id]
-            test_label  = All_label[test_set_id]
-            # Scale each feature separately
-            # Scale each feature separately and reshape correctly
-            for ft in train_data:
-                tr = train_data[ft].reshape(train_data[ft].shape[0], -1)
-                va = val_data[ft].reshape(val_data[ft].shape[0], -1)
-                te = test_data[ft].reshape(test_data[ft].shape[0], -1)
+        train_data, val_data, test_data = {}, {}, {}
+        for ft in All_train:
+            train_data[ft] = np.concatenate([All_train[ft][i] for i in range(7) if i not in [test_set_id,val_set_id]])
+            val_data[ft]   = All_train[ft][val_set_id]
+            test_data[ft]  = All_train[ft][test_set_id]
 
-                scaler = StandardScaler()
-                tr_scaled = scaler.fit_transform(tr)
-                va_scaled = scaler.transform(va)
-                te_scaled = scaler.transform(te)
+        train_label = np.concatenate([All_label[i] for i in range(7) if i not in [test_set_id,val_set_id]])
+        val_label   = All_label[val_set_id]
+        test_label  = All_label[test_set_id]
 
-                if ft == "segments":
-                    train_data[ft] = tr_scaled.reshape(-1, 1, C, 200)
-                    val_data[ft]   = va_scaled.reshape(-1, 1, C, 200)
-                    test_data[ft]  = te_scaled.reshape(-1, 1, C, 200)
-                else:  # DE or PSD
-                    train_data[ft] = tr_scaled.reshape(-1, C, T)
-                    val_data[ft]   = va_scaled.reshape(-1, C, T)
-                    test_data[ft]  = te_scaled.reshape(-1, C, T)
-
-            train_iter = Get_Dataloader(train_data, train_label, True, batch_size, fusion=True)
-            val_iter   = Get_Dataloader(val_data,   val_label,   False, batch_size, fusion=True)
-            test_iter  = Get_Dataloader(test_data,  test_label,  False, batch_size, fusion=True)
-            encoders = {ft: MODEL_MAP[ft]() for ft in All_train}
-            emb_dims = {"segments": emb_dim_segments, "DE": emb_dim_DE, "PSD": emb_dim_PSD}
-            # fusion model just concatenates each encoder's logits
-            modelnet = FusionNet(encoders, num_classes=40)
-
-        else:
-            train_data = np.concatenate([All_train[i] for i in range(7) if i not in [test_set_id, val_set_id]])
-            val_data   = All_train[val_set_id]
-            test_data  = All_train[test_set_id]
-            train_label= np.concatenate([All_label[i] for i in range(7) if i not in [test_set_id, val_set_id]])
-            val_label  = All_label[val_set_id]
-            test_label = All_label[test_set_id]
-            # Scale
-            tr = train_data.reshape(train_data.shape[0], -1)
-            va = val_data.reshape(val_data.shape[0], -1)
-            te = test_data.reshape(test_data.shape[0], -1)
+        # Scale each feature separately
+        for ft in train_data:
+            tr = train_data[ft].reshape(train_data[ft].shape[0], -1)
+            va = val_data[ft].reshape(val_data[ft].shape[0], -1)
+            te = test_data[ft].reshape(test_data[ft].shape[0], -1)
             scaler = StandardScaler()
-            train_data = scaler.fit_transform(tr).reshape(train_data.shape)
-            val_data   = scaler.transform(va).reshape(val_data.shape)
-            test_data  = scaler.transform(te).reshape(test_data.shape)
-            # Reshape back
-            if FEATURE_TYPE in ["DE", "PSD"]:
-                train_data = train_data.reshape(-1, C, T)
-                val_data   = val_data.reshape(-1, C, T)
-                test_data  = test_data.reshape(-1, C, T)
-            elif FEATURE_TYPE == "segments":
-                train_data = train_data.reshape(-1, 1, C, 200)
-                val_data   = val_data.reshape(-1, 1, C, 200)
-                test_data  = test_data.reshape(-1, 1, C, 200)
-            train_iter = Get_Dataloader(train_data, train_label, True, batch_size)
-            val_iter   = Get_Dataloader(val_data,   val_label,   False, batch_size)
-            test_iter  = Get_Dataloader(test_data,  test_label,  False, batch_size)
-            modelnet   = MODEL_MAP[FEATURE_TYPE]()
+            tr_scaled = scaler.fit_transform(tr)
+            va_scaled = scaler.transform(va)
+            te_scaled = scaler.transform(te)
+            if ft == "segments":
+                train_data[ft] = tr_scaled.reshape(-1, 1, C, 200)
+                val_data[ft]   = va_scaled.reshape(-1, 1, C, 200)
+                test_data[ft]  = te_scaled.reshape(-1, 1, C, 200)
+            else:
+                train_data[ft] = tr_scaled.reshape(-1, C, T)
+                val_data[ft]   = va_scaled.reshape(-1, C, T)
+                test_data[ft]  = te_scaled.reshape(-1, C, T)
+
+        multi = len(FEATURE_TYPES) > 1
+        if multi:
+            train_iter = Get_Dataloader(train_data, train_label, True, batch_size, multi=True)
+            val_iter   = Get_Dataloader(val_data,   val_label,   False, batch_size, multi=True)
+            test_iter  = Get_Dataloader(test_data,  test_label,  False, batch_size, multi=True)
+            encoders   = {ft: MODEL_MAP[ft]() for ft in FEATURE_TYPES}
+            modelnet   = FusionNet(encoders, num_classes=40)
+        else:
+            ft = FEATURE_TYPES[0]
+            train_iter = Get_Dataloader(train_data[ft], train_label, True, batch_size)
+            val_iter   = Get_Dataloader(val_data[ft],   val_label,   False, batch_size)
+            test_iter  = Get_Dataloader(test_data[ft],  test_label,  False, batch_size)
+            modelnet   = MODEL_MAP[ft]()
 
         # Train & evaluate
-        modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr, run_device, fusion=(FEATURE_TYPE=="fusion"))
+        modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr, run_device, multi=multi)
         block_top1, block_top5 = [], []
         with torch.no_grad():
             for X, y in test_iter:
-                if FEATURE_TYPE=="fusion":
+                if multi:
                     X = {ft: X[ft].to(run_device) for ft in X}
                 else:
                     X = X.to(run_device)
