@@ -1,35 +1,37 @@
 # ==========================================
-# Full Inference (Subject1, DE features, Block7 test set, 5 samples, scaler refit + captions)
+# Full Inference (configurable, EEG → Video via semantic predictor + diffusion)
 # ==========================================
 import os, gc, glob, random, imageio, torch, shutil, numpy as np
 from sklearn.preprocessing import StandardScaler
 from diffusers import AutoencoderKL, DDIMScheduler
+from einops import rearrange
 
-from core_files.unet import UNet3DConditionModel
+from core.unet import UNet3DConditionModel
 from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
-from training.train_semantic_final import ReshapeWrapper, SemanticPredictor
+from train_semantic_predictor import SemanticPredictor, FusionNet, MODEL_MAP, FEATURE_PATHS
 
-# --- Paths ---
-drive_root            = "/content/drive/MyDrive/EEG2Video_data/processed"
-pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
-finetuned_model_path  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final"
-semantic_ckpt_dir     = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
+# ==========================================
+# Config
+# ==========================================
+FEATURE_TYPE         = "DE"   # "segments", "DE", "PSD", or "fusion"
+SUBJECT              = "sub1.npy"
+CHECKPOINT_DIR       = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor"
+PRETRAINED_SD_PATH   = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
+FINETUNED_SD_PATH    = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final"
+DATA_ROOT            = "/content/drive/MyDrive/EEG2Video_data/processed"
+OUTPUT_DIR           = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-blip_text_root        = os.path.join(drive_root, "BLIP_text")
-video_mp4_root        = os.path.join(drive_root, "Video_mp4")
-output_dir            = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference"
-os.makedirs(output_dir, exist_ok=True)
-
-# --- Device + mem cleanup ---
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-gc.collect()
-torch.cuda.empty_cache()
 device = "cuda"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+gc.collect(); torch.cuda.empty_cache()
 
-# === Select semantic predictor checkpoint ===
-ckpts = sorted(glob.glob(os.path.join(semantic_ckpt_dir, "semantic_predictor_sub1_de*.pt")))
+# ==========================================
+# Select semantic checkpoint
+# ==========================================
+ckpts = sorted(glob.glob(os.path.join(CHECKPOINT_DIR, f"semantic_predictor_{FEATURE_TYPE}_sub1*.pt")))
 if not ckpts:
-    raise FileNotFoundError("No DE checkpoints for sub1 found")
+    raise FileNotFoundError(f"No checkpoints found for {FEATURE_TYPE}")
 print("Available checkpoints:")
 for i, p in enumerate(ckpts):
     print(f"[{i}] {os.path.basename(p)}")
@@ -37,13 +39,35 @@ choice = int(input("Select checkpoint index: "))
 semantic_ckpt = ckpts[choice]
 print("Using checkpoint:", semantic_ckpt)
 
-# === Load diffusion backbone ===
-vae = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae").to(device, dtype=torch.float32)
-scheduler = DDIMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
-unet = UNet3DConditionModel.from_pretrained_2d(pretrained_model_path, subfolder="unet").to(device, dtype=torch.float32)
+ckpt_data = torch.load(semantic_ckpt, map_location=device)
+input_dim = ckpt_data["input_dim"]
+
+# ==========================================
+# Build semantic predictor
+# ==========================================
+if FEATURE_TYPE == "fusion":
+    encoders = {
+        "DE": MODEL_MAP["DE"](),
+        "PSD": MODEL_MAP["PSD"](),
+        "segments": MODEL_MAP["segments"](),
+    }
+    encoder = FusionNet(encoders)
+else:
+    encoder = MODEL_MAP[FEATURE_TYPE]()
+
+model = SemanticPredictor(encoder, input_dim).to(device)
+model.load_state_dict(ckpt_data["state_dict"])
+model.eval()
+
+# ==========================================
+# Load diffusion backbone
+# ==========================================
+vae = AutoencoderKL.from_pretrained(PRETRAINED_SD_PATH, subfolder="vae").to(device, dtype=torch.float32)
+scheduler = DDIMScheduler.from_pretrained(PRETRAINED_SD_PATH, subfolder="scheduler")
+unet = UNet3DConditionModel.from_pretrained_2d(PRETRAINED_SD_PATH, subfolder="unet").to(device, dtype=torch.float32)
 
 pipe = TuneAVideoPipeline.from_pretrained(
-    finetuned_model_path,
+    FINETUNED_SD_PATH,
     vae=vae,
     unet=unet,
     scheduler=scheduler,
@@ -51,30 +75,44 @@ pipe = TuneAVideoPipeline.from_pretrained(
 ).to(device)
 pipe.enable_vae_slicing()
 
-# === Build semantic predictor ===
-in_dim = 62*5
-out_shape = (77,768)
-model = ReshapeWrapper(SemanticPredictor(in_dim=in_dim, out_shape=out_shape), n_tokens=77).to(device)
-model.load_state_dict(torch.load(semantic_ckpt, map_location=device)["state_dict"])
-model.eval()
+# ==========================================
+# Load EEG features + scale
+# ==========================================
+def load_features(subname, ft):
+    path = os.path.join(FEATURE_PATHS[ft], subname)
+    arr = np.load(path)
+    if ft in ["DE", "PSD"]:
+        arr = arr.reshape(-1, 62, 5)   # (2800, 62, 5)
+    elif ft == "segments":
+        arr = rearrange(arr, "a b c d (w t) -> (a b c w) d t", w=2, t=200)  # (2800, 62, 200)
+    return arr
 
-# === Load DE features and rebuild scaler ===
-subj = "sub1"
-de_path = os.path.join(drive_root, "EEG_DE", f"{subj}.npy")   # shape (7,40,5,62,5)
-de = np.load(de_path)
+if FEATURE_TYPE == "fusion":
+    feats = {ft: load_features(SUBJECT, ft) for ft in FEATURE_PATHS}
+    feat_len = next(iter(feats.values())).shape[0]
+else:
+    feats = load_features(SUBJECT, FEATURE_TYPE)
+    feat_len = feats.shape[0]
 
-# Fit scaler on blocks 1–6 (indices 0–5)
-trainval = de[:6].reshape(-1, 62*5)
-scaler = StandardScaler().fit(trainval)
+samples_per_block = 400
+train_idx = np.arange(0, 6 * samples_per_block)   # blocks 0-5
+test_idx  = np.arange(6 * samples_per_block, 7 * samples_per_block)  # block 6
 
-# Prepare block 7 (index 6) as test set
-block7 = de[6].reshape(-1, 62*5)
-samples = scaler.transform(block7)
+if FEATURE_TYPE == "fusion":
+    feats_test = {}
+    for ft, arr in feats.items():
+        scaler = StandardScaler().fit(arr[train_idx].reshape(len(train_idx), -1))
+        feats_test[ft] = scaler.transform(arr[test_idx].reshape(len(test_idx), -1)).reshape(arr[test_idx].shape)
+    test_data = feats_test
+else:
+    scaler = StandardScaler().fit(feats[train_idx].reshape(len(train_idx), -1))
+    test_data = scaler.transform(feats[test_idx].reshape(len(test_idx), -1)).reshape(feats[test_idx].shape)
 
-# === Helper: run inference for one sample ===
-def run_inference(eeg_feat, clip_name, block="Block7", class_idx=None, clip_idx=None):
+# ==========================================
+# Inference helper
+# ==========================================
+def run_inference(eeg_feat, clip_name):
     eeg_tensor = torch.tensor(eeg_feat, dtype=torch.float32).unsqueeze(0).to(device)
-
     with torch.no_grad():
         semantic_pred = model(eeg_tensor)
     negative = semantic_pred.mean(dim=0, keepdim=True).float().to(device)
@@ -96,33 +134,26 @@ def run_inference(eeg_feat, clip_name, block="Block7", class_idx=None, clip_idx=
     if frames.shape[-1] > 3: frames = frames[...,:3]
     elif frames.shape[-1] == 1: frames = np.repeat(frames, 3, axis=-1)
 
-    inf_path = os.path.join(output_dir, f"{clip_name}_inference.mp4")
+    inf_path = os.path.join(OUTPUT_DIR, f"{clip_name}_inference.mp4")
     writer = imageio.get_writer(inf_path, fps=fps, codec="libx264")
     for f in frames: writer.append_data(f)
     writer.close()
-
-    # Copy ground-truth video and print caption if exists
-    if class_idx is not None and clip_idx is not None:
-        fname = f"class{class_idx:02d}_clip{clip_idx:02d}"
-        gt_path = os.path.join(video_mp4_root, block, fname + ".mp4")
-        if os.path.exists(gt_path):
-            shutil.copy(gt_path, os.path.join(output_dir, f"{clip_name}_groundtruth.mp4"))
-
-        cap_path = os.path.join(blip_text_root, block, fname + ".txt")
-        if os.path.exists(cap_path):
-            with open(cap_path,"r") as f:
-                caption = f.read().strip()
-            print("BLIP caption:", caption)
-
     print("Saved inference video:", inf_path)
 
-# === Pick 5 random samples ===
-for n in range(5):
-    idx = random.randrange(len(samples))
-    eeg_feat = samples[idx]
+# ==========================================
+# Run 5 random samples
+# ==========================================
+if FEATURE_TYPE == "fusion":
+    num_samples = next(iter(test_data.values())).shape[0]
+else:
+    num_samples = test_data.shape[0]
 
-    # map idx back to class and clip
-    class_idx = idx // 5
-    clip_idx  = idx % 5 + 1
-    clip_name = f"{subj}_block7_class{class_idx:02d}_clip{clip_idx:02d}"
-    run_inference(eeg_feat, clip_name, block="Block7", class_idx=class_idx, clip_idx=clip_idx)
+for n in range(5):
+    idx = random.randrange(num_samples)
+    if FEATURE_TYPE == "fusion":
+        eeg_feat = {ft: test_data[ft][idx] for ft in test_data}
+    else:
+        eeg_feat = test_data[idx]
+
+    clip_name = f"{SUBJECT.replace('.npy','')}_block7_sample{idx}"
+    run_inference(eeg_feat, clip_name)

@@ -14,19 +14,19 @@ import models
 # ==========================================
 # Config
 # ==========================================
-batch_size   = 256
-num_epochs   = 50
-lr           = 0.0005
-C            = 62
-T            = 5
-run_device   = "cuda"
+batch_size    = 256
+num_epochs    = 200
+lr            = 0.0005
+C             = 62
+T             = 5
+run_device    = "cuda"
 
 emb_dim_segments = 256
 emb_dim_DE       = 128
 emb_dim_PSD      = 128
 
-# Choose: "segments", "DE", "PSD", or "fusion"
-FEATURE_TYPE     = "DE"
+# Choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
+FEATURE_TYPES    = ["DE"]
 USE_ALL_SUBJECTS = False
 
 # Loss type: "mse", "cosine", "mse+cosine", "contrastive"
@@ -53,10 +53,10 @@ MODEL_MAP = {
 # Fusion model wrapper
 # ==========================================
 class FusionNet(nn.Module):
-    def __init__(self, encoders):
+    def __init__(self, encoders, total_dim):
         super().__init__()
         self.encoders = nn.ModuleDict(encoders)
-        self.total_dim = sum([e.out_dim for e in encoders.values()])
+        self.total_dim = total_dim
     def forward(self, inputs):
         feats = []
         for name, enc in self.encoders.items():
@@ -88,7 +88,7 @@ class SemanticPredictor(nn.Module):
         self.encoder = encoder
         self.head = SemanticMLP(input_dim)
     def forward(self, x):
-        feats = self.encoder(x)
+        feats = self.encoder(x) if isinstance(x, dict) else self.encoder(x)
         return self.head(feats)
 
 # ==========================================
@@ -116,8 +116,8 @@ class SimpleDataset(data.Dataset):
                torch.tensor(self.targets[idx], dtype=torch.float32), \
                torch.tensor(self.labels[idx], dtype=torch.long)
 
-def Get_Dataloader(features, targets, labels, istrain, batch_size, fusion=False):
-    if fusion:
+def Get_Dataloader(features, targets, labels, istrain, batch_size, multi=False):
+    if multi:
         return data.DataLoader(FusionDataset(features, targets, labels), batch_size, shuffle=istrain)
     else:
         return data.DataLoader(SimpleDataset(features, targets, labels), batch_size, shuffle=istrain)
@@ -136,7 +136,7 @@ def contrastive_loss_fn(y_hat, y, margin=1.0):
 # ==========================================
 # Training loop
 # ==========================================
-def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=False,
+def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, multi=False,
           subname="subject"):
     def init_weights(m):
         if isinstance(m, (nn.Linear, nn.Conv2d)):
@@ -152,7 +152,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=F
         net.train()
         total_loss = 0
         for batch in train_iter:
-            if fusion:
+            if multi:
                 X, y, y_class = batch
                 X = {ft: X[ft].to(device) for ft in X}
             else:
@@ -178,54 +178,43 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=F
                 raise ValueError(f"Unknown LOSS_TYPE {LOSS_TYPE}")
 
             if USE_VAR_REG:
-                pred_vars, target_vars = [], []
-                for cls in torch.unique(y_class):
-                    mask = (y_class == cls)
-                    if mask.sum() > 1:
-                        pred_vars.append(torch.var(y_hat[mask], dim=0).mean())
-                        target_vars.append(torch.var(y[mask], dim=0).mean())
-                if pred_vars:
-                    pred_var   = torch.stack(pred_vars).mean()
-                    target_var = torch.stack(target_vars).mean()
-                    var_ratio  = pred_var / (target_var + 1e-8)
-                    loss -= VAR_LAMBDA * var_ratio
+                loss -= VAR_LAMBDA * torch.var(y_hat, dim=0).mean()
 
             loss.backward()
             optimizer.step()
             total_loss += loss.item() * y.size(0)
 
-        val_mse = evaluate_mse(net, val_iter, device, fusion)
+        val_mse = evaluate_mse(net, val_iter, device, multi)
         if val_mse < best_val:
             best_val, best_state = val_mse, net.state_dict()
 
         if epoch % 3 == 0:
-            test_mse, test_cos, fisher_score = evaluate(net, test_iter, device, fusion)
+            test_mse, test_cos, fisher_score = evaluate(net, test_iter, device, multi)
             print(f"[{epoch+1}] train_loss={total_loss/len(train_iter.dataset):.4f}, "
                   f"val_mse={val_mse:.4f}, test_mse={test_mse:.4f}, "
                   f"test_cos={test_cos:.4f}, fisher_score={fisher_score:.4f}")
 
     if best_state:
         net.load_state_dict(best_state)
-        save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor"
+        save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
         os.makedirs(save_dir, exist_ok=True)
-        fname = f"semantic_predictor_{FEATURE_TYPE}_{subname.replace('.npy','')}.pt"
+        fname = f"semantic_predictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}.pt"
         torch.save({
             "state_dict": net.state_dict(),
-            "feature_type": FEATURE_TYPE,
-            "input_dim": net.head.mlp[0].in_features,
+            "feature_types": FEATURE_TYPES,
         }, os.path.join(save_dir, fname))
     return net
 
 # ==========================================
 # Evaluation
 # ==========================================
-def evaluate_mse(net, data_iter, device, fusion=False):
+def evaluate_mse(net, data_iter, device, multi=False):
     net.eval()
     mse_loss = nn.MSELoss(reduction="sum")
     total, count, dim = 0, 0, None
     with torch.no_grad():
         for batch in data_iter:
-            if fusion:
+            if multi:
                 X, y, _ = batch
                 X = {ft: X[ft].to(device) for ft in X}
             else:
@@ -238,7 +227,7 @@ def evaluate_mse(net, data_iter, device, fusion=False):
             dim = y.size(1)
     return total / (count * dim)
 
-def evaluate(net, data_iter, device, fusion=False):
+def evaluate(net, data_iter, device, multi=False):
     net.eval()
     cos = nn.CosineSimilarity(dim=-1)
     total_mse, total_cos, count, dim = 0, 0, 0, None
@@ -246,7 +235,7 @@ def evaluate(net, data_iter, device, fusion=False):
 
     with torch.no_grad():
         for batch in data_iter:
-            if fusion:
+            if multi:
                 X, y, _ = batch
                 X = {ft: X[ft].to(device) for ft in X}
             else:
@@ -280,33 +269,21 @@ def evaluate(net, data_iter, device, fusion=False):
 # ==========================================
 # Helpers for data loading
 # ==========================================
-def load_subject_data(subname, feature_type):
-    if feature_type == "fusion":
-        feats = {}
-        for ft in FEATURE_PATHS:
-            path = os.path.join(FEATURE_PATHS[ft], subname)
-            arr = np.load(path)
-            if ft in ["DE", "PSD"]:
-                # [7,40,5,2,62,5] -> [2800, 62, 5]
-                arr = arr.reshape(-1, 62, 5)
-            elif ft == "segments":
-                # [7,40,5,62,400] -> [2800, 62, 200]
-                arr = rearrange(arr, "a b c d (w t) -> (a b c w) d t", w=2, t=200)
-            feats[ft] = arr
-        return feats
-    else:
-        path = os.path.join(FEATURE_PATHS[feature_type], subname)
+def load_subject_data(subname, feature_types):
+    feats = {}
+    for ft in feature_types:
+        path = os.path.join(FEATURE_PATHS[ft], subname)
         arr = np.load(path)
-        if feature_type in ["DE", "PSD"]:
+        if ft in ["DE","PSD"]:
             arr = arr.reshape(-1, 62, 5)
-        elif feature_type == "segments":
+        elif ft == "segments":
             arr = rearrange(arr, "a b c d (w t) -> (a b c w) d t", w=2, t=200)
-        return arr
+        feats[ft] = arr
+    return feats
 
 # ==========================================
 # Main
 # ==========================================
-# --- Load CLIP embeddings and double to match 2 EEG windows per clip ---
 clip_embeddings = np.load(CLIP_EMB_PATH)               # [7,40,5,77,768]
 clip_embeddings = clip_embeddings.reshape(-1, 77*768)  # [1400, 77*768]
 clip_embeddings = np.repeat(clip_embeddings, 2, axis=0)  # [2800, 77*768]
@@ -314,55 +291,43 @@ clip_embeddings = np.repeat(clip_embeddings, 2, axis=0)  # [2800, 77*768]
 labels_block = np.repeat(np.arange(40), 5*2)
 labels_all   = np.tile(labels_block, 7)
 
-if FEATURE_TYPE == "fusion":
-    sub_list = os.listdir(FEATURE_PATHS["DE"]) if USE_ALL_SUBJECTS else ["sub1.npy"]
-else:
-    sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPE]) if USE_ALL_SUBJECTS else ["sub1.npy"]
+sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else ["sub1.npy"]
 
 for subname in sub_list:
-    print(f"\n=== Training subject {subname} ===")
+    print(f"\n=== Training subject {subname} with {FEATURE_TYPES} ===")
 
     # --- Encoder ---
-    if FEATURE_TYPE == "fusion":
-        encoders = {
-            "DE": models.glfnet_mlp(out_dim=emb_dim_DE, emb_dim=emb_dim_DE, input_dim=62*5),
-            "PSD": models.glfnet_mlp(out_dim=emb_dim_PSD, emb_dim=emb_dim_PSD, input_dim=62*5),
-            "segments": models.glfnet(out_dim=emb_dim_segments, emb_dim=emb_dim_segments, C=62, T=200)
-        }
-        encoder = FusionNet(encoders)
-        input_dim = encoder.total_dim
+    if len(FEATURE_TYPES) > 1:
+        encoders = {ft: MODEL_MAP[ft]() for ft in FEATURE_TYPES}
+        total_dim = sum([encoders[ft].out_dim for ft in encoders])
+        encoder = FusionNet(encoders, total_dim)
+        input_dim = total_dim
+        multi = True
     else:
-        encoder = MODEL_MAP[FEATURE_TYPE]()
-        input_dim = emb_dim_DE if FEATURE_TYPE=="DE" else emb_dim_PSD if FEATURE_TYPE=="PSD" else emb_dim_segments
+        ft = FEATURE_TYPES[0]
+        encoder = MODEL_MAP[ft]()
+        input_dim = encoder.out_dim
+        multi = False
 
     # --- Load features ---
-    if FEATURE_TYPE == "fusion":
-        features_all = load_subject_data(subname, "fusion")
-        feat_len     = next(iter(features_all.values())).shape[0]
-    else:
-        features_all = load_subject_data(subname, FEATURE_TYPE)
-        feat_len     = features_all.shape[0]
+    features_all = load_subject_data(subname, FEATURE_TYPES)
+    feat_len = next(iter(features_all.values())).shape[0]
 
-    # Make sure length is divisible by 7
-    samples_per_block = 400        # always 400 per block
-    valid_len = samples_per_block * 7  # 2800
+    samples_per_block = 400
+    valid_len = samples_per_block * 7
 
-    if FEATURE_TYPE == "fusion":
-        for ft in features_all:
-            features_all[ft] = features_all[ft][:valid_len]
-    else:
-        features_all = features_all[:valid_len]
+    for ft in features_all:
+        features_all[ft] = features_all[ft][:valid_len]
 
     Y = clip_embeddings[:valid_len]
     L = labels_all[:valid_len]
-    feat_len = valid_len
 
-    # Define splits AFTER trimming
+    # Define splits
     train_idx = np.arange(0, 5 * samples_per_block)
     val_idx   = np.arange(5 * samples_per_block, 6 * samples_per_block)
     test_idx  = np.arange(6 * samples_per_block, 7 * samples_per_block)
 
-    if FEATURE_TYPE == "fusion":
+    if multi:
         feats_train, feats_val, feats_test = {}, {}, {}
         for ft, arr in features_all.items():
             scaler = StandardScaler().fit(arr[train_idx].reshape(len(train_idx), -1))
@@ -371,20 +336,22 @@ for subname in sub_list:
             feats_test[ft]  = scaler.transform(arr[test_idx].reshape(len(test_idx), -1)).reshape(arr[test_idx].shape)
         X_train, X_val, X_test = feats_train, feats_val, feats_test
     else:
-        scaler = StandardScaler().fit(features_all[train_idx].reshape(len(train_idx), -1))
-        X_train = scaler.transform(features_all[train_idx].reshape(len(train_idx), -1)).reshape(features_all[train_idx].shape)
-        X_val   = scaler.transform(features_all[val_idx].reshape(len(val_idx), -1)).reshape(features_all[val_idx].shape)
-        X_test  = scaler.transform(features_all[test_idx].reshape(len(test_idx), -1)).reshape(features_all[test_idx].shape)
+        ft = FEATURE_TYPES[0]
+        arr = features_all[ft]
+        scaler = StandardScaler().fit(arr[train_idx].reshape(len(train_idx), -1))
+        X_train = scaler.transform(arr[train_idx].reshape(len(train_idx), -1)).reshape(arr[train_idx].shape)
+        X_val   = scaler.transform(arr[val_idx].reshape(len(val_idx), -1)).reshape(arr[val_idx].shape)
+        X_test  = scaler.transform(arr[test_idx].reshape(len(test_idx), -1)).reshape(arr[test_idx].shape)
 
     Y_train, Y_val, Y_test = Y[train_idx], Y[val_idx], Y[test_idx]
     L_train, L_val, L_test = L[train_idx], L[val_idx], L[test_idx]
 
-    train_iter = Get_Dataloader(X_train, Y_train, L_train, True,  batch_size, fusion=(FEATURE_TYPE=="fusion"))
-    val_iter   = Get_Dataloader(X_val,   Y_val,   L_val,   False, batch_size, fusion=(FEATURE_TYPE=="fusion"))
-    test_iter  = Get_Dataloader(X_test,  Y_test,  L_test,  False, batch_size, fusion=(FEATURE_TYPE=="fusion"))
+    train_iter = Get_Dataloader(X_train, Y_train, L_train, True,  batch_size, multi=multi)
+    val_iter   = Get_Dataloader(X_val,   Y_val,   L_val,   False, batch_size, multi=multi)
+    test_iter  = Get_Dataloader(X_test,  Y_test,  L_test,  False, batch_size, multi=multi)
 
     # --- Train semantic predictor ---
     modelnet = SemanticPredictor(encoder, input_dim)
     modelnet = train(modelnet, train_iter, val_iter, test_iter,
                      num_epochs, lr, run_device,
-                     fusion=(FEATURE_TYPE=="fusion"), subname=subname)
+                     multi=multi, subname=subname)
