@@ -25,7 +25,7 @@ emb_dim_DE = 128
 emb_dim_PSD = 128
 
 # Select feature type: "segments", "DE", or "PSD"
-FEATURE_TYPE = "segments"
+FEATURE_TYPE = "DE"
 
 # Loss type: "crossentropy", "mse", "cosine", "mse+cosine"
 LOSS_TYPE = "crossentropy"
