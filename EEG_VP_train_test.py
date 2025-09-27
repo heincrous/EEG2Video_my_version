@@ -14,13 +14,13 @@ import models
 # ==========================================
 # Config
 # ==========================================
-batch_size   = 256
+batch_size   = 1024
 num_epochs   = 50 # less epochs are better
 lr           = 0.0001
 C            = 62
 T            = 5
 run_device   = "cuda"
-emb_dim_segments = 256
+emb_dim_segments = 1024
 emb_dim_DE = 512
 emb_dim_PSD = 128
 
