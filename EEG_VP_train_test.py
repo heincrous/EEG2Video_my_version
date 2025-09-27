@@ -14,7 +14,7 @@ import models
 # ==========================================
 # Config
 # ==========================================
-batch_size   = 256
+batch_size   = 1024
 num_epochs   = 50
 lr           = 0.0001
 C            = 62
@@ -96,7 +96,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
     net.apply(init_weights)
     net.to(device)
 
-    optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=0.01)
+    optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=0) # 0.01 is also good
 
     # define base loss functions
     ce_loss   = nn.CrossEntropyLoss()
