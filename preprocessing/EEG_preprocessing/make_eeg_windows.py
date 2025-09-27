@@ -1,5 +1,5 @@
 # ==========================================
-# CREATE EEG WINDOWS FOR SEQ2SEQ INPUT
+# CREATE EEG WINDOWS
 # ==========================================
 # Input:
 #   EEG2Video_data/processed/EEG_segments/subX.npy

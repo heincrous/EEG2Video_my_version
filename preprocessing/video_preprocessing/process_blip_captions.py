@@ -1,5 +1,5 @@
 # ==========================================
-# ALIGN BLIP CAPTIONS TO CLIPS (BLOCK-LEVEL ARRAYS)
+# ALIGN BLIP CAPTIONS TO CLIPS
 # ==========================================
 # Input:
 #   EEG2Video_data/raw/BLIP-caption/Xth_10min.txt

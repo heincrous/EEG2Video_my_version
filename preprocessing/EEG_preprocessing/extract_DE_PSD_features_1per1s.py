@@ -1,5 +1,5 @@
 # ==========================================
-# EXTRACT DE/PSD FEATURES (SUBJECT-LEVEL ARRAYS)
+# EXTRACT DE/PSD FEATURES
 # ==========================================
 # Input:
 #   EEG2Video_data/processed/EEG_segments/subX.npy
