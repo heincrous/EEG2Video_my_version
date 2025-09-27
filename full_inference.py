@@ -15,7 +15,7 @@ from train_semantic_predictor import SemanticPredictor, FusionNet, MODEL_MAP, FE
 # Config (set these manually)
 # ==========================================
 SUBJECT       = "sub1.npy"          # e.g. "sub10.npy"
-FEATURE_TYPES = ["DE", "PSD"]       # e.g. ["DE"], ["segments"], ["DE","PSD"], ["segments","DE","PSD"]
+FEATURE_TYPES = ["DE"]       # e.g. ["DE"], ["segments"], ["DE","PSD"], ["segments","DE","PSD"]
 
 CHECKPOINT_DIR     = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
