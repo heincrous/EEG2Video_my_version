@@ -1,5 +1,6 @@
 # ==========================================
 # EEG classification (FusionNet with independent scalers per feature & split)
+# Segments are split into halves so all features have 400 samples/block
 # ==========================================
 import os
 import numpy as np
@@ -24,7 +25,6 @@ run_device   = "cuda"
 def Get_Dataloader(features_dict, labels, istrain, batch_size):
     tensors = {k: torch.tensor(v, dtype=torch.float32) for k, v in features_dict.items()}
     labels  = torch.tensor(labels, dtype=torch.long)
-    # Debugging: ensure same length
     lengths = [t.shape[0] for t in tensors.values()] + [labels.shape[0]]
     assert len(set(lengths)) == 1, f"Size mismatch: {lengths}"
     return data.DataLoader(data.TensorDataset(*(list(tensors.values()) + [labels])),
@@ -131,7 +131,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
 All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
 
 # ==========================================
-# Main (example with DE/PSD/segments dirs)
+# Main
 # ==========================================
 seg_root = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments"
 de_root  = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s"
@@ -142,14 +142,17 @@ sub_list = os.listdir(de_root)
 All_sub_top1, All_sub_top5 = [], []
 
 for subname in sub_list:
-    seg_npy = np.load(os.path.join(seg_root, subname))   # (40,7,5,62,400)
-    de_npy  = np.load(os.path.join(de_root,  subname))
-    psd_npy = np.load(os.path.join(psd_root, subname))
+    seg_npy = np.load(os.path.join(seg_root, subname))   # (7,40,5,62,400)
+    de_npy  = np.load(os.path.join(de_root,  subname))   # (7,40,5,2,62,5)
+    psd_npy = np.load(os.path.join(psd_root, subname))   # (7,40,5,2,62,5)
 
-    # reshape to (7,400,...)
-    seg_all = rearrange(seg_npy, "c b r ch t -> b (c r) ch t")   # (7,400,62,400)
-    de_all  = rearrange(de_npy,  "a b c d e f -> a (b c d) e f") # (7,400,62,5)
-    psd_all = rearrange(psd_npy, "a b c d e f -> a (b c d) e f") # (7,400,62,5)
+    # --- Fix: split segments into halves (400 -> 200x2) ---
+    seg_npy = rearrange(seg_npy, "a b c d (h t) -> a b c h d t", h=2)  # (7,40,5,2,62,200)
+    seg_all = rearrange(seg_npy, "a b c h d t -> a (b c h) d t")       # (7,400,62,200)
+
+    # DE/PSD reshape (keep both d features)
+    de_all  = rearrange(de_npy,  "a b c d e f -> a (b c d) e f")       # (7,400,62,5)
+    psd_all = rearrange(psd_npy, "a b c d e f -> a (b c d) e f")       # (7,400,62,5)
 
     Top_1, Top_K = [], []
 
@@ -188,7 +191,7 @@ for subname in sub_list:
         test_iter  = Get_Dataloader({k:v["test"]  for k,v in splits.items()}, test_label,  False, batch_size)
 
         encoders = {
-            "segments": models.glfnet(out_dim=40, emb_dim=64, C=62, T=400),
+            "segments": models.glfnet(out_dim=40, emb_dim=64, C=62, T=200),
             "de":       models.glfnet_mlp(out_dim=40, emb_dim=64, input_dim=310),
             "psd":      models.glfnet_mlp(out_dim=40, emb_dim=64, input_dim=310),
         }
