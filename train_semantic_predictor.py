@@ -43,6 +43,9 @@ FEATURE_PATHS = {
 
 CLIP_EMB_PATH = "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy"
 
+CLASSIFIER_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/classifier_checkpoints"
+SEMANTIC_CKPT_DIR   = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
+
 MODEL_MAP = {
     "segments": lambda: models.glfnet(out_dim=emb_dim_segments, emb_dim=emb_dim_segments, C=62, T=200),
     "DE":       lambda: models.glfnet_mlp(out_dim=emb_dim_DE, emb_dim=emb_dim_DE, input_dim=62*5),
@@ -196,13 +199,12 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, multi=Fa
 
     if best_state:
         net.load_state_dict(best_state)
-        save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
-        os.makedirs(save_dir, exist_ok=True)
+        os.makedirs(SEMANTIC_CKPT_DIR, exist_ok=True)
         fname = f"semantic_predictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}.pt"
         torch.save({
             "state_dict": net.state_dict(),
             "feature_types": FEATURE_TYPES,
-        }, os.path.join(save_dir, fname))
+        }, os.path.join(SEMANTIC_CKPT_DIR, fname))
     return net
 
 # ==========================================
@@ -282,6 +284,30 @@ def load_subject_data(subname, feature_types):
     return feats
 
 # ==========================================
+# Encoder checkpoint loader
+# ==========================================
+def load_encoder_with_ckpt(ft_list, subname):
+    if len(ft_list) > 1:
+        encoders = {}
+        for ft in ft_list:
+            ckpt_path = os.path.join(CLASSIFIER_CKPT_DIR, f"classifier_{ft}_{subname.replace('.npy','')}.pt")
+            ckpt = torch.load(ckpt_path, map_location=run_device)
+            model = MODEL_MAP[ft]()
+            state_dict = {k: v for k, v in ckpt["state_dict"].items() if "classifier" not in k}
+            model.load_state_dict(state_dict, strict=False)
+            encoders[ft] = model
+        total_dim = sum([encoders[ft].out_dim for ft in encoders])
+        return FusionNet(encoders, total_dim), total_dim, True
+    else:
+        ft = ft_list[0]
+        ckpt_path = os.path.join(CLASSIFIER_CKPT_DIR, f"classifier_{ft}_{subname.replace('.npy','')}.pt")
+        ckpt = torch.load(ckpt_path, map_location=run_device)
+        model = MODEL_MAP[ft]()
+        state_dict = {k: v for k, v in ckpt["state_dict"].items() if "classifier" not in k}
+        model.load_state_dict(state_dict, strict=False)
+        return model, model.out_dim, False
+
+# ==========================================
 # Main
 # ==========================================
 clip_embeddings = np.load(CLIP_EMB_PATH)               # [7,40,5,77,768]
@@ -296,18 +322,8 @@ sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else 
 for subname in sub_list:
     print(f"\n=== Training subject {subname} with {FEATURE_TYPES} ===")
 
-    # --- Encoder ---
-    if len(FEATURE_TYPES) > 1:
-        encoders = {ft: MODEL_MAP[ft]() for ft in FEATURE_TYPES}
-        total_dim = sum([encoders[ft].out_dim for ft in encoders])
-        encoder = FusionNet(encoders, total_dim)
-        input_dim = total_dim
-        multi = True
-    else:
-        ft = FEATURE_TYPES[0]
-        encoder = MODEL_MAP[ft]()
-        input_dim = encoder.out_dim
-        multi = False
+    # --- Encoder from classifier checkpoint ---
+    encoder, input_dim, multi = load_encoder_with_ckpt(FEATURE_TYPES, subname)
 
     # --- Load features ---
     features_all = load_subject_data(subname, FEATURE_TYPES)
