@@ -14,15 +14,18 @@ import models
 # ==========================================
 # Config
 # ==========================================
-batch_size   = 1024
+batch_size   = 256
 num_epochs   = 100
 lr           = 0.0001
 C            = 62
 T            = 5
 run_device   = "cuda"
+emb_dim_segments = 512
+emb_dim_DE = 128
+emb_dim_PSD = 128
 
 # Select feature type: "segments", "DE", or "PSD"
-FEATURE_TYPE = "DE"
+FEATURE_TYPE = "segments"
 
 # Loss type: "crossentropy", "mse", "cosine", "mse+cosine"
 LOSS_TYPE = "crossentropy"
@@ -38,9 +41,9 @@ FEATURE_PATHS = {
 }
 
 MODEL_MAP = {
-    "segments": lambda: models.glfnet(out_dim=40, emb_dim=256, C=62, T=400),
-    "DE":       lambda: models.glfnet_mlp(out_dim=40, emb_dim=64, input_dim=62*5),
-    "PSD":      lambda: models.glfnet_mlp(out_dim=40, emb_dim=64, input_dim=62*5),
+    "segments": lambda: models.glfnet(out_dim=40, emb_dim=emb_dim_segments, C=62, T=400),
+    "DE":       lambda: models.glfnet_mlp(out_dim=40, emb_dim=emb_dim_DE, input_dim=62*5),
+    "PSD":      lambda: models.glfnet_mlp(out_dim=40, emb_dim=emb_dim_PSD, input_dim=62*5),
 }
 
 data_path = FEATURE_PATHS[FEATURE_TYPE]
