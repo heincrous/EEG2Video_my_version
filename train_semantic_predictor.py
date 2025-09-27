@@ -1,5 +1,5 @@
 # ==========================================
-# EEG → CLIP semantic predictor
+# EEG → CLIP semantic predictor (with frozen encoders)
 # ==========================================
 import os
 import numpy as np
@@ -64,7 +64,7 @@ class FusionNet(nn.Module):
         return torch.cat(feats, dim=-1)
 
 # ==========================================
-# Semantic MLP (exact user architecture)
+# Semantic MLP
 # ==========================================
 class SemanticMLP(nn.Module):
     def __init__(self, input_dim):
@@ -74,7 +74,7 @@ class SemanticMLP(nn.Module):
             nn.Linear(10000, 10000), nn.ReLU(),
             nn.Linear(10000, 10000), nn.ReLU(),
             nn.Linear(10000, 10000), nn.ReLU(),
-            nn.Linear(10000, 77*768)   # final mapping to CLIP space
+            nn.Linear(10000, 77*768)
         )
     def forward(self, x):
         return self.mlp(x)
@@ -92,7 +92,7 @@ class SemanticPredictor(nn.Module):
         return self.head(feats)
 
 # ==========================================
-# Dataset (with class labels)
+# Dataset wrappers
 # ==========================================
 class FusionDataset(data.Dataset):
     def __init__(self, features_dict, clip_targets, class_labels):
@@ -126,14 +126,10 @@ def Get_Dataloader(features, targets, labels, istrain, batch_size, fusion=False)
 # Contrastive loss helper
 # ==========================================
 def contrastive_loss_fn(y_hat, y, margin=1.0):
-    # Normalise embeddings
     y_hat = F.normalize(y_hat, dim=-1)
     y     = F.normalize(y, dim=-1)
-    # Cosine similarity matrix
     sim_matrix = torch.matmul(y_hat, y.t())
-    # Positive = diagonal
     pos = torch.diag(sim_matrix)
-    # Contrastive: push off-diagonal lower than margin
     loss = torch.mean(F.relu(margin - pos[:, None] + sim_matrix))
     return loss
 
@@ -173,11 +169,13 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=F
             elif LOSS_TYPE == "cosine":
                 target = torch.ones(y_hat.size(0), device=device)
                 loss = cos_loss(y_hat, y, target)
-            elif LOSS_TYPE == "mse+cosine":
+            elif LOSS_TYPE in ["mse+cosine", "cosine+mse"]:
                 target = torch.ones(y_hat.size(0), device=device)
                 loss = mse_loss(y_hat, y) + cos_loss(y_hat, y, target)
             elif LOSS_TYPE == "contrastive":
                 loss = contrastive_loss_fn(y_hat, y)
+            else:
+                raise ValueError(f"Unknown LOSS_TYPE {LOSS_TYPE}")
 
             if USE_VAR_REG:
                 pred_vars, target_vars = [], []
@@ -196,7 +194,6 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=F
             optimizer.step()
             total_loss += loss.item() * y.size(0)
 
-        # validation
         val_mse = evaluate_mse(net, val_iter, device, fusion)
         if val_mse < best_val:
             best_val, best_state = val_mse, net.state_dict()
@@ -266,8 +263,6 @@ def evaluate(net, data_iter, device, fusion=False):
             dim = y.size(1)
 
     preds_all = np.concatenate(preds_all, axis=0)
-
-    # --- Fisher-style variance ratio ---
     try:
         preds_all = preds_all.reshape(40, 5, 2, -1)
         class_samples = preds_all.reshape(40, -1, preds_all.shape[-1])
@@ -279,21 +274,18 @@ def evaluate(net, data_iter, device, fusion=False):
         fisher_score = between / (within + 1e-8)
     except Exception:
         fisher_score = 0.0
-
     return total_mse / (count * dim), total_cos / count, fisher_score
 
 # ==========================================
 # Main
 # ==========================================
-clip_embeddings = np.load(CLIP_EMB_PATH)   # [7,40,5,77,768]
+clip_embeddings = np.load(CLIP_EMB_PATH)
 clip_embeddings = np.expand_dims(clip_embeddings, axis=3)
 clip_embeddings = np.repeat(clip_embeddings, 2, axis=3)
 clip_embeddings = clip_embeddings.reshape(-1, 77*768)
 
-# class labels: 40 classes × 5 clips × 2 windows per block = 400
 labels_block = np.repeat(np.arange(40), 5*2)
 labels_all   = np.tile(labels_block, 7)
-
 samples_per_block = clip_embeddings.shape[0] // 7
 
 if FEATURE_TYPE == "fusion":
@@ -318,15 +310,10 @@ for subname in sub_list:
 
     All_train = {ft: reshape(ft, raw_data[ft]) for ft in raw_data} if FEATURE_TYPE=="fusion" else reshape(FEATURE_TYPE, raw_data)
 
-    # --- One-fold split: 5 train, 1 val, 1 test ---
-    train_blocks = [0,1,2,3,4]
-    val_block    = 5
-    test_block   = 6
-
+    train_blocks, val_block, test_block = [0,1,2,3,4], 5, 6
     train_targets = np.concatenate([clip_embeddings[i*samples_per_block:(i+1)*samples_per_block] for i in train_blocks])
     val_targets   = clip_embeddings[val_block*samples_per_block:(val_block+1)*samples_per_block]
     test_targets  = clip_embeddings[test_block*samples_per_block:(test_block+1)*samples_per_block]
-
     train_labels = np.concatenate([labels_all[i*samples_per_block:(i+1)*samples_per_block] for i in train_blocks])
     val_labels   = labels_all[val_block*samples_per_block:(val_block+1)*samples_per_block]
     test_labels  = labels_all[test_block*samples_per_block:(test_block+1)*samples_per_block]
@@ -337,7 +324,6 @@ for subname in sub_list:
             train_data[ft] = np.concatenate([All_train[ft][i] for i in train_blocks])
             val_data[ft]   = All_train[ft][val_block]
             test_data[ft]  = All_train[ft][test_block]
-
             tr = train_data[ft].reshape(train_data[ft].shape[0], -1)
             va = val_data[ft].reshape(val_data[ft].shape[0], -1)
             te = test_data[ft].reshape(test_data[ft].shape[0], -1)
@@ -351,25 +337,34 @@ for subname in sub_list:
                 train_data[ft] = tr.reshape(-1, C, T)
                 val_data[ft]   = va.reshape(-1, C, T)
                 test_data[ft]  = te.reshape(-1, C, T)
-
         train_iter = Get_Dataloader(train_data, train_targets, train_labels, True, batch_size, fusion=True)
         val_iter   = Get_Dataloader(val_data,   val_targets,   val_labels,   False, batch_size, fusion=True)
         test_iter  = Get_Dataloader(test_data,  test_targets,  test_labels,  False, batch_size, fusion=True)
-
         encoders = {ft: MODEL_MAP[ft]() for ft in All_train}
+
+        # --- Load checkpoints + freeze ---
+        for ft, enc in encoders.items():
+            ckpt_path = f"/content/drive/MyDrive/EEG2Video_checkpoints/classifier_checkpoints/{ft}_{subname.replace('.npy','')}.pt"
+            if os.path.exists(ckpt_path):
+                print(f"Loading encoder checkpoint for {ft}: {ckpt_path}")
+                enc_state = torch.load(ckpt_path, map_location=run_device)
+                if "state_dict" in enc_state:
+                    enc.load_state_dict(enc_state["state_dict"], strict=False)
+                else:
+                    enc.load_state_dict(enc_state, strict=False)
+            for p in enc.parameters(): p.requires_grad = False
+
         encoder  = FusionNet(encoders)
         input_dim = encoder.total_dim
     else:
         train_data = np.concatenate([All_train[i] for i in train_blocks])
         val_data   = All_train[val_block]
         test_data  = All_train[test_block]
-
         tr = train_data.reshape(train_data.shape[0], -1)
         va = val_data.reshape(val_data.shape[0], -1)
         te = test_data.reshape(test_data.shape[0], -1)
         scaler = StandardScaler()
         tr = scaler.fit_transform(tr); va = scaler.transform(va); te = scaler.transform(te)
-
         if FEATURE_TYPE == "segments":
             train_data = tr.reshape(-1, 1, C, 200)
             val_data   = va.reshape(-1, 1, C, 200)
@@ -378,12 +373,19 @@ for subname in sub_list:
             train_data = tr.reshape(-1, C, T)
             val_data   = va.reshape(-1, C, T)
             test_data  = te.reshape(-1, C, T)
-
         train_iter = Get_Dataloader(train_data, train_targets, train_labels, True, batch_size)
         val_iter   = Get_Dataloader(val_data,   val_targets,   val_labels,   False, batch_size)
         test_iter  = Get_Dataloader(test_data,  test_targets,  test_labels,  False, batch_size)
-
         encoder   = MODEL_MAP[FEATURE_TYPE]()
+        ckpt_path = f"/content/drive/MyDrive/EEG2Video_checkpoints/classifier_checkpoints/{FEATURE_TYPE}_{subname.replace('.npy','')}.pt"
+        if os.path.exists(ckpt_path):
+            print(f"Loading encoder checkpoint: {ckpt_path}")
+            enc_state = torch.load(ckpt_path, map_location=run_device)
+            if "state_dict" in enc_state:
+                encoder.load_state_dict(enc_state["state_dict"], strict=False)
+            else:
+                encoder.load_state_dict(enc_state, strict=False)
+        for p in encoder.parameters(): p.requires_grad = False
         input_dim = emb_dim_DE if FEATURE_TYPE=="DE" else emb_dim_PSD if FEATURE_TYPE=="PSD" else emb_dim_segments
 
     modelnet = SemanticPredictor(encoder, input_dim)
