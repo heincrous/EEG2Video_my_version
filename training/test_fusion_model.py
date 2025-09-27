@@ -35,7 +35,7 @@ CONFIG = {
     "device":         "cuda",
 
     # Encoders (configurable)
-    "raw_model":      "shallownet",      # options: shallownet, deepnet, eegnet, tsconv, conformer, glfnet
+    "raw_model":      "conformer",      # options: shallownet, deepnet, eegnet, tsconv, conformer, glfnet
     "de_model":       "mlpnet",  # options: mlpnet, glfnet_mlp
     "psd_model":      "mlpnet",  # options: mlpnet, glfnet_mlp
 
