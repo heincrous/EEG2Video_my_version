@@ -26,6 +26,7 @@ emb_dim_PSD      = 64
 
 # Choose: "segments", "DE", "PSD", or "fusion"
 FEATURE_TYPE = "segments"
+USE_ALL_SUBJECTS = False        # False = only sub1, True = all subjects
 LOSS_TYPE    = "crossentropy"
 
 USE_VAR_REG = False
@@ -185,8 +186,6 @@ All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
 # ==========================================
 # Subject selection
 # ==========================================
-USE_ALL_SUBJECTS = False     # set True to train on all subjects
-
 if FEATURE_TYPE == "fusion":
     sub_list = os.listdir(FEATURE_PATHS["DE"]) if USE_ALL_SUBJECTS else ["sub1.npy"]
 else:
