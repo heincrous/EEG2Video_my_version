@@ -21,13 +21,13 @@ T             = 5
 run_device    = "cuda"
 
 emb_dim_segments = 256
-emb_dim_DE       = 256
+emb_dim_DE       = 64
 emb_dim_PSD      = 256
 
 # Choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["DE","PSD"]
+FEATURE_TYPES    = ["DE","segments"]
 USE_ALL_SUBJECTS = False
-LOSS_TYPE        = "cosine+mse"
+LOSS_TYPE        = "crossentropy" # Options: ["crossentropy", "mse", "cosine", "mse+cosine"]
 
 USE_VAR_REG = False
 VAR_LAMBDA  = 0.01
