@@ -102,32 +102,6 @@ class PatchEmbedding(nn.Module):
         x = self.tsconv(x)
         return x
 
-class shallownet(nn.Module):
-    def __init__(self, out_dim, C, T):
-        super(shallownet, self).__init__()
-        
-        self.net = nn.Sequential(
-            nn.Conv2d(1, 40, (1, 25), (1, 1)),
-            nn.Conv2d(40, 40, (C, 1), (1, 1)),
-            nn.BatchNorm2d(40),
-            nn.ELU(),
-            nn.AvgPool2d((1, 51), (1, 5)),
-            nn.Dropout(0.5),
-        )
-        
-        # Dynamically infer flatten size
-        with torch.no_grad():
-            dummy = torch.zeros(1, 1, C, T)
-            flat_dim = self.net(dummy).view(1, -1).size(1)
-        
-        self.out = nn.Linear(flat_dim, out_dim)
-    
-    def forward(self, x):  # input:(batch,1,C,T)
-        x = self.net(x)
-        x = x.view(x.size(0), -1)
-        x = self.out(x)
-        return x
-
 # class shallownet(nn.Module):
 #     def __init__(self, out_dim, C, T):
 #         super(shallownet, self).__init__()
@@ -140,13 +114,39 @@ class shallownet(nn.Module):
 #             nn.AvgPool2d((1, 51), (1, 5)),
 #             nn.Dropout(0.5),
 #         )
-#         self.out = nn.Linear(1040*(T//200), out_dim)
+        
+#         # Dynamically infer flatten size
+#         with torch.no_grad():
+#             dummy = torch.zeros(1, 1, C, T)
+#             flat_dim = self.net(dummy).view(1, -1).size(1)
+        
+#         self.out = nn.Linear(flat_dim, out_dim)
     
-#     def forward(self, x):  #input:(batch,1,C,T)
+#     def forward(self, x):  # input:(batch,1,C,T)
 #         x = self.net(x)
 #         x = x.view(x.size(0), -1)
 #         x = self.out(x)
 #         return x
+
+class shallownet(nn.Module):
+    def __init__(self, out_dim, C, T):
+        super(shallownet, self).__init__()
+        
+        self.net = nn.Sequential(
+            nn.Conv2d(1, 40, (1, 25), (1, 1)),
+            nn.Conv2d(40, 40, (C, 1), (1, 1)),
+            nn.BatchNorm2d(40),
+            nn.ELU(),
+            nn.AvgPool2d((1, 51), (1, 5)),
+            nn.Dropout(0.5),
+        )
+        self.out = nn.Linear(1040*(T//200), out_dim)
+    
+    def forward(self, x):  #input:(batch,1,C,T)
+        x = self.net(x)
+        x = x.view(x.size(0), -1)
+        x = self.out(x)
+        return x
     
 class deepnet(nn.Module):
     def __init__(self, out_dim, C, T):
