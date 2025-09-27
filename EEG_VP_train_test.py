@@ -197,8 +197,9 @@ for subname in sub_list:
         # shape: (7,40,5,2,62,5) → (7,400,62,5)
         All_train = rearrange(load_npy, "a b c d e f -> a (b c d) e f")
     elif FEATURE_TYPE == "segments":
-        # shape: (7,40,5,62,400) → (7,400,62,400)
-        All_train = rearrange(load_npy, "a b c d e f -> a (b c) d e")
+        # input: (7,40,5,62,400)
+        # output: (7,200,62,400)
+        All_train = rearrange(load_npy, "a b c d e -> a (b c) d e")
 
     print("Reshaped:", All_train.shape)
     Top_1, Top_K = [], []
