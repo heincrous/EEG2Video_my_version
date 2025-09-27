@@ -6,23 +6,13 @@
 # ==========================================
 
 # === Standard libraries ===
-import os
-import argparse
 import math
-import glob
-import random
-import itertools
-import datetime
-import time
-import numpy as np
 
 # === Third-party libraries ===
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.nn.init as init
 from torch import Tensor
-from torch.autograd import Variable
 from einops import rearrange
 from einops.layers.torch import Rearrange, Reduce
 
@@ -301,7 +291,7 @@ class GELU(nn.Module):
 class TransformerEncoderBlock(nn.Sequential):
     def __init__(self,
                  emb_size,
-                 num_heads=10,
+                 num_heads=8,
                  drop_p=0.5,
                  forward_expansion=4,
                  forward_drop_p=0.5):

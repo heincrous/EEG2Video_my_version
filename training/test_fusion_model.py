@@ -28,7 +28,7 @@ CONFIG = {
     "optimizer":      "AdamW",
     "C":              62,       # EEG channels
     "T":              200,      # 200 samples per 1s window (200 Hz)
-    "emb_dim":        64,
+    "emb_dim":        128,
     "de_dim":         310,      # 62*5
     "psd_dim":        310,      # 62*5
     "out_dim":        40,       # 40 classes
