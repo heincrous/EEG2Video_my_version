@@ -124,7 +124,7 @@ sub_list = [sub_choice]
 All_sub_top1, All_sub_top5 = [], []
 
 for subname in sub_list:
-    load_npy = np.load(os.path.join("/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s", subname))
+    load_npy = np.load(os.path.join("/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s", subname))
     print("Loaded:", subname, load_npy.shape)
 
     # shape: (7,40,5,2,62,5) → (7,400,62,5)
