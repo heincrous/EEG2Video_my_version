@@ -136,6 +136,10 @@ def run_inference(eeg_feat, idx):
 
     with torch.no_grad():
         semantic_pred = model(eeg_tensor)
+
+    # reshape to (B,77,768)
+    semantic_pred = semantic_pred.view(semantic_pred.size(0), 77, 768)
+
     negative = semantic_pred.mean(dim=0, keepdim=True).float().to(device)
 
     video_length, fps = 6, 3
