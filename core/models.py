@@ -18,173 +18,140 @@ from einops.layers.torch import Rearrange
 
 
 # ==========================================
-# Patch Embedding (Conv-based)
-# ==========================================
-class PatchEmbedding(nn.Module):
-    def __init__(self, emb_size=40):
-        super().__init__()
-        self.tsconv = nn.Sequential(
-            nn.Conv2d(1, 40, (1, 25), (1, 1)),
-            nn.AvgPool2d((1, 51), (1, 5)),
-            nn.BatchNorm2d(40),
-            nn.ELU(),
-            nn.Conv2d(40, 40, (63, 1), (1, 1)),
-            nn.BatchNorm2d(40),
-            nn.ELU(),
-            nn.Dropout(0.5),
-        )
-        self.projection = nn.Sequential(
-            nn.Conv2d(40, emb_size, (1, 1), stride=(1, 1)),
-            Rearrange('b e (h) (w) -> b (h w) e'),
-        )
-
-    def forward(self, x: Tensor) -> Tensor:
-        x = self.tsconv(x)
-        return x
-
-
-# ==========================================
 # ShallowNet
 # ==========================================
 class shallownet(nn.Module):
-    def __init__(self, out_dim, C, T):
+    def __init__(self, out_dim=512, C=62, T=200, dropout=0.5):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv2d(1, 32, (1, 25), (1, 1)),
-            nn.Conv2d(32, 32, (C, 1), (1, 1)),
+            nn.Conv2d(1, 32, (1, 25)),
+            nn.Conv2d(32, 32, (C, 1)),
             nn.BatchNorm2d(32),
             nn.ELU(),
             nn.AvgPool2d((1, 51), (1, 5)),
-            nn.Dropout(0.7),
-            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Dropout(dropout),
         )
-        self.out = nn.Linear(32, out_dim)
+        with torch.no_grad():
+            feat_dim = self.net(torch.zeros(1,1,C,T)).view(1,-1).size(1)
+        self.out = nn.Sequential(
+            nn.Linear(feat_dim, out_dim),
+            nn.LayerNorm(out_dim),
+            nn.Dropout(dropout)
+        )
 
     def forward(self, x):
-        x = self.net(x)             # (B, 32, 1, 1)
-        x = x.view(x.size(0), -1)   # (B, 32)
-        return self.out(x)
+        x = self.net(x)
+        return self.out(x.view(x.size(0), -1))
 
 
 # ==========================================
 # DeepNet
 # ==========================================
 class deepnet(nn.Module):
-    def __init__(self, out_dim, C, T):
+    def __init__(self, out_dim=512, C=62, T=200, dropout=0.5):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv2d(1, 25, (1, 10), (1, 1)),
-            nn.Conv2d(25, 25, (C, 1), (1, 1)),
-            nn.BatchNorm2d(25),
-            nn.ELU(),
-            nn.MaxPool2d((1, 2), (1, 2)),
-            nn.Dropout(0.5),
+            nn.Conv2d(1, 25, (1, 10)),
+            nn.Conv2d(25, 25, (C, 1)),
+            nn.BatchNorm2d(25), nn.ELU(),
+            nn.MaxPool2d((1, 2)), nn.Dropout(dropout),
 
-            nn.Conv2d(25, 50, (1, 10), (1, 1)),
-            nn.BatchNorm2d(50),
-            nn.ELU(),
-            nn.MaxPool2d((1, 2), (1, 2)),
-            nn.Dropout(0.5),
+            nn.Conv2d(25, 50, (1, 10)), nn.BatchNorm2d(50), nn.ELU(),
+            nn.MaxPool2d((1, 2)), nn.Dropout(dropout),
 
-            nn.Conv2d(50, 100, (1, 10), (1, 1)),
-            nn.BatchNorm2d(100),
-            nn.ELU(),
-            nn.MaxPool2d((1, 2), (1, 2)),
-            nn.Dropout(0.5),
+            nn.Conv2d(50, 100, (1, 10)), nn.BatchNorm2d(100), nn.ELU(),
+            nn.MaxPool2d((1, 2)), nn.Dropout(dropout),
 
-            nn.Conv2d(100, 200, (1, 10), (1, 1)),
-            nn.BatchNorm2d(200),
-            nn.ELU(),
-            nn.MaxPool2d((1, 2), (1, 2)),
-            nn.Dropout(0.5),
-
-            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Conv2d(100, 200, (1, 10)), nn.BatchNorm2d(200), nn.ELU(),
+            nn.MaxPool2d((1, 2)), nn.Dropout(dropout),
         )
-        self.out = nn.Linear(200, out_dim)
+        with torch.no_grad():
+            feat_dim = self.net(torch.zeros(1,1,C,T)).view(1,-1).size(1)
+        self.out = nn.Sequential(
+            nn.Linear(feat_dim, out_dim),
+            nn.LayerNorm(out_dim),
+            nn.Dropout(dropout)
+        )
 
     def forward(self, x):
-        x = self.net(x)             # (B, 200, 1, 1)
-        x = x.view(x.size(0), -1)   # (B, 200)
-        return self.out(x)
+        x = self.net(x)
+        return self.out(x.view(x.size(0), -1))
 
 
 # ==========================================
 # EEGNet
 # ==========================================
 class eegnet(nn.Module):
-    def __init__(self, out_dim, C, T):
+    def __init__(self, out_dim=512, C=62, T=200, dropout=0.5):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv2d(1, 8, (1, 64), (1, 1)),
-            nn.BatchNorm2d(8),
-            nn.Conv2d(8, 16, (C, 1), (1, 1)),
-            nn.BatchNorm2d(16),
-            nn.ELU(),
-            nn.AvgPool2d((1, 2), (1, 2)),
-            nn.Dropout(0.5),
-            nn.Conv2d(16, 16, (1, 16), (1, 1)),
-            nn.BatchNorm2d(16),
-            nn.ELU(),
-            nn.AvgPool2d((1, 2), (1, 2)),
-            nn.Dropout2d(0.5),
-            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Conv2d(1, 8, (1, 64)), nn.BatchNorm2d(8),
+            nn.Conv2d(8, 16, (C, 1)), nn.BatchNorm2d(16), nn.ELU(),
+            nn.AvgPool2d((1, 2)), nn.Dropout(dropout),
+
+            nn.Conv2d(16, 16, (1, 16)), nn.BatchNorm2d(16), nn.ELU(),
+            nn.AvgPool2d((1, 2)), nn.Dropout2d(dropout),
         )
-        self.out = nn.Linear(16, out_dim)
+        with torch.no_grad():
+            feat_dim = self.net(torch.zeros(1,1,C,T)).view(1,-1).size(1)
+        self.out = nn.Sequential(
+            nn.Linear(feat_dim, out_dim),
+            nn.LayerNorm(out_dim),
+            nn.Dropout(dropout)
+        )
 
     def forward(self, x):
-        x = self.net(x)             # (B, 16, 1, 1)
-        x = x.view(x.size(0), -1)   # (B, 16)
-        return self.out(x)
+        x = self.net(x)
+        return self.out(x.view(x.size(0), -1))
 
 
 # ==========================================
 # TSConv
 # ==========================================
 class tsconv(nn.Module):
-    def __init__(self, out_dim, C, T):
+    def __init__(self, out_dim=512, C=62, T=200, dropout=0.5):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Conv2d(1, 40, (1, 25), (1, 1)),
+            nn.Conv2d(1, 40, (1, 25)),
             nn.AvgPool2d((1, 51), (1, 5)),
-            nn.BatchNorm2d(40),
-            nn.ELU(),
-            nn.Conv2d(40, 40, (C, 1), (1, 1)),
-            nn.BatchNorm2d(40),
-            nn.ELU(),
-            nn.Dropout(0.5),
-            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.BatchNorm2d(40), nn.ELU(),
+            nn.Conv2d(40, 40, (C, 1)),
+            nn.BatchNorm2d(40), nn.ELU(),
+            nn.Dropout(dropout),
         )
-        self.out = nn.Linear(40, out_dim)
+        with torch.no_grad():
+            feat_dim = self.net(torch.zeros(1,1,C,T)).view(1,-1).size(1)
+        self.out = nn.Sequential(
+            nn.Linear(feat_dim, out_dim),
+            nn.LayerNorm(out_dim),
+            nn.Dropout(dropout)
+        )
 
     def forward(self, x):
-        x = self.net(x)             # (B, 40, 1, 1)
-        x = x.view(x.size(0), -1)   # (B, 40)
-        return self.out(x)
+        x = self.net(x)
+        return self.out(x.view(x.size(0), -1))
 
 
 # ==========================================
 # Transformer-based Conformer and Utilities
 # ==========================================
 class PatchEmbedding(nn.Module):
-    def __init__(self, emb_size=40):
+    def __init__(self, emb_size=40, C=62):
         super().__init__()
-        self.shallownet = nn.Sequential(
-            nn.Conv2d(1, 40, (1, 25), (1, 1)),
-            nn.Conv2d(40, 40, (62, 1), (1, 1)),
+        self.conv = nn.Sequential(
+            nn.Conv2d(1, 40, (1, 25)),
+            nn.Conv2d(40, 40, (C, 1)),
             nn.BatchNorm2d(40),
             nn.ELU(),
             nn.AvgPool2d((1, 75), (1, 15)),
             nn.Dropout(0.5),
         )
-        self.projection = nn.Sequential(
-            nn.Conv2d(40, emb_size, (1, 1), stride=(1, 1)),
-            Rearrange('b e (h) (w) -> b (h w) e'),
-        )
+        self.proj = nn.Conv2d(40, emb_size, (1,1))
 
-    def forward(self, x: Tensor) -> Tensor:
-        x = self.shallownet(x)
-        x = self.projection(x)
-        return x
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.proj(x)
+        return rearrange(x, "b e h w -> b (h w) e")
 
 
 class MultiHeadAttention(nn.Module):
@@ -198,61 +165,46 @@ class MultiHeadAttention(nn.Module):
         self.att_drop = nn.Dropout(dropout)
         self.projection = nn.Linear(emb_size, emb_size)
 
-    def forward(self, x: Tensor, mask: Tensor = None) -> Tensor:
-        queries = rearrange(self.queries(x), "b n (h d) -> b h n d", h=self.num_heads)
-        keys = rearrange(self.keys(x), "b n (h d) -> b h n d", h=self.num_heads)
-        values = rearrange(self.values(x), "b n (h d) -> b h n d", h=self.num_heads)
-        energy = torch.einsum('bhqd, bhkd -> bhqk', queries, keys)
-        if mask is not None:
-            fill_value = torch.finfo(torch.float32).min
-            energy.mask_fill(~mask, fill_value)
-        scaling = self.emb_size ** 0.5
-        att = F.softmax(energy / scaling, dim=-1)
+    def forward(self, x: Tensor) -> Tensor:
+        q = rearrange(self.queries(x), "b n (h d) -> b h n d", h=self.num_heads)
+        k = rearrange(self.keys(x),    "b n (h d) -> b h n d", h=self.num_heads)
+        v = rearrange(self.values(x),  "b n (h d) -> b h n d", h=self.num_heads)
+        energy = torch.einsum('bhqd, bhkd -> bhqk', q, k)
+        att = F.softmax(energy / math.sqrt(self.emb_size), dim=-1)
         att = self.att_drop(att)
-        out = torch.einsum('bhal, bhlv -> bhav', att, values)
+        out = torch.einsum('bhal, bhlv -> bhav', att, v)
         out = rearrange(out, "b h n d -> b n (h d)")
         return self.projection(out)
 
 
 class ResidualAdd(nn.Module):
-    def __init__(self, fn):
-        super().__init__()
-        self.fn = fn
-
-    def forward(self, x, **kwargs):
-        return x + self.fn(x, **kwargs)
+    def __init__(self, fn): super().__init__(); self.fn = fn
+    def forward(self, x): return self.fn(x) + x
 
 
 class FeedForwardBlock(nn.Sequential):
     def __init__(self, emb_size, expansion, drop_p):
         super().__init__(
-            nn.Linear(emb_size, expansion * emb_size),
+            nn.Linear(emb_size, expansion*emb_size),
             nn.GELU(),
             nn.Dropout(drop_p),
-            nn.Linear(expansion * emb_size, emb_size),
+            nn.Linear(expansion*emb_size, emb_size),
         )
 
 
 class TransformerEncoderBlock(nn.Sequential):
-    def __init__(self,
-                 emb_size,
-                 num_heads=8,
-                 drop_p=0.5,
-                 forward_expansion=4,
-                 forward_drop_p=0.5):
+    def __init__(self, emb_size, num_heads=8, drop_p=0.5, exp=4):
         super().__init__(
             ResidualAdd(nn.Sequential(
                 nn.LayerNorm(emb_size),
                 MultiHeadAttention(emb_size, num_heads, drop_p),
-                nn.Dropout(drop_p),
+                nn.Dropout(drop_p)
             )),
             ResidualAdd(nn.Sequential(
                 nn.LayerNorm(emb_size),
-                FeedForwardBlock(emb_size,
-                                 expansion=forward_expansion,
-                                 drop_p=forward_drop_p),
-                nn.Dropout(drop_p),
-            )),
+                FeedForwardBlock(emb_size, exp, drop_p),
+                nn.Dropout(drop_p)
+            ))
         )
 
 
@@ -264,41 +216,53 @@ class TransformerEncoder(nn.Sequential):
 
 
 class ClassificationHead(nn.Module):
-    def __init__(self, emb_size, out_dim):
+    def __init__(self, emb_size, out_dim, dropout=0.5):
         super().__init__()
         self.norm = nn.LayerNorm(emb_size)
-        self.fc   = nn.Linear(emb_size, out_dim)
+        self.fc   = nn.Sequential(
+            nn.Linear(emb_size, out_dim),
+            nn.Dropout(dropout)
+        )
 
     def forward(self, x):
-        # mean pool tokens
-        x = x.mean(dim=1)   # (B, emb_size)
+        x = x.mean(dim=1)   # mean pool tokens
         x = self.norm(x)
         return self.fc(x)
 
 
-class conformer(nn.Sequential):
-    def __init__(self, emb_size=40, depth=3, out_dim=4, **kwargs):
-        super().__init__(
-            PatchEmbedding(emb_size),
-            TransformerEncoder(depth, emb_size),
-            ClassificationHead(emb_size, out_dim),
-        )
+class conformer(nn.Module):
+    def __init__(self, out_dim=512, C=62, T=200, emb_size=40, depth=3):
+        super().__init__()
+        self.patch = PatchEmbedding(emb_size, C)
+        self.encoder = TransformerEncoder(depth, emb_size)
+        with torch.no_grad():
+            feat_dim = self.patch(torch.zeros(1,1,C,T))
+            feat_dim = self.encoder(feat_dim).view(1,-1).size(1)
+        self.fc = nn.Linear(feat_dim, out_dim)
+
+    def forward(self, x):
+        x = self.patch(x)
+        x = self.encoder(x)
+        return self.fc(x.view(x.size(0), -1))
 
 
 # ==========================================
 # GLFNet and MLP variants
 # ==========================================
 class glfnet(nn.Module):
-    def __init__(self, out_dim, emb_dim, C, T):
+    def __init__(self, out_dim, emb_dim, C, T, dropout=0.5):
         super().__init__()
-        self.globalnet = shallownet(emb_dim, C, T)
+        self.globalnet = shallownet(emb_dim, C, T, dropout=dropout)
         self.occipital_index = list(range(50, 62))
-        self.occipital_localnet = shallownet(emb_dim, 12, T)
-        self.out = nn.Linear(emb_dim * 2, out_dim)
+        self.occipital_localnet = shallownet(emb_dim, 12, T, dropout=dropout)
+        self.out = nn.Sequential(
+            nn.Linear(emb_dim * 2, out_dim),
+            nn.LayerNorm(out_dim),
+            nn.Dropout(dropout)
+        )
 
     def forward(self, x):
         global_feature = self.globalnet(x)
-        global_feature = global_feature.view(x.size(0), -1)
         occipital_x = x[:, :, self.occipital_index, :]
         occipital_feature = self.occipital_localnet(occipital_x)
         return self.out(torch.cat((global_feature, occipital_feature), 1))
@@ -316,6 +280,8 @@ class mlpnet(nn.Module):
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(128, out_dim),
+            nn.LayerNorm(out_dim),
+            nn.Dropout(dropout)
         )
 
     def forward(self, x):
@@ -327,8 +293,12 @@ class glfnet_mlp(nn.Module):
         super().__init__()
         self.globalnet = mlpnet(emb_dim, input_dim, dropout=dropout)
         self.occipital_index = list(range(50, 62))
-        self.occipital_localnet = mlpnet(emb_dim, 12 * 5, dropout=dropout)
-        self.out = nn.Linear(emb_dim * 2, out_dim)
+        self.occipital_localnet = mlpnet(emb_dim, 12 * (input_dim // 62), dropout=dropout)
+        self.out = nn.Sequential(
+            nn.Linear(emb_dim * 2, out_dim),
+            nn.LayerNorm(out_dim),
+            nn.Dropout(dropout)
+        )
 
     def forward(self, x):
         global_feature = self.globalnet(x)
