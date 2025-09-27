@@ -15,7 +15,7 @@ import models
 # ==========================================
 # Hyperparameters
 # ==========================================
-batch_size   = 256
+batch_size   = 1024
 num_epochs   = 50
 lr           = 0.001
 run_device   = "cuda"
@@ -145,7 +145,9 @@ seg_root = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments"
 de_root  = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s"
 psd_root = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s"
 
-sub_list = os.listdir(de_root)
+# sub_list = os.listdir(de_root)
+# Run only on one subject
+sub_list = ["sub1.npy"]
 
 All_sub_top1, All_sub_top5 = [], []
 
