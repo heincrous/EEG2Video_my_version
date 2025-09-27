@@ -14,7 +14,7 @@ from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.modeling_utils import ModelMixin
 from diffusers.utils import BaseOutput, logging
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
-from unet_blocks import (
+from .unet_blocks import (
     CrossAttnDownBlock3D,
     CrossAttnUpBlock3D,
     DownBlock3D,
@@ -23,7 +23,7 @@ from unet_blocks import (
     get_down_block,
     get_up_block,
 )
-from resnet import InflatedConv3d
+from .resnet import InflatedConv3d
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
