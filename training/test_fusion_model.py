@@ -20,9 +20,9 @@ from core.fusion_model import FusionNet, build_encoder
 # Config table
 # ==========================================
 CONFIG = {
-    "batch_size":     32,
+    "batch_size":     256,
     "num_epochs":     100,
-    "lr":             0.0005,
+    "lr":             0.001,
     "weight_decay":   0.05,
     "optimizer":      "AdamW",
     "C":              62,       # EEG channels
@@ -32,8 +32,8 @@ CONFIG = {
     "device":         "cuda",
 
     # Choose which modalities to use
-    "use_raw": True,
-    "use_de":  False,
+    "use_raw": False,
+    "use_de":  True,
     "use_psd": False,
 
     # Encoder choices
