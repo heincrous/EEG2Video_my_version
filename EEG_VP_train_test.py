@@ -14,7 +14,7 @@ import models
 # Config
 # ==========================================
 batch_size   = 256
-num_epochs   = 100
+num_epochs   = 50
 lr           = 0.001
 C            = 62
 T            = 5
