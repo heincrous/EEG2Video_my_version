@@ -22,9 +22,10 @@ num_epochs = 100
 lr = 0.001   # learning rate
 C = 62       # the number of channels
 T = 5        # the time samples of EEG signals
-output_dir = './output_dir/'
 network_name = "GLMNet_mlp"
-saved_model_path = output_dir + network_name + '_40c.pth'
+output_dir = "/content/drive/MyDrive/EEG2Video_outputs/models"
+os.makedirs(output_dir, exist_ok=True)
+saved_model_path = os.path.join(output_dir, network_name + "_40c.pth")
 
 run_device = "cuda"
 
