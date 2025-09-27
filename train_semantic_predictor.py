@@ -128,8 +128,10 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=F
         net.train()
         total_loss = 0
         for X, y in train_iter:
-            if fusion: X = {ft: X[ft].to(device) for ft in X}
-            else: X = X.to(device)
+            if fusion:
+                X = {ft: X[ft].to(device) for ft in X}
+            else:
+                X = X.to(device)
             y = y.to(device)
 
             optimizer.zero_grad()
@@ -157,10 +159,10 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=F
             best_val, best_state = val_mse, net.state_dict()
 
         if epoch % 3 == 0:
-            test_mse, test_cos, class_var = evaluate(net, test_iter, device, fusion)
+            test_mse, test_cos, between_var = evaluate(net, test_iter, device, fusion)
             print(f"[{epoch+1}] train_loss={total_loss/len(train_iter.dataset):.4f}, "
                   f"val_mse={val_mse:.4f}, test_mse={test_mse:.4f}, "
-                  f"test_cos={test_cos:.4f}, class_var={class_var:.4f}")
+                  f"test_cos={test_cos:.4f}, between_var={between_var:.4f}")
 
     if best_state:
         net.load_state_dict(best_state)
@@ -182,8 +184,10 @@ def evaluate_mse(net, data_iter, device, fusion=False):
     total, count, dim = 0, 0, None
     with torch.no_grad():
         for X, y in data_iter:
-            if fusion: X = {ft: X[ft].to(device) for ft in X}
-            else: X = X.to(device)
+            if fusion:
+                X = {ft: X[ft].to(device) for ft in X}
+            else:
+                X = X.to(device)
             y = y.to(device)
             y_hat = net(X)
             total += mse_loss(y_hat, y).item()
@@ -198,8 +202,10 @@ def evaluate(net, data_iter, device, fusion=False):
     preds_all, targets_all = [], []
     with torch.no_grad():
         for X, y in data_iter:
-            if fusion: X = {ft: X[ft].to(device) for ft in X}
-            else: X = X.to(device)
+            if fusion:
+                X = {ft: X[ft].to(device) for ft in X}
+            else:
+                X = X.to(device)
             y = y.to(device)
             y_hat = net(X)
             total_mse += F.mse_loss(y_hat, y, reduction="sum").item()
@@ -210,18 +216,17 @@ def evaluate(net, data_iter, device, fusion=False):
             dim = y.size(1)
     preds_all = np.concatenate(preds_all, axis=0)
 
-    # --- Between-class variance ---
+    # --- Between-class variance only ---
     try:
-        preds_all = preds_all.reshape(40, 5, 2, -1)  # 40 classes × 5 clips × 2 windows × emb_dim
-        preds_all = preds_all.mean(axis=(1, 2))      # average across clips+windows → [40, emb_dim]
+        preds_all = preds_all.reshape(40, 5, 2, -1)   # [classes, clips, windows, emb_dim]
+        preds_all = preds_all.mean(axis=(1, 2))       # → [40, emb_dim]
         class_means = preds_all
         overall_mean = class_means.mean(axis=0)
-        # variance across class means
-        class_var = np.mean(np.sum((class_means - overall_mean)**2, axis=1))
-    except:
-        class_var = 0.0
+        between_var = np.mean(np.sum((class_means - overall_mean) ** 2, axis=1))
+    except Exception:
+        between_var = 0.0
 
-    return total_mse / (count * dim), total_cos / count, class_var
+    return total_mse / (count * dim), total_cos / count, between_var
 
 # ==========================================
 # Main
