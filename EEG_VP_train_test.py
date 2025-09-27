@@ -16,7 +16,7 @@ import models
 # ==========================================
 batch_size   = 1024
 num_epochs   = 100
-lr           = 0.00005
+lr           = 0.0001
 C            = 62
 T            = 5
 run_device   = "cuda"
@@ -25,7 +25,7 @@ run_device   = "cuda"
 FEATURE_TYPE = "DE"
 
 # Loss type: "crossentropy", "mse", "cosine", "mse+cosine"
-LOSS_TYPE = "cosine"
+LOSS_TYPE = "crossentropy"
 
 # Whether to add variance regularisation
 USE_VAR_REG = False
