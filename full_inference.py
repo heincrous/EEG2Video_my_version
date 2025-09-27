@@ -140,6 +140,7 @@ def run_inference(eeg_feat, idx):
 
     video_length, fps = 6, 3
     video = pipe(
+        model=None,
         eeg=semantic_pred,
         negative_eeg=negative,
         latents=None,
