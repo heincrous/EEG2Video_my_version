@@ -22,7 +22,7 @@ from core.fusion_model import FusionNet
 CONFIG = {
     "batch_size":     32,
     "num_epochs":     100,
-    "lr":             0.001,
+    "lr":             0.0005,
     "weight_decay":   0.05,
     "optimizer":      "AdamW",
     "C":              62,       # EEG channels
