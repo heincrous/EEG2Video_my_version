@@ -200,6 +200,7 @@ def evaluate(net, data_iter, device, fusion=False):
     cos = nn.CosineSimilarity(dim=-1)
     total_mse, total_cos, count, dim = 0, 0, 0, None
     preds_all, targets_all = [], []
+
     with torch.no_grad():
         for X, y in data_iter:
             if fusion:
@@ -208,25 +209,40 @@ def evaluate(net, data_iter, device, fusion=False):
                 X = X.to(device)
             y = y.to(device)
             y_hat = net(X)
+
             total_mse += F.mse_loss(y_hat, y, reduction="sum").item()
             total_cos += cos(y_hat, y).mean().item() * y.size(0)
+
             preds_all.append(y_hat.cpu().numpy())
             targets_all.append(y.cpu().numpy())
             count += y.size(0)
             dim = y.size(1)
+
     preds_all = np.concatenate(preds_all, axis=0)
 
-    # --- Between-class variance only ---
+    # --- Fisher-style variance ratio ---
     try:
-        preds_all = preds_all.reshape(40, 5, 2, -1)   # [classes, clips, windows, emb_dim]
-        preds_all = preds_all.mean(axis=(1, 2))       # → [40, emb_dim]
-        class_means = preds_all
-        overall_mean = class_means.mean(axis=0)
-        between_var = np.mean(np.sum((class_means - overall_mean) ** 2, axis=1))
-    except Exception:
-        between_var = 0.0
+        # Reshape: [classes=40, clips=5, windows=2, emb_dim]
+        preds_all = preds_all.reshape(40, 5, 2, -1)
 
-    return total_mse / (count * dim), total_cos / count, between_var
+        # Collect per-class samples
+        class_samples = preds_all.reshape(40, -1, preds_all.shape[-1])  # [40, 10, emb_dim]
+
+        class_means = class_samples.mean(axis=1)    # [40, emb_dim]
+        overall_mean = class_means.mean(axis=0)     # [emb_dim]
+
+        # Between-class scatter
+        between = np.sum([len(c) * np.sum((m - overall_mean) ** 2)
+                          for m, c, in zip(class_means, class_samples)])
+
+        # Within-class scatter
+        within = np.sum([np.sum((c - m) ** 2) for m, c in zip(class_means, class_samples)])
+
+        fisher_score = between / (within + 1e-8)
+    except Exception:
+        fisher_score = 0.0
+
+    return total_mse / (count * dim), total_cos / count, fisher_score
 
 # ==========================================
 # Main
