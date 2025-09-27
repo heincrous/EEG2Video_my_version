@@ -28,8 +28,8 @@ FEATURE_TYPE = "DE"
 LOSS_TYPE = "cosine"
 
 # Whether to add variance regularisation
-USE_VAR_REG = True
-VAR_LAMBDA  = 0.05   # regularisation strength (~0.1 usually works well)
+USE_VAR_REG = False
+VAR_LAMBDA  = 0.01   # regularisation strength (~0.1 usually works well)
 
 FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
