@@ -308,8 +308,12 @@ for subname in sub_list:
                 "PSD": models.glfnet_mlp(out_dim=emb_dim_PSD, emb_dim=emb_dim_PSD, input_dim=62*5),
                 "segments": models.glfnet(out_dim=emb_dim_segments, emb_dim=emb_dim_segments, C=62, T=200)
             })
-            enc_state = torch.load(fusion_ckpt, map_location=run_device)
-            encoder.load_state_dict(enc_state["state_dict"] if "state_dict" in enc_state else enc_state, strict=False)
+            enc_state = torch.load(ckpt_path, map_location=run_device)
+            state_dict = enc_state["state_dict"] if "state_dict" in enc_state else enc_state
+            # Drop classifier head
+            state_dict = {k: v for k, v in state_dict.items() if not k.startswith("out.")}
+            missing, unexpected = encoder.load_state_dict(state_dict, strict=False)
+            print("Ignored keys:", missing, unexpected)
             for p in encoder.parameters(): 
                 p.requires_grad = False
             input_dim = encoder.total_dim
