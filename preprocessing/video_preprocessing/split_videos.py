@@ -18,7 +18,6 @@
 
 # === Standard libraries ===
 import os
-import sys
 import re
 
 # === Third-party libraries ===
