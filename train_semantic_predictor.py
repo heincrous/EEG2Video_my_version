@@ -30,7 +30,7 @@ FEATURE_TYPE     = "DE"
 USE_ALL_SUBJECTS = False
 LOSS_TYPE        = "mse"   # "mse", "cosine", "mse+cosine"
 
-USE_VAR_REG = False
+USE_VAR_REG = True
 VAR_LAMBDA  = 0.01
 
 FEATURE_PATHS = {
