@@ -27,7 +27,7 @@ emb_dim_PSD      = 256
 # Choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
 FEATURE_TYPES    = ["DE","PSD"]
 USE_ALL_SUBJECTS = False
-LOSS_TYPE        = "cosine"
+LOSS_TYPE        = "cosine+mse"
 
 USE_VAR_REG = False
 VAR_LAMBDA  = 0.01
