@@ -332,64 +332,65 @@ def load_encoder_with_ckpt(ft_list, subname):
 # ==========================================
 # Main
 # ==========================================
-clip_embeddings = np.load(CLIP_EMB_PATH)               # [7,40,5,77,768]
-clip_embeddings = clip_embeddings.reshape(-1, 77*768)  # [1400, 77*768]
-clip_embeddings = np.repeat(clip_embeddings, 2, axis=0)  # [2800, 77*768]
+if __name__ == "__main__":
+    clip_embeddings = np.load(CLIP_EMB_PATH)               # [7,40,5,77,768]
+    clip_embeddings = clip_embeddings.reshape(-1, 77*768)  # [1400, 77*768]
+    clip_embeddings = np.repeat(clip_embeddings, 2, axis=0)  # [2800, 77*768]
 
-labels_block = np.repeat(np.arange(40), 5*2)
-labels_all   = np.tile(labels_block, 7)
+    labels_block = np.repeat(np.arange(40), 5*2)
+    labels_all   = np.tile(labels_block, 7)
 
-sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else ["sub1.npy"]
+    sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else ["sub1.npy"]
 
-for subname in sub_list:
-    print(f"\n=== Training subject {subname} with {FEATURE_TYPES} ===")
+    for subname in sub_list:
+        print(f"\n=== Training subject {subname} with {FEATURE_TYPES} ===")
 
-    # --- Encoder from classifier checkpoint ---
-    encoder, input_dim, multi = load_encoder_with_ckpt(FEATURE_TYPES, subname)
+        # --- Encoder from classifier checkpoint ---
+        encoder, input_dim, multi = load_encoder_with_ckpt(FEATURE_TYPES, subname)
 
-    # --- Load features ---
-    features_all = load_subject_data(subname, FEATURE_TYPES)
-    feat_len = next(iter(features_all.values())).shape[0]
+        # --- Load features ---
+        features_all = load_subject_data(subname, FEATURE_TYPES)
+        feat_len = next(iter(features_all.values())).shape[0]
 
-    samples_per_block = 400
-    valid_len = samples_per_block * 7
+        samples_per_block = 400
+        valid_len = samples_per_block * 7
 
-    for ft in features_all:
-        features_all[ft] = features_all[ft][:valid_len]
+        for ft in features_all:
+            features_all[ft] = features_all[ft][:valid_len]
 
-    Y = clip_embeddings[:valid_len]
-    L = labels_all[:valid_len]
+        Y = clip_embeddings[:valid_len]
+        L = labels_all[:valid_len]
 
-    # Define splits
-    train_idx = np.arange(0, 5 * samples_per_block)
-    val_idx   = np.arange(5 * samples_per_block, 6 * samples_per_block)
-    test_idx  = np.arange(6 * samples_per_block, 7 * samples_per_block)
+        # Define splits
+        train_idx = np.arange(0, 5 * samples_per_block)
+        val_idx   = np.arange(5 * samples_per_block, 6 * samples_per_block)
+        test_idx  = np.arange(6 * samples_per_block, 7 * samples_per_block)
 
-    if multi:
-        feats_train, feats_val, feats_test = {}, {}, {}
-        for ft, arr in features_all.items():
+        if multi:
+            feats_train, feats_val, feats_test = {}, {}, {}
+            for ft, arr in features_all.items():
+                scaler = StandardScaler().fit(arr[train_idx].reshape(len(train_idx), -1))
+                feats_train[ft] = scaler.transform(arr[train_idx].reshape(len(train_idx), -1)).reshape(arr[train_idx].shape)
+                feats_val[ft]   = scaler.transform(arr[val_idx].reshape(len(val_idx), -1)).reshape(arr[val_idx].shape)
+                feats_test[ft]  = scaler.transform(arr[test_idx].reshape(len(test_idx), -1)).reshape(arr[test_idx].shape)
+            X_train, X_val, X_test = feats_train, feats_val, feats_test
+        else:
+            ft = FEATURE_TYPES[0]
+            arr = features_all[ft]
             scaler = StandardScaler().fit(arr[train_idx].reshape(len(train_idx), -1))
-            feats_train[ft] = scaler.transform(arr[train_idx].reshape(len(train_idx), -1)).reshape(arr[train_idx].shape)
-            feats_val[ft]   = scaler.transform(arr[val_idx].reshape(len(val_idx), -1)).reshape(arr[val_idx].shape)
-            feats_test[ft]  = scaler.transform(arr[test_idx].reshape(len(test_idx), -1)).reshape(arr[test_idx].shape)
-        X_train, X_val, X_test = feats_train, feats_val, feats_test
-    else:
-        ft = FEATURE_TYPES[0]
-        arr = features_all[ft]
-        scaler = StandardScaler().fit(arr[train_idx].reshape(len(train_idx), -1))
-        X_train = scaler.transform(arr[train_idx].reshape(len(train_idx), -1)).reshape(arr[train_idx].shape)
-        X_val   = scaler.transform(arr[val_idx].reshape(len(val_idx), -1)).reshape(arr[val_idx].shape)
-        X_test  = scaler.transform(arr[test_idx].reshape(len(test_idx), -1)).reshape(arr[test_idx].shape)
+            X_train = scaler.transform(arr[train_idx].reshape(len(train_idx), -1)).reshape(arr[train_idx].shape)
+            X_val   = scaler.transform(arr[val_idx].reshape(len(val_idx), -1)).reshape(arr[val_idx].shape)
+            X_test  = scaler.transform(arr[test_idx].reshape(len(test_idx), -1)).reshape(arr[test_idx].shape)
 
-    Y_train, Y_val, Y_test = Y[train_idx], Y[val_idx], Y[test_idx]
-    L_train, L_val, L_test = L[train_idx], L[val_idx], L[test_idx]
+        Y_train, Y_val, Y_test = Y[train_idx], Y[val_idx], Y[test_idx]
+        L_train, L_val, L_test = L[train_idx], L[val_idx], L[test_idx]
 
-    train_iter = Get_Dataloader(X_train, Y_train, L_train, True,  batch_size, multi=multi)
-    val_iter   = Get_Dataloader(X_val,   Y_val,   L_val,   False, batch_size, multi=multi)
-    test_iter  = Get_Dataloader(X_test,  Y_test,  L_test,  False, batch_size, multi=multi)
+        train_iter = Get_Dataloader(X_train, Y_train, L_train, True,  batch_size, multi=multi)
+        val_iter   = Get_Dataloader(X_val,   Y_val,   L_val,   False, batch_size, multi=multi)
+        test_iter  = Get_Dataloader(X_test,  Y_test,  L_test,  False, batch_size, multi=multi)
 
-    # --- Train semantic predictor ---
-    modelnet = SemanticPredictor(encoder, input_dim)
-    modelnet = train(modelnet, train_iter, val_iter, test_iter,
-                     num_epochs, lr, run_device,
-                     multi=multi, subname=subname)
+        # --- Train semantic predictor ---
+        modelnet = SemanticPredictor(encoder, input_dim)
+        modelnet = train(modelnet, train_iter, val_iter, test_iter,
+                        num_epochs, lr, run_device,
+                        multi=multi, subname=subname)
