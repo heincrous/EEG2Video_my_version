@@ -25,7 +25,7 @@ emb_dim_DE       = 64
 emb_dim_PSD      = 64
 
 # Choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["segments"]
+FEATURE_TYPES    = ["DE"]
 USE_ALL_SUBJECTS = False
 LOSS_TYPE        = "crossentropy"
 
