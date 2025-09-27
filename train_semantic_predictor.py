@@ -296,8 +296,8 @@ def load_subject_data(subname, feature_type):
 # Main
 # ==========================================
 # --- Load CLIP embeddings and double to match 2 EEG windows per clip ---
-clip_embeddings = np.load(CLIP_EMB_PATH)              # [7,40,5,77,768]
-clip_embeddings = clip_embeddings.reshape(-1, 77*768) # [1400, 77*768]
+clip_embeddings = np.load(CLIP_EMB_PATH)               # [7,40,5,77,768]
+clip_embeddings = clip_embeddings.reshape(-1, 77*768)  # [1400, 77*768]
 clip_embeddings = np.repeat(clip_embeddings, 2, axis=0)  # [2800, 77*768]
 
 labels_block = np.repeat(np.arange(40), 5*2)
@@ -332,11 +332,21 @@ for subname in sub_list:
         features_all = load_subject_data(subname, FEATURE_TYPE)
         feat_len     = features_all.shape[0]
 
-    Y = clip_embeddings[:feat_len]
-    L = labels_all[:feat_len]
+    # Make sure length is divisible by 7
+    samples_per_block = 400        # always 400 per block
+    valid_len = samples_per_block * 7  # 2800
 
-    # Block split (7 blocks)
-    samples_per_block = feat_len // 7
+    if FEATURE_TYPE == "fusion":
+        for ft in features_all:
+            features_all[ft] = features_all[ft][:valid_len]
+    else:
+        features_all = features_all[:valid_len]
+
+    Y = clip_embeddings[:valid_len]
+    L = labels_all[:valid_len]
+    feat_len = valid_len
+
+    # Define splits AFTER trimming
     train_idx = np.arange(0, 5 * samples_per_block)
     val_idx   = np.arange(5 * samples_per_block, 6 * samples_per_block)
     test_idx  = np.arange(6 * samples_per_block, 7 * samples_per_block)
@@ -367,3 +377,4 @@ for subname in sub_list:
     modelnet = train(modelnet, train_iter, val_iter, test_iter,
                      num_epochs, lr, run_device,
                      fusion=(FEATURE_TYPE=="fusion"), subname=subname)
+
