@@ -22,7 +22,7 @@ T            = 5
 run_device   = "cuda"
 
 # Select feature type: "segments", "DE", or "PSD"
-FEATURE_TYPE = "segments"
+FEATURE_TYPE = "DE"
 
 FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments_1per1s",
