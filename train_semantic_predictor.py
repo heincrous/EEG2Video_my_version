@@ -164,7 +164,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, fusion=F
 
     if best_state:
         net.load_state_dict(best_state)
-        save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
+        save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor"
         os.makedirs(save_dir, exist_ok=True)
         torch.save({
             "state_dict": net.state_dict(),
