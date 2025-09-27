@@ -25,7 +25,7 @@ run_device   = "cuda"
 FEATURE_TYPE = "DE"
 
 # Loss type: "crossentropy", "mse", "cosine", "mse+cosine"
-LOSS_TYPE = "mse+cosine"
+LOSS_TYPE = "mse"
 
 # Whether to add variance regularisation
 USE_VAR_REG = True
