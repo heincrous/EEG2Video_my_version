@@ -10,6 +10,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn import metrics
 from einops import rearrange
 import models
+import random
 
 # ==========================================
 # Config
@@ -186,7 +187,7 @@ print("Available subjects:", all_subs)
 #   sub_choice = "all"            # all subjects
 sub_choice = "all"
 
-if sub_choice == "all":
+if sub_choice == "sub1.npy":
     sub_list = all_subs
 else:
     sub_list = [sub_choice]
@@ -210,7 +211,9 @@ for subname in sub_list:
     Top_1, Top_K = [], []
 
     for test_set_id in range(7):
-        val_set_id = (test_set_id - 1) % 7
+        # choose any block for validation except the test block
+        candidate_ids = [i for i in range(7) if i != test_set_id]
+        val_set_id = random.choice(candidate_ids)
 
         train_data = np.concatenate([All_train[i] for i in range(7) if i!=test_set_id])
         train_label= np.concatenate([All_label[i] for i in range(7) if i!=test_set_id])
