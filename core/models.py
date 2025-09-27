@@ -14,7 +14,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from einops import rearrange
-from einops.layers.torch import Rearrange, Reduce
+from einops.layers.torch import Rearrange
 
 
 # ==========================================
