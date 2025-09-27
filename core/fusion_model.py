@@ -1,5 +1,4 @@
 # ==========================================
-# fusion_model.py
 # Configurable Fusion model combining raw EEG, DE, and PSD encoders
 # ==========================================
 

@@ -1,5 +1,4 @@
 # ==========================================
-# fusion_train_full.py
 # End-to-end FusionNet training with fixed 5/1/1 split + feature-wise normalisation
 # ==========================================
 

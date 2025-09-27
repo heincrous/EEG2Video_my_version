@@ -318,22 +318,21 @@ class TransformerEncoder(nn.Sequential):
         ])
 
 
-class ClassificationHead(nn.Sequential):
+class ClassificationHead(nn.Module):
     def __init__(self, emb_size, out_dim):
         super().__init__()
-        self.clshead = nn.Sequential(
-            Reduce('b n e -> b e', reduction='mean'),
-            nn.LayerNorm(emb_size),
-            nn.Linear(emb_size, out_dim),
-        )
-        self.fc = nn.Sequential(
-            nn.Linear(280, out_dim),
-        )
+        self.norm = nn.LayerNorm(emb_size)
+        self.fc   = None  # will initialize at first forward
+        self.out_dim = out_dim
 
     def forward(self, x):
-        x = x.contiguous().view(x.size(0), -1)
-        out = self.fc(x)
-        return out
+        # x: (B, n_tokens, emb_size)
+        B = x.size(0)
+        x = x.contiguous().view(B, -1)
+        if self.fc is None:
+            in_dim = x.size(1)
+            self.fc = nn.Linear(in_dim, self.out_dim).to(x.device)
+        return self.fc(x)
 
 
 class conformer(nn.Sequential):
