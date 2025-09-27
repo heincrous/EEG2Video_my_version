@@ -296,9 +296,10 @@ else:
 
 for subname in sub_list:
     print(f"\n=== Training subject {subname} ===")
+
     if FEATURE_TYPE == "fusion":
         # --- Fusion checkpoint naming ---
-        fusion_name = f"classifier_fusion_{'_'.join(sorted(MODEL_MAP.keys()))}_{subname.replace('.npy','')}.pt"
+        fusion_name = f"classifier_fusion_{'_'.join(sorted(FEATURE_TYPES))}_{subname.replace('.npy','')}.pt"
         fusion_ckpt = os.path.join("/content/drive/MyDrive/EEG2Video_checkpoints/classifier_checkpoints", fusion_name)
 
         if os.path.exists(fusion_ckpt):
@@ -308,26 +309,29 @@ for subname in sub_list:
                 "PSD": models.glfnet_mlp(out_dim=emb_dim_PSD, emb_dim=emb_dim_PSD, input_dim=62*5),
                 "segments": models.glfnet(out_dim=emb_dim_segments, emb_dim=emb_dim_segments, C=62, T=200)
             })
-            enc_state = torch.load(ckpt_path, map_location=run_device)
+            enc_state = torch.load(fusion_ckpt, map_location=run_device)
             state_dict = enc_state["state_dict"] if "state_dict" in enc_state else enc_state
             # Drop classifier head
             state_dict = {k: v for k, v in state_dict.items() if not k.startswith("out.")}
             missing, unexpected = encoder.load_state_dict(state_dict, strict=False)
             print("Ignored keys:", missing, unexpected)
-            for p in encoder.parameters(): 
+            for p in encoder.parameters():
                 p.requires_grad = False
             input_dim = encoder.total_dim
 
         else:
             # fallback: load individual encoders
-            encoders = {ft: MODEL_MAP[ft]() for ft in ["DE", "PSD", "segments"]}
+            encoders = {ft: MODEL_MAP[ft]() for ft in FEATURE_TYPES}
             for ft, enc in encoders.items():
                 ckpt_name = f"classifier_{ft}_{subname.replace('.npy','')}.pt"
                 ckpt_path = os.path.join("/content/drive/MyDrive/EEG2Video_checkpoints/classifier_checkpoints", ckpt_name)
                 if os.path.exists(ckpt_path):
                     print(f"Loading checkpoint for {ft}: {ckpt_path}")
                     enc_state = torch.load(ckpt_path, map_location=run_device)
-                    enc.load_state_dict(enc_state["state_dict"] if "state_dict" in enc_state else enc_state, strict=False)
+                    state_dict = enc_state["state_dict"] if "state_dict" in enc_state else enc_state
+                    state_dict = {k: v for k, v in state_dict.items() if not k.startswith("out.")}
+                    missing, unexpected = enc.load_state_dict(state_dict, strict=False)
+                    print(f"Ignored keys ({ft}):", missing, unexpected)
                 for p in enc.parameters():
                     p.requires_grad = False
             encoder = FusionNet(encoders)
@@ -341,8 +345,18 @@ for subname in sub_list:
         if os.path.exists(ckpt_path):
             print(f"Loading encoder checkpoint: {ckpt_path}")
             enc_state = torch.load(ckpt_path, map_location=run_device)
-            encoder.load_state_dict(enc_state["state_dict"] if "state_dict" in enc_state else enc_state, strict=False)
+            state_dict = enc_state["state_dict"] if "state_dict" in enc_state else enc_state
+            # Drop classifier head
+            state_dict = {k: v for k, v in state_dict.items() if not k.startswith("out.")}
+            missing, unexpected = encoder.load_state_dict(state_dict, strict=False)
+            print("Ignored keys:", missing, unexpected)
+
         for p in encoder.parameters():
             p.requires_grad = False
 
         input_dim = emb_dim_DE if FEATURE_TYPE=="DE" else emb_dim_PSD if FEATURE_TYPE=="PSD" else emb_dim_segments
+
+    modelnet = SemanticPredictor(encoder, input_dim)
+    modelnet = train(modelnet, train_iter, val_iter, test_iter,
+                     num_epochs, lr, run_device,
+                     fusion=(FEATURE_TYPE=="fusion"), subname=subname)
