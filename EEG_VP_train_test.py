@@ -186,7 +186,7 @@ print("Available subjects:", all_subs)
 #   sub_choice = "all"            # all subjects
 sub_choice = "all"
 
-if sub_choice == "all":
+if sub_choice == "sub1.npy":
     sub_list = all_subs
 else:
     sub_list = [sub_choice]
