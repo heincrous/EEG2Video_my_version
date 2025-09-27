@@ -287,23 +287,20 @@ def load_subject_data(subname, feature_type):
             path = os.path.join(FEATURE_PATHS[ft], subname)
             arr = np.load(path)
             if ft in ["DE", "PSD"]:
-                arr = arr.reshape(-1, 62 * 5)   # 2800 × 310
+                # [7,40,5,2,62,5] -> [2800, 62, 5]
+                arr = arr.reshape(-1, 62, 5)
             elif ft == "segments":
-                # [7,40,5,62,400] → split 400 into 2×200 windows → [2800, 62*200]
+                # [7,40,5,62,400] -> [2800, 62, 200]
                 arr = rearrange(arr, "a b c d (w t) -> (a b c w) d t", w=2, t=200)
-                arr = arr.reshape(arr.shape[0], 62 * 200)
             feats[ft] = arr
         return feats
     else:
         path = os.path.join(FEATURE_PATHS[feature_type], subname)
         arr = np.load(path)
         if feature_type in ["DE", "PSD"]:
-            arr = arr.reshape(-1, 62 * 5)
+            arr = arr.reshape(-1, 62, 5)
         elif feature_type == "segments":
             arr = rearrange(arr, "a b c d (w t) -> (a b c w) d t", w=2, t=200)
-            arr = arr.reshape(arr.shape[0], 62 * 200)
-        else:
-            arr = arr.reshape(-1, arr.shape[-1])
         return arr
 
 # ==========================================
@@ -347,7 +344,7 @@ for subname in sub_list:
         feat_len     = features_all.shape[0]
 
     # Make sure length is divisible by 7
-    samples_per_block = 400
+    samples_per_block = 400        # always 400 per block
     valid_len = samples_per_block * 7  # 2800
 
     if FEATURE_TYPE == "fusion":
@@ -368,16 +365,16 @@ for subname in sub_list:
     if FEATURE_TYPE == "fusion":
         feats_train, feats_val, feats_test = {}, {}, {}
         for ft, arr in features_all.items():
-            scaler = StandardScaler().fit(arr[train_idx])
-            feats_train[ft] = scaler.transform(arr[train_idx])
-            feats_val[ft]   = scaler.transform(arr[val_idx])
-            feats_test[ft]  = scaler.transform(arr[test_idx])
+            scaler = StandardScaler().fit(arr[train_idx].reshape(len(train_idx), -1))
+            feats_train[ft] = scaler.transform(arr[train_idx].reshape(len(train_idx), -1)).reshape(arr[train_idx].shape)
+            feats_val[ft]   = scaler.transform(arr[val_idx].reshape(len(val_idx), -1)).reshape(arr[val_idx].shape)
+            feats_test[ft]  = scaler.transform(arr[test_idx].reshape(len(test_idx), -1)).reshape(arr[test_idx].shape)
         X_train, X_val, X_test = feats_train, feats_val, feats_test
     else:
-        scaler = StandardScaler().fit(features_all[train_idx])
-        X_train = scaler.transform(features_all[train_idx])
-        X_val   = scaler.transform(features_all[val_idx])
-        X_test  = scaler.transform(features_all[test_idx])
+        scaler = StandardScaler().fit(features_all[train_idx].reshape(len(train_idx), -1))
+        X_train = scaler.transform(features_all[train_idx].reshape(len(train_idx), -1)).reshape(features_all[train_idx].shape)
+        X_val   = scaler.transform(features_all[val_idx].reshape(len(val_idx), -1)).reshape(features_all[val_idx].shape)
+        X_test  = scaler.transform(features_all[test_idx].reshape(len(test_idx), -1)).reshape(features_all[test_idx].shape)
 
     Y_train, Y_val, Y_test = Y[train_idx], Y[val_idx], Y[test_idx]
     L_train, L_val, L_test = L[train_idx], L[val_idx], L[test_idx]
