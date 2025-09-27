@@ -217,6 +217,11 @@ for subname in sub_list:
         test_data, test_label = All_train[test_set_id], All_label[test_set_id]
         val_data,  val_label  = All_train[val_set_id],  All_label[val_set_id]
 
+        # === Shuffle training set (keeps EEG-label pairs aligned) ===
+        perm = np.random.permutation(train_data.shape[0])
+        train_data  = train_data[perm]
+        train_label = train_label[perm]
+
         # ==========================================
         # Scaling and reshaping
         # ==========================================
