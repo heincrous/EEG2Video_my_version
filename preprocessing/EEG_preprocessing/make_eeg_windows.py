@@ -14,7 +14,7 @@
 #
 # Output:
 #   EEG2Video_data/processed/EEG_windows_200/subX.npy
-#       Shape = [7, 40, 5, 7, 62, 200]
+#       Shape = [7, 40, 5, 3, 62, 200]
 #   EEG2Video_data/processed/EEG_windows_100/subX.npy
 #       Shape = [7, 40, 5, 7, 62, 100]
 # ==========================================
