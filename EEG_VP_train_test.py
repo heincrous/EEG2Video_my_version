@@ -22,11 +22,11 @@ C            = 62
 T            = 5
 run_device   = "cuda"
 emb_dim_segments = 256
-emb_dim_DE   = 512
+emb_dim_DE   = 256
 emb_dim_PSD  = 64
 
 FEATURE_TYPE = "DE"   # "segments", "DE", or "PSD"
-LOSS_TYPE    = "crossentropy"  # "crossentropy", "mse", "cosine", "mse+cosine"
+LOSS_TYPE    = "cosine"  # "crossentropy", "mse", "cosine", "mse+cosine"
 
 USE_VAR_REG = False
 VAR_LAMBDA  = 0.01   # variance regularisation strength
