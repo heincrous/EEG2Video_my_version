@@ -38,7 +38,7 @@ CONFIG = {
     "segments_dir": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
     "de_dir":       "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s",
     "psd_dir":      "/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s",
-    "subj_id":        "sub3.npy"
+    "subj_id":      "sub3.npy"
 }
 
 
