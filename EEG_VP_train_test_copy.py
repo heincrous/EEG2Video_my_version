@@ -24,6 +24,9 @@ run_device   = "cuda"
 def Get_Dataloader(features_dict, labels, istrain, batch_size):
     tensors = {k: torch.tensor(v, dtype=torch.float32) for k, v in features_dict.items()}
     labels  = torch.tensor(labels, dtype=torch.long)
+    # Debugging: ensure same length
+    lengths = [t.shape[0] for t in tensors.values()] + [labels.shape[0]]
+    assert len(set(lengths)) == 1, f"Size mismatch: {lengths}"
     return data.DataLoader(data.TensorDataset(*(list(tensors.values()) + [labels])),
                            batch_size, shuffle=istrain)
 
@@ -140,29 +143,27 @@ All_sub_top1, All_sub_top5 = [], []
 
 for subname in sub_list:
     seg_npy = np.load(os.path.join(seg_root, subname))   # (40,7,5,62,400)
-    de_npy  = np.load(os.path.join(de_root,  subname))   # shape consistent with DE
-    psd_npy = np.load(os.path.join(psd_root, subname))   # shape consistent with PSD
+    de_npy  = np.load(os.path.join(de_root,  subname))
+    psd_npy = np.load(os.path.join(psd_root, subname))
 
-    # reshape to (7,400, ...)
-    seg_all = rearrange(seg_npy, "c b r ch t -> b (c r) ch t")
-    de_all  = rearrange(de_npy,  "a b c d e f -> a (b c d) e f")
-    psd_all = rearrange(psd_npy, "a b c d e f -> a (b c d) e f")
+    # reshape to (7,400,...)
+    seg_all = rearrange(seg_npy, "c b r ch t -> b (c r) ch t")   # (7,400,62,400)
+    de_all  = rearrange(de_npy,  "a b c d e f -> a (b c d) e f") # (7,400,62,5)
+    psd_all = rearrange(psd_npy, "a b c d e f -> a (b c d) e f") # (7,400,62,5)
 
     Top_1, Top_K = [], []
 
     for test_set_id in range(7):
         val_set_id = (test_set_id - 1) % 7
+        train_idx = [i for i in range(7) if i not in [test_set_id, val_set_id]]
 
-        train_idx = [i for i in range(7) if i != test_set_id]
-
-        # split features
         splits = {}
         for feat_name, arr in zip(["segments","de","psd"], [seg_all,de_all,psd_all]):
-            train_data = np.concatenate([arr[i] for i in train_idx if i!=val_set_id])
+            train_data = np.concatenate([arr[i] for i in train_idx])
             val_data   = arr[val_set_id]
             test_data  = arr[test_set_id]
 
-            # scale each split independently
+            # flatten → scale → reshape back
             train_scaler = StandardScaler().fit(train_data.reshape(train_data.shape[0], -1))
             train_data   = train_scaler.transform(train_data.reshape(train_data.shape[0], -1)).reshape(train_data.shape)
 
@@ -174,16 +175,18 @@ for subname in sub_list:
 
             splits[feat_name] = {"train": train_data, "val": val_data, "test": test_data}
 
-        train_label= np.concatenate([All_label[i] for i in train_idx if i!=val_set_id])
-        val_label  = All_label[val_set_id]
-        test_label = All_label[test_set_id]
+        train_label = np.concatenate([All_label[i] for i in train_idx])
+        val_label   = All_label[val_set_id]
+        test_label  = All_label[test_set_id]
 
-        # build dataloaders
+        print(f"DEBUG {subname} Block{test_set_id}:",
+              {k:(v['train'].shape, v['val'].shape, v['test'].shape) for k,v in splits.items()},
+              "labels:", (train_label.shape, val_label.shape, test_label.shape))
+
         train_iter = Get_Dataloader({k:v["train"] for k,v in splits.items()}, train_label, True, batch_size)
         val_iter   = Get_Dataloader({k:v["val"]   for k,v in splits.items()}, val_label,   False, batch_size)
         test_iter  = Get_Dataloader({k:v["test"]  for k,v in splits.items()}, test_label,  False, batch_size)
 
-        # encoders
         encoders = {
             "segments": models.glfnet(out_dim=40, emb_dim=64, C=62, T=400),
             "de":       models.glfnet_mlp(out_dim=40, emb_dim=64, input_dim=310),
@@ -193,7 +196,6 @@ for subname in sub_list:
 
         modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr, run_device)
 
-        # final evaluation
         block_top1, block_top5 = [], []
         with torch.no_grad():
             for *Xs, y in test_iter:
