@@ -133,8 +133,16 @@ All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
 # ==========================================
 all_subs = os.listdir(data_path)
 print("Available subjects:", all_subs)
-sub_choice = "sub1.npy"
-sub_list = [all_subs]
+
+# Options:
+#   sub_choice = "sub1.npy"       # single subject
+#   sub_choice = "all"            # all subjects
+sub_choice = "all"
+
+if sub_choice == "all":
+    sub_list = all_subs
+else:
+    sub_list = [sub_choice]
 
 All_sub_top1, All_sub_top5 = [], []
 
