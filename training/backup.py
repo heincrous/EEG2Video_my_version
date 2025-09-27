@@ -8,9 +8,7 @@ from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
 # === Repo imports ===
-repo_root = "/content/EEG2Video_my_version"
-sys.path.append(repo_root)
-from core_files.models import shallownet, deepnet, eegnet, tsconv, conformer, glfnet_mlp
+from core.models import shallownet, deepnet, eegnet, tsconv, conformer, glfnet_mlp
 
 # -------------------------------------------------
 # Fusion model
