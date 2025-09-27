@@ -1,6 +1,6 @@
 # ==========================================
 # fusion_train_full.py
-# End-to-end FusionNet training script
+# End-to-end FusionNet training with 7-fold CV
 # ==========================================
 
 # === Standard libraries ===
@@ -14,7 +14,7 @@ from torch.utils import data
 from sklearn.preprocessing import StandardScaler
 
 # === Repo imports ===
-from core.models import glfnet, glfnet_mlp
+from core.fusion_model import FusionNet
 
 
 # ==========================================
@@ -25,7 +25,7 @@ CONFIG = {
     "num_epochs":     100,
     "lr":             0.001,
     "weight_decay":   0.0,
-    "optimizer":      "Adam",   # "Adam" or "AdamW"
+    "optimizer":      "Adam",
     "C":              62,       # EEG channels
     "T":              200,      # 200 samples per 1s window (200 Hz)
     "emb_dim":        64,
@@ -33,32 +33,16 @@ CONFIG = {
     "psd_dim":        310,      # 62*5
     "out_dim":        40,       # 40 classes
     "device":         "cuda",
-    "output_dir":     "./output_dir/",
-    "network_name":   "FusionNet"
+
+    # Data paths
+    "segments_dir":   "EEG2Video_data/processed/EEG_segments",
+    "de_dir":         "EEG2Video_data/processed/EEG_DE_1per1s",
+    "psd_dir":        "EEG2Video_data/processed/EEG_PSD_1per1s"
 }
 
 
 # ==========================================
-# FusionNet definition
-# ==========================================
-class FusionNet(nn.Module):
-    def __init__(self, out_dim, emb_dim, C, T, de_dim, psd_dim):
-        super(FusionNet, self).__init__()
-        self.raw_encoder = glfnet(out_dim=emb_dim, emb_dim=emb_dim, C=C, T=T)
-        self.de_encoder  = glfnet_mlp(out_dim=emb_dim, emb_dim=emb_dim, input_dim=de_dim)
-        self.psd_encoder = glfnet_mlp(out_dim=emb_dim, emb_dim=emb_dim, input_dim=psd_dim)
-        self.classifier  = nn.Linear(emb_dim * 3, out_dim)
-
-    def forward(self, raw, de, psd):
-        raw_feat = self.raw_encoder(raw)
-        de_feat  = self.de_encoder(de)
-        psd_feat = self.psd_encoder(psd)
-        fused = torch.cat([raw_feat, de_feat, psd_feat], dim=1)
-        return self.classifier(fused)
-
-
-# ==========================================
-# Dataset
+# Dataset wrapper
 # ==========================================
 class FusionDataset(data.Dataset):
     def __init__(self, raw, de, psd, labels):
@@ -87,27 +71,23 @@ def get_dataloader(raw, de, psd, labels, is_train, batch_size):
 # Preprocessing
 # ==========================================
 def split_segments_to_windows(segments):
-    # segments: (7,40,5,62,400) -> (7,40,5,2,62,200)
+    # (7,40,5,62,400) -> (7,40,5,2,62,200)
     first = segments[..., :, :200]
     second = segments[..., :, 200:]
-    return np.stack([first, second], axis=3)  # insert window dim
+    return np.stack([first, second], axis=3)
 
 
-def flatten_and_labels(raw, de, psd, gt_labels):
-    # raw: (7,40,5,2,62,200), de/psd: (7,40,5,2,62,5), labels: (7,40)
+def flatten_and_labels(raw, de, psd):
+    # raw: (7,40,5,2,62,200), de/psd: (7,40,5,2,62,5)
     n_blocks, n_cls, n_clips, n_win = raw.shape[:4]
     N = n_blocks * n_cls * n_clips * n_win
     raw = raw.reshape(N, 1, CONFIG["C"], CONFIG["T"])
     de  = de.reshape(N, CONFIG["C"], 5)
     psd = psd.reshape(N, CONFIG["C"], 5)
 
-    labels = []
-    for b in range(n_blocks):
-        for c in range(n_cls):
-            for clip in range(n_clips):
-                for w in range(n_win):
-                    labels.append(gt_labels[b, c])
-    labels = np.array(labels, dtype=np.int64)
+    # Labels from block structure
+    labels_block = np.repeat(np.arange(n_cls), n_clips * n_win)  # 40*10 = 400 per block
+    labels = np.tile(labels_block, n_blocks)                     # 7*400 = 2800 total
     return raw, de, psd, labels
 
 
@@ -155,7 +135,7 @@ def evaluate(model, dataloader, device):
 
 
 # ==========================================
-# Training
+# Training loop
 # ==========================================
 def train_fusion(train_loader, val_loader, test_loader, cfg):
     device = cfg["device"]
@@ -164,14 +144,10 @@ def train_fusion(train_loader, val_loader, test_loader, cfg):
     if cfg["optimizer"] == "Adam":
         optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"],
                                      weight_decay=cfg["weight_decay"])
-    elif cfg["optimizer"] == "AdamW":
+    else:
         optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["lr"],
                                       weight_decay=cfg["weight_decay"])
-    else:
-        raise ValueError(f"Unsupported optimizer {cfg['optimizer']}")
     loss_fn = nn.CrossEntropyLoss()
-
-    best_val_top1, best_state = 0, None
 
     for epoch in range(cfg["num_epochs"]):
         model.train()
@@ -196,58 +172,60 @@ def train_fusion(train_loader, val_loader, test_loader, cfg):
         val_loss, val_top1, val_top5 = evaluate(model, val_loader, device)
         test_loss, test_top1, test_top5 = evaluate(model, test_loader, device)
 
-        if val_top1 > best_val_top1:
-            best_val_top1 = val_top1
-            best_state = model.state_dict()
-
         print(f"[Epoch {epoch+1}] "
               f"Train loss: {train_loss:.4f} | Top1: {train_top1:.3f}, Top5: {train_top5:.3f} || "
               f"Val loss: {val_loss:.4f} | Top1: {val_top1:.3f}, Top5: {val_top5:.3f} || "
               f"Test loss: {test_loss:.4f} | Top1: {test_top1:.3f}, Top5: {test_top5:.3f}")
 
-    save_path = os.path.join(cfg["output_dir"], cfg["network_name"] + "_best.pth")
-    if best_state:
-        torch.save(best_state, save_path)
-        print(f"Best model saved to {save_path}")
-    else:
-        print("No improvement during training.")
     return model
 
 
 # ==========================================
-# Main entry (example use)
+# Main with 7-fold CV
 # ==========================================
 if __name__ == "__main__":
-    # Example: load subject file (replace with real path)
-    subj = np.load("EEG2Video_data/raw/EEG/sub3.npy", allow_pickle=True).item()
-    segments, de, psd = subj["segments"], subj["de"], subj["psd"]
+    subj_id = "sub3.npy"
 
-    # Split into windows and align
+    segments = np.load(os.path.join(CONFIG["segments_dir"], subj_id))
+    de       = np.load(os.path.join(CONFIG["de_dir"], subj_id))
+    psd      = np.load(os.path.join(CONFIG["psd_dir"], subj_id))
+
     raw = split_segments_to_windows(segments)
-    raw, de, psd, labels = flatten_and_labels(raw, de, psd, subj["labels"])
+    raw, de, psd, labels = flatten_and_labels(raw, de, psd)
 
-    # Split dataset indices (here simple 70/15/15 split)
-    N = len(labels)
-    idx = np.arange(N)
-    np.random.shuffle(idx)
-    n_train, n_val = int(0.7*N), int(0.85*N)
-    train_idx, val_idx, test_idx = idx[:n_train], idx[n_train:n_val], idx[n_val:]
+    n_blocks = 7
+    samples_per_block = labels.size // n_blocks
+    raw    = raw.reshape(n_blocks, samples_per_block, 1, CONFIG["C"], CONFIG["T"])
+    de     = de.reshape(n_blocks, samples_per_block, CONFIG["C"], 5)
+    psd    = psd.reshape(n_blocks, samples_per_block, CONFIG["C"], 5)
+    labels = labels.reshape(n_blocks, samples_per_block)
 
-    raw_train, raw_val, raw_test = raw[train_idx], raw[val_idx], raw[test_idx]
-    de_train, de_val, de_test   = de[train_idx], de[val_idx], de[test_idx]
-    psd_train, psd_val, psd_test = psd[train_idx], psd[val_idx], psd[test_idx]
-    y_train, y_val, y_test      = labels[train_idx], labels[val_idx], labels[test_idx]
+    for test_block in range(n_blocks):
+        val_block = (test_block - 1) % n_blocks
+        train_blocks = [b for b in range(n_blocks) if b not in [test_block, val_block]]
 
-    # Apply scaling
-    raw_train, raw_val, raw_test = apply_scaling(raw_train, raw_val, raw_test)
-    de_train, de_val, de_test    = apply_scaling(de_train, de_val, de_test)
-    psd_train, psd_val, psd_test = apply_scaling(psd_train, psd_val, psd_test)
+        raw_train = raw[train_blocks].reshape(-1, 1, CONFIG["C"], CONFIG["T"])
+        de_train  = de[train_blocks].reshape(-1, CONFIG["C"], 5)
+        psd_train = psd[train_blocks].reshape(-1, CONFIG["C"], 5)
+        y_train   = labels[train_blocks].reshape(-1)
 
-    # Build loaders
-    train_loader = get_dataloader(raw_train, de_train, psd_train, y_train, True, CONFIG["batch_size"])
-    val_loader   = get_dataloader(raw_val,   de_val,   psd_val,   y_val,   False, CONFIG["batch_size"])
-    test_loader  = get_dataloader(raw_test,  de_test,  psd_test,  y_test,  False, CONFIG["batch_size"])
+        raw_val = raw[val_block].reshape(-1, 1, CONFIG["C"], CONFIG["T"])
+        de_val  = de[val_block].reshape(-1, CONFIG["C"], 5)
+        psd_val = psd[val_block].reshape(-1, CONFIG["C"], 5)
+        y_val   = labels[val_block].reshape(-1)
 
-    # Train
-    os.makedirs(CONFIG["output_dir"], exist_ok=True)
-    train_fusion(train_loader, val_loader, test_loader, CONFIG)
+        raw_test = raw[test_block].reshape(-1, 1, CONFIG["C"], CONFIG["T"])
+        de_test  = de[test_block].reshape(-1, CONFIG["C"], 5)
+        psd_test = psd[test_block].reshape(-1, CONFIG["C"], 5)
+        y_test   = labels[test_block].reshape(-1)
+
+        raw_train, raw_val, raw_test = apply_scaling(raw_train, raw_val, raw_test)
+        de_train, de_val, de_test    = apply_scaling(de_train, de_val, de_test)
+        psd_train, psd_val, psd_test = apply_scaling(psd_train, psd_val, psd_test)
+
+        train_loader = get_dataloader(raw_train, de_train, psd_train, y_train, True, CONFIG["batch_size"])
+        val_loader   = get_dataloader(raw_val,   de_val,   psd_val,   y_val,   False, CONFIG["batch_size"])
+        test_loader  = get_dataloader(raw_test,  de_test,  psd_test,  y_test,  False, CONFIG["batch_size"])
+
+        print(f"\n=== Fold {test_block+1}/7 | Test block = {test_block}, Val block = {val_block} ===")
+        train_fusion(train_loader, val_loader, test_loader, CONFIG)
