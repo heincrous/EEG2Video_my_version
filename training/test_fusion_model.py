@@ -35,8 +35,8 @@ CONFIG = {
 
     # Encoders (configurable)
     "raw_model":      "glfnet",      # options: shallownet, deepnet, eegnet, tsconv, conformer, glfnet
-    "de_model":       "mlpnet",      # options: mlpnet, glfnet_mlp
-    "psd_model":      "mlpnet",      # options: mlpnet, glfnet_mlp
+    "de_model":       "glfnet_mlp",      # options: mlpnet, glfnet_mlp
+    "psd_model":      "glfnet_mlp",      # options: mlpnet, glfnet_mlp
 
     # Data paths
     "segments_dir": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
