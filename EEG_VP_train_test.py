@@ -24,6 +24,13 @@ run_device   = "cuda"
 # Select feature type: "segments", "DE", or "PSD"
 FEATURE_TYPE = "DE"
 
+# Loss type: "crossentropy", "mse", "cosine", "mse+cosine"
+LOSS_TYPE = "crossentropy"
+
+# Whether to add variance regularisation
+USE_VAR_REG = True
+VAR_LAMBDA  = 0.01   # regularisation strength
+
 FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments_1per1s",
     "DE":       "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s",
@@ -90,7 +97,11 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
     net.to(device)
 
     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=0.01)
-    loss_fn   = nn.CrossEntropyLoss()
+
+    # define base loss functions
+    ce_loss   = nn.CrossEntropyLoss()
+    mse_loss  = nn.MSELoss()
+    cos_loss  = nn.CosineEmbeddingLoss()
 
     best_val_acc = 0.0
     best_state   = None
@@ -102,10 +113,39 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device):
             X, y = X.to(device), y.to(device)
             optimizer.zero_grad()
             y_hat = net(X)
-            loss  = loss_fn(y_hat, y)
+
+            # ------------------------------------------
+            # choose loss type
+            # ------------------------------------------
+            if LOSS_TYPE == "crossentropy":
+                loss = ce_loss(y_hat, y)
+
+            elif LOSS_TYPE == "mse":
+                # one-hot targets
+                y_onehot = torch.nn.functional.one_hot(y, num_classes=40).float()
+                loss = mse_loss(y_hat, y_onehot)
+
+            elif LOSS_TYPE == "cosine":
+                y_onehot = torch.nn.functional.one_hot(y, num_classes=40).float()
+                target = torch.ones(y_hat.size(0), device=device)
+                loss = cos_loss(y_hat, y_onehot, target)
+
+            elif LOSS_TYPE == "mse+cosine":
+                y_onehot = torch.nn.functional.one_hot(y, num_classes=40).float()
+                target = torch.ones(y_hat.size(0), device=device)
+                loss = mse_loss(y_hat, y_onehot) + cos_loss(y_hat, y_onehot, target)
+
+            # ------------------------------------------
+            # optional variance regularisation
+            # ------------------------------------------
+            if USE_VAR_REG:
+                var = torch.var(y_hat, dim=0).mean()
+                loss -= VAR_LAMBDA * var  # encourage variance across predictions
+
             loss.backward()
             optimizer.step()
             metric.add(loss.item() * X.shape[0], cal_accuracy(y_hat, y), X.shape[0])
+
         train_loss = metric[0] / metric[2]
         train_acc  = metric[1] / metric[2]
         val_acc    = evaluate_accuracy_gpu(net, val_iter, device)
