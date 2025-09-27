@@ -25,7 +25,7 @@ run_device   = "cuda"
 FEATURE_TYPE = "DE"
 
 # Loss type: "crossentropy", "mse", "cosine", "mse+cosine"
-LOSS_TYPE = "crossentropy"
+LOSS_TYPE = "mse+cosine"
 
 # Whether to add variance regularisation
 USE_VAR_REG = True
@@ -177,7 +177,7 @@ print("Available subjects:", all_subs)
 # Options:
 #   sub_choice = "sub1.npy"       # single subject
 #   sub_choice = "all"            # all subjects
-sub_choice = "all"
+sub_choice = "sub1"
 
 if sub_choice == "all":
     sub_list = all_subs
