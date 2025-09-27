@@ -35,9 +35,10 @@ CONFIG = {
     "device":         "cuda",
 
     # Data paths
-    "segments_dir":   "EEG2Video_data/processed/EEG_segments",
-    "de_dir":         "EEG2Video_data/processed/EEG_DE_1per1s",
-    "psd_dir":        "EEG2Video_data/processed/EEG_PSD_1per1s"
+    "segments_dir": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
+    "de_dir":       "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s",
+    "psd_dir":      "/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s",
+    "subj_id":        "sub3.npy"
 }
 
 
@@ -184,8 +185,6 @@ def train_fusion(train_loader, val_loader, test_loader, cfg):
 # Main with 7-fold CV
 # ==========================================
 if __name__ == "__main__":
-    subj_id = "sub3.npy"
-
     segments = np.load(os.path.join(CONFIG["segments_dir"], subj_id))
     de       = np.load(os.path.join(CONFIG["de_dir"], subj_id))
     psd      = np.load(os.path.join(CONFIG["psd_dir"], subj_id))
