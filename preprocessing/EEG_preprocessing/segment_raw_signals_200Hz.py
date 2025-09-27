@@ -64,7 +64,7 @@ def list_subject_files(directory):
 all_files = list_subject_files(raw_dir)
 print("Available subject files:")
 for i, f in enumerate(all_files):
-    print(f"{i}: {f}")
+    print(f"[{i}] {f}")
 
 chosen = input("Enter indices of subjects to process (comma separated, 'all' for all): ").strip()
 if chosen.lower() == "all":
