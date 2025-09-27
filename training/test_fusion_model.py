@@ -1,6 +1,6 @@
 # ==========================================
 # fusion_train_full.py
-# End-to-end FusionNet training with 7-fold CV + feature-wise normalisation
+# End-to-end FusionNet training with fixed 5/1/1 split + feature-wise normalisation
 # ==========================================
 
 # === Standard libraries ===
@@ -33,6 +33,11 @@ CONFIG = {
     "psd_dim":        310,      # 62*5
     "out_dim":        40,       # 40 classes
     "device":         "cuda",
+
+    # Encoders (configurable)
+    "raw_model":      "glfnet",      # options: shallownet, deepnet, eegnet, tsconv, conformer, glfnet
+    "de_model":       "glfnet_mlp",  # options: mlpnet, glfnet_mlp
+    "psd_model":      "glfnet_mlp",  # options: mlpnet, glfnet_mlp
 
     # Data paths
     "segments_dir": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
@@ -140,8 +145,18 @@ def evaluate(model, dataloader, device):
 # ==========================================
 def train_fusion(train_loader, val_loader, test_loader, cfg):
     device = cfg["device"]
-    model = FusionNet(cfg["out_dim"], cfg["emb_dim"], cfg["C"], cfg["T"],
-                      cfg["de_dim"], cfg["psd_dim"]).to(device)
+    model = FusionNet(
+        out_dim=cfg["out_dim"],
+        emb_dim=cfg["emb_dim"],
+        C=cfg["C"],
+        T=cfg["T"],
+        de_dim=cfg["de_dim"],
+        psd_dim=cfg["psd_dim"],
+        raw_model=cfg["raw_model"],
+        de_model=cfg["de_model"],
+        psd_model=cfg["psd_model"]
+    ).to(device)
+
     if cfg["optimizer"] == "Adam":
         optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"],
                                      weight_decay=cfg["weight_decay"])
@@ -207,7 +222,7 @@ def train_fusion(train_loader, val_loader, test_loader, cfg):
 
 
 # ==========================================
-# Main with 7-fold CV
+# Main: 1-fold split (first 5 train, 6th val, 7th test)
 # ==========================================
 if __name__ == "__main__":
     segments = np.load(os.path.join(CONFIG["segments_dir"], CONFIG["subj_id"]))
@@ -224,33 +239,34 @@ if __name__ == "__main__":
     psd    = psd.reshape(n_blocks, samples_per_block, CONFIG["C"], 5)
     labels = labels.reshape(n_blocks, samples_per_block)
 
-    for test_block in range(n_blocks):
-        val_block = (test_block - 1) % n_blocks
-        train_blocks = [b for b in range(n_blocks) if b not in [test_block, val_block]]
+    # --- 1-fold split ---
+    train_blocks = list(range(0, 5))   # first 5
+    val_block    = 5                   # 6th
+    test_block   = 6                   # 7th
 
-        raw_train = raw[train_blocks].reshape(-1, 1, CONFIG["C"], CONFIG["T"])
-        de_train  = de[train_blocks].reshape(-1, CONFIG["C"], 5)
-        psd_train = psd[train_blocks].reshape(-1, CONFIG["C"], 5)
-        y_train   = labels[train_blocks].reshape(-1)
+    raw_train = raw[train_blocks].reshape(-1, 1, CONFIG["C"], CONFIG["T"])
+    de_train  = de[train_blocks].reshape(-1, CONFIG["C"], 5)
+    psd_train = psd[train_blocks].reshape(-1, CONFIG["C"], 5)
+    y_train   = labels[train_blocks].reshape(-1)
 
-        raw_val = raw[val_block].reshape(-1, 1, CONFIG["C"], CONFIG["T"])
-        de_val  = de[val_block].reshape(-1, CONFIG["C"], 5)
-        psd_val = psd[val_block].reshape(-1, CONFIG["C"], 5)
-        y_val   = labels[val_block].reshape(-1)
+    raw_val = raw[val_block].reshape(-1, 1, CONFIG["C"], CONFIG["T"])
+    de_val  = de[val_block].reshape(-1, CONFIG["C"], 5)
+    psd_val = psd[val_block].reshape(-1, CONFIG["C"], 5)
+    y_val   = labels[val_block].reshape(-1)
 
-        raw_test = raw[test_block].reshape(-1, 1, CONFIG["C"], CONFIG["T"])
-        de_test  = de[test_block].reshape(-1, CONFIG["C"], 5)
-        psd_test = psd[test_block].reshape(-1, CONFIG["C"], 5)
-        y_test   = labels[test_block].reshape(-1)
+    raw_test = raw[test_block].reshape(-1, 1, CONFIG["C"], CONFIG["T"])
+    de_test  = de[test_block].reshape(-1, CONFIG["C"], 5)
+    psd_test = psd[test_block].reshape(-1, CONFIG["C"], 5)
+    y_test   = labels[test_block].reshape(-1)
 
-        # Feature-wise scaling (separate scaler per feature type)
-        raw_train, raw_val, raw_test, _ = scale_feature(raw_train, raw_val, raw_test)
-        de_train, de_val, de_test, _    = scale_feature(de_train, de_val, de_test)
-        psd_train, psd_val, psd_test, _ = scale_feature(psd_train, psd_val, psd_test)
+    # Feature-wise scaling
+    raw_train, raw_val, raw_test, _ = scale_feature(raw_train, raw_val, raw_test)
+    de_train, de_val, de_test, _    = scale_feature(de_train, de_val, de_test)
+    psd_train, psd_val, psd_test, _ = scale_feature(psd_train, psd_val, psd_test)
 
-        train_loader = get_dataloader(raw_train, de_train, psd_train, y_train, True, CONFIG["batch_size"])
-        val_loader   = get_dataloader(raw_val,   de_val,   psd_val,   y_val,   False, CONFIG["batch_size"])
-        test_loader  = get_dataloader(raw_test,  de_test,  psd_test,  y_test,  False, CONFIG["batch_size"])
+    train_loader = get_dataloader(raw_train, de_train, psd_train, y_train, True, CONFIG["batch_size"])
+    val_loader   = get_dataloader(raw_val,   de_val,   psd_val,   y_val,   False, CONFIG["batch_size"])
+    test_loader  = get_dataloader(raw_test,  de_test,  psd_test,  y_test,  False, CONFIG["batch_size"])
 
-        print(f"\n=== Fold {test_block+1}/7 | Test block = {test_block}, Val block = {val_block} ===")
-        train_fusion(train_loader, val_loader, test_loader, CONFIG)
+    print("\n=== 1-Fold Split | Train blocks = [0–4], Val block = 5, Test block = 6 ===")
+    train_fusion(train_loader, val_loader, test_loader, CONFIG)
