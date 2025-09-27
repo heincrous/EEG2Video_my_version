@@ -25,7 +25,7 @@ import numpy as np
 from tqdm import tqdm
 
 # === Repo imports ===
-from DE_PSD import DE_PSD
+from .DE_PSD import DE_PSD
 
 
 # ==========================================
