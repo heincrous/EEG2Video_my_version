@@ -50,20 +50,21 @@ def build_encoder(name, out_dim, emb_dim=None, C=None, T=None, input_dim=None, f
 # ==========================================
 class FusionNet(nn.Module):
     def __init__(self, encoder_cfgs, num_classes=40, emb_dim=128):
-        """
-        encoder_cfgs: dict mapping feature_name -> (model_name, kwargs)
-          e.g. {
-            "raw": ("glfnet", {"out_dim": emb_dim, "emb_dim": emb_dim, "C": 62, "T": 200}),
-            "de":  ("glfnet_mlp", {"out_dim": emb_dim, "emb_dim": emb_dim, "input_dim": 310}),
-          }
-        """
         super().__init__()
         self.encoders = nn.ModuleDict()
         for feat_type, (model_name, kwargs) in encoder_cfgs.items():
             self.encoders[feat_type] = build_encoder(model_name, feature_type=feat_type, **kwargs)
 
-        # infer feature dimension dynamically
-        total_dim = sum([list(enc.modules())[-1].out_features for enc in self.encoders.values()])
+        # compute total fused dimension safely
+        total_dim = 0
+        for enc in self.encoders.values():
+            if hasattr(enc, "get_output_dim"):
+                total_dim += enc.get_output_dim()
+            else:
+                # fallback: last Linear
+                last_linear = [m for m in enc.modules() if isinstance(m, nn.Linear)][-1]
+                total_dim += last_linear.out_features
+
         self.classifier = nn.Linear(total_dim, num_classes)
 
     def forward(self, inputs, return_feats=False):

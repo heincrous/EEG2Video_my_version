@@ -42,6 +42,9 @@ class shallownet(nn.Module):
     def forward(self, x):
         x = self.net(x)
         return self.out(x.view(x.size(0), -1))
+    
+    def get_output_dim(self):   # <–– expose to FusionNet
+        return self._output_dim
 
 
 # ==========================================
@@ -76,6 +79,9 @@ class deepnet(nn.Module):
     def forward(self, x):
         x = self.net(x)
         return self.out(x.view(x.size(0), -1))
+    
+    def get_output_dim(self):   # <–– expose to FusionNet
+        return self._output_dim
 
 
 # ==========================================
@@ -103,6 +109,9 @@ class eegnet(nn.Module):
     def forward(self, x):
         x = self.net(x)
         return self.out(x.view(x.size(0), -1))
+    
+    def get_output_dim(self):   # <–– expose to FusionNet
+        return self._output_dim
 
 
 # ==========================================
@@ -130,6 +139,9 @@ class tsconv(nn.Module):
     def forward(self, x):
         x = self.net(x)
         return self.out(x.view(x.size(0), -1))
+    
+    def get_output_dim(self):   # <–– expose to FusionNet
+        return self._output_dim
 
 
 # ==========================================
@@ -244,6 +256,9 @@ class conformer(nn.Module):
         x = self.patch(x)
         x = self.encoder(x)
         return self.fc(x.view(x.size(0), -1))
+    
+    def get_output_dim(self):   # <–– expose to FusionNet
+        return self._output_dim
 
 
 # ==========================================
@@ -266,6 +281,9 @@ class glfnet(nn.Module):
         occipital_x = x[:, :, self.occipital_index, :]
         occipital_feature = self.occipital_localnet(occipital_x)
         return self.out(torch.cat((global_feature, occipital_feature), 1))
+    
+    def get_output_dim(self):   # <–– expose to FusionNet
+        return self._output_dim
 
 
 class mlpnet(nn.Module):
@@ -286,6 +304,9 @@ class mlpnet(nn.Module):
 
     def forward(self, x):
         return self.net(x)
+    
+    def get_output_dim(self):   # <–– expose to FusionNet
+        return self._output_dim
 
 
 class glfnet_mlp(nn.Module):
@@ -305,3 +326,6 @@ class glfnet_mlp(nn.Module):
         occipital_x = x[:, self.occipital_index, :]
         occipital_feature = self.occipital_localnet(occipital_x)
         return self.out(torch.cat((global_feature, occipital_feature), 1))
+    
+    def get_output_dim(self):   # <–– expose to FusionNet
+        return self._output_dim
