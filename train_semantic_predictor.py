@@ -1,5 +1,5 @@
 # ==========================================
-# EEG → CLIP semantic predictor (per subject)
+# EEG → CLIP semantic predictor
 # ==========================================
 import os
 import numpy as np

@@ -183,9 +183,6 @@ All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
 # ==========================================
 # Main
 # ==========================================
-# ==========================================
-# Subject selection
-# ==========================================
 if FEATURE_TYPE == "fusion":
     sub_list = os.listdir(FEATURE_PATHS["DE"]) if USE_ALL_SUBJECTS else ["sub1.npy"]
 else:
