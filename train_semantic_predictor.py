@@ -238,6 +238,12 @@ def evaluate(net, data_iter, device, fusion=False):
 # Main
 # ==========================================
 clip_embeddings = np.load(CLIP_EMB_PATH)   # [7,40,5,77,768]
+
+# Always duplicate for 2 EEG windows
+clip_embeddings = np.expand_dims(clip_embeddings, axis=3)   # [7,40,5,1,77,768]
+clip_embeddings = np.repeat(clip_embeddings, 2, axis=3)     # [7,40,5,2,77,768]
+clip_embeddings = clip_embeddings.reshape(-1, 77*768)
+
 clip_embeddings = clip_embeddings.reshape(-1, 77*768)
 
 if FEATURE_TYPE == "fusion":
