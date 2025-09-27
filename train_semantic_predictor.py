@@ -295,10 +295,10 @@ def load_subject_data(subname, feature_type):
 # ==========================================
 # Main
 # ==========================================
-clip_embeddings = np.load(CLIP_EMB_PATH)
-clip_embeddings = np.expand_dims(clip_embeddings, axis=3)
-clip_embeddings = np.repeat(clip_embeddings, 2, axis=3)
-clip_embeddings = clip_embeddings.reshape(-1, 77*768)
+# --- Load CLIP embeddings and double to match 2 EEG windows per clip ---
+clip_embeddings = np.load(CLIP_EMB_PATH)              # [7,40,5,77,768]
+clip_embeddings = clip_embeddings.reshape(-1, 77*768) # [1400, 77*768]
+clip_embeddings = np.repeat(clip_embeddings, 2, axis=0)  # [2800, 77*768]
 
 labels_block = np.repeat(np.arange(40), 5*2)
 labels_all   = np.tile(labels_block, 7)
