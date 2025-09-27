@@ -21,11 +21,11 @@ T             = 5
 run_device    = "cuda"
 
 emb_dim_segments = 256
-emb_dim_DE       = 256
+emb_dim_DE       = 128
 emb_dim_PSD      = 128
 
 # Choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["DE"]
+FEATURE_TYPES    = ["DE","PSD"]
 USE_ALL_SUBJECTS = False
 LOSS_TYPE        = "crossentropy"
 
