@@ -1,5 +1,5 @@
 # ==========================================
-# EEG → CLIP semantic predictor (with frozen encoders)
+# EEG → CLIP semantic predictor (with frozen encoders or fusion)
 # ==========================================
 import os
 import numpy as np
@@ -297,98 +297,41 @@ else:
 for subname in sub_list:
     print(f"\n=== Training subject {subname} ===")
     if FEATURE_TYPE == "fusion":
-        raw_data = {ft: np.load(os.path.join(FEATURE_PATHS[ft], subname)) for ft in ["segments", "DE", "PSD"]}
-    else:
-        raw_data = np.load(os.path.join(FEATURE_PATHS[FEATURE_TYPE], subname))
-
-    def reshape(ft, arr):
-        if ft in ["DE", "PSD"]:
-            return rearrange(arr, "a b c d e f -> a (b c d) e f")
-        elif ft == "segments":
-            return rearrange(arr, "a b c d (w t) -> a (b c w) d t", w=2)
+        # --- If you trained a fusion checkpoint ---
+        fusion_ckpt = f"/content/drive/MyDrive/EEG2Video_checkpoints/classifier_checkpoints/fusion_{subname.replace('.npy','')}.pt"
+        if os.path.exists(fusion_ckpt):
+            print(f"Loading whole fusion encoder: {fusion_ckpt}")
+            encoder = FusionNet({
+                "DE": models.glfnet_mlp(out_dim=emb_dim_DE, emb_dim=emb_dim_DE, input_dim=62*5),
+                "PSD": models.glfnet_mlp(out_dim=emb_dim_PSD, emb_dim=emb_dim_PSD, input_dim=62*5),
+                "segments": models.glfnet(out_dim=emb_dim_segments, emb_dim=emb_dim_segments, C=62, T=200)
+            })
+            enc_state = torch.load(fusion_ckpt, map_location=run_device)
+            encoder.load_state_dict(enc_state["state_dict"] if "state_dict" in enc_state else enc_state, strict=False)
+            for p in encoder.parameters(): p.requires_grad = False
+            input_dim = encoder.total_dim
         else:
-            raise ValueError
-
-    All_train = {ft: reshape(ft, raw_data[ft]) for ft in raw_data} if FEATURE_TYPE=="fusion" else reshape(FEATURE_TYPE, raw_data)
-
-    train_blocks, val_block, test_block = [0,1,2,3,4], 5, 6
-    train_targets = np.concatenate([clip_embeddings[i*samples_per_block:(i+1)*samples_per_block] for i in train_blocks])
-    val_targets   = clip_embeddings[val_block*samples_per_block:(val_block+1)*samples_per_block]
-    test_targets  = clip_embeddings[test_block*samples_per_block:(test_block+1)*samples_per_block]
-    train_labels = np.concatenate([labels_all[i*samples_per_block:(i+1)*samples_per_block] for i in train_blocks])
-    val_labels   = labels_all[val_block*samples_per_block:(val_block+1)*samples_per_block]
-    test_labels  = labels_all[test_block*samples_per_block:(test_block+1)*samples_per_block]
-
-    if FEATURE_TYPE == "fusion":
-        train_data, val_data, test_data = {}, {}, {}
-        for ft in All_train:
-            train_data[ft] = np.concatenate([All_train[ft][i] for i in train_blocks])
-            val_data[ft]   = All_train[ft][val_block]
-            test_data[ft]  = All_train[ft][test_block]
-            tr = train_data[ft].reshape(train_data[ft].shape[0], -1)
-            va = val_data[ft].reshape(val_data[ft].shape[0], -1)
-            te = test_data[ft].reshape(test_data[ft].shape[0], -1)
-            scaler = StandardScaler()
-            tr = scaler.fit_transform(tr); va = scaler.transform(va); te = scaler.transform(te)
-            if ft == "segments":
-                train_data[ft] = tr.reshape(-1, 1, C, 200)
-                val_data[ft]   = va.reshape(-1, 1, C, 200)
-                test_data[ft]  = te.reshape(-1, 1, C, 200)
-            else:
-                train_data[ft] = tr.reshape(-1, C, T)
-                val_data[ft]   = va.reshape(-1, C, T)
-                test_data[ft]  = te.reshape(-1, C, T)
-        train_iter = Get_Dataloader(train_data, train_targets, train_labels, True, batch_size, fusion=True)
-        val_iter   = Get_Dataloader(val_data,   val_targets,   val_labels,   False, batch_size, fusion=True)
-        test_iter  = Get_Dataloader(test_data,  test_targets,  test_labels,  False, batch_size, fusion=True)
-        encoders = {ft: MODEL_MAP[ft]() for ft in All_train}
-
-        # --- Load checkpoints + freeze ---
-        for ft, enc in encoders.items():
-            ckpt_path = f"/content/drive/MyDrive/EEG2Video_checkpoints/classifier_checkpoints/{ft}_{subname.replace('.npy','')}.pt"
-            if os.path.exists(ckpt_path):
-                print(f"Loading encoder checkpoint for {ft}: {ckpt_path}")
-                enc_state = torch.load(ckpt_path, map_location=run_device)
-                if "state_dict" in enc_state:
-                    enc.load_state_dict(enc_state["state_dict"], strict=False)
-                else:
-                    enc.load_state_dict(enc_state, strict=False)
-            for p in enc.parameters(): p.requires_grad = False
-
-        encoder  = FusionNet(encoders)
-        input_dim = encoder.total_dim
+            # fallback: load individual encoders then fuse
+            encoders = {ft: MODEL_MAP[ft]() for ft in ["DE","PSD","segments"]}
+            for ft, enc in encoders.items():
+                ckpt_path = f"/content/drive/MyDrive/EEG2Video_checkpoints/classifier_checkpoints/{ft}_{subname.replace('.npy','')}.pt"
+                if os.path.exists(ckpt_path):
+                    print(f"Loading checkpoint for {ft}: {ckpt_path}")
+                    enc_state = torch.load(ckpt_path, map_location=run_device)
+                    enc.load_state_dict(enc_state["state_dict"] if "state_dict" in enc_state else enc_state, strict=False)
+                for p in enc.parameters(): p.requires_grad = False
+            encoder = FusionNet(encoders)
+            input_dim = encoder.total_dim
     else:
-        train_data = np.concatenate([All_train[i] for i in train_blocks])
-        val_data   = All_train[val_block]
-        test_data  = All_train[test_block]
-        tr = train_data.reshape(train_data.shape[0], -1)
-        va = val_data.reshape(val_data.shape[0], -1)
-        te = test_data.reshape(test_data.shape[0], -1)
-        scaler = StandardScaler()
-        tr = scaler.fit_transform(tr); va = scaler.transform(va); te = scaler.transform(te)
-        if FEATURE_TYPE == "segments":
-            train_data = tr.reshape(-1, 1, C, 200)
-            val_data   = va.reshape(-1, 1, C, 200)
-            test_data  = te.reshape(-1, 1, C, 200)
-        else:
-            train_data = tr.reshape(-1, C, T)
-            val_data   = va.reshape(-1, C, T)
-            test_data  = te.reshape(-1, C, T)
-        train_iter = Get_Dataloader(train_data, train_targets, train_labels, True, batch_size)
-        val_iter   = Get_Dataloader(val_data,   val_targets,   val_labels,   False, batch_size)
-        test_iter  = Get_Dataloader(test_data,  test_targets,  test_labels,  False, batch_size)
-        encoder   = MODEL_MAP[FEATURE_TYPE]()
+        encoder = MODEL_MAP[FEATURE_TYPE]()
         ckpt_path = f"/content/drive/MyDrive/EEG2Video_checkpoints/classifier_checkpoints/{FEATURE_TYPE}_{subname.replace('.npy','')}.pt"
         if os.path.exists(ckpt_path):
             print(f"Loading encoder checkpoint: {ckpt_path}")
             enc_state = torch.load(ckpt_path, map_location=run_device)
-            if "state_dict" in enc_state:
-                encoder.load_state_dict(enc_state["state_dict"], strict=False)
-            else:
-                encoder.load_state_dict(enc_state, strict=False)
+            encoder.load_state_dict(enc_state["state_dict"] if "state_dict" in enc_state else enc_state, strict=False)
         for p in encoder.parameters(): p.requires_grad = False
         input_dim = emb_dim_DE if FEATURE_TYPE=="DE" else emb_dim_PSD if FEATURE_TYPE=="PSD" else emb_dim_segments
 
     modelnet = SemanticPredictor(encoder, input_dim)
-    modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr,
+    modelnet = train(modelnet, None, None, None, num_epochs, lr,
                      run_device, fusion=(FEATURE_TYPE=="fusion"), subname=subname)
