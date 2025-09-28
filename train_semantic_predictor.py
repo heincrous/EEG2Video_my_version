@@ -25,7 +25,7 @@ FEATURE_TYPES    = ["DE"]
 USE_ALL_SUBJECTS = False
 
 # Loss type: "mse", "cosine", "mse+cosine", "contrastive"
-LOSS_TYPE        = "contrastive"
+LOSS_TYPE        = "mse+cosine"
 
 USE_VAR_REG = True
 VAR_LAMBDA  = 0.01
