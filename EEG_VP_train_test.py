@@ -63,9 +63,18 @@ USE_VAR_REG = False
 VAR_LAMBDA  = 0.01
 
 FEATURE_PATHS = {
-    "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
-    "DE":       "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s",
-    "PSD":      "/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s",
+    "segments_shallow": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
+    "segments_deep":    "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
+    "segments_eegnet":  "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
+    "segments_tsconv":  "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
+    "segments_glf":     "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
+    "segments_conformer": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
+
+    "DE_glf":  "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s",
+    "DE_mlp":  "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s",
+
+    "PSD_glf": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s",
+    "PSD_mlp": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s",
 }
 
 
