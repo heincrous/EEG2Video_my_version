@@ -35,7 +35,7 @@ SEQ2SEQ_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpo
 class MyEEGNet_embedding(nn.Module):
     def __init__(self, d_model=128, C=62, T=100, F1=16, D=4, F2=16):
         super().__init__()
-        drop_out = 0.5  # fixed dropout (no cross-subject flag)
+        drop_out = 0.5
 
         self.block_1 = nn.Sequential(
             nn.ZeroPad2d((31, 32, 0, 0)),
@@ -106,10 +106,9 @@ class MyTransformer(nn.Module):
         )
 
         self.positional_encoding = PositionalEncoding(d_model, dropout=0)
-        self.predictor = nn.Linear(d_model, 4 * 36 * 64)  # video latent reconstruction
+        self.predictor = nn.Linear(d_model, 4 * 36 * 64)
 
     def forward(self, src, tgt):
-        # src: (batch, 7, 62, 100)
         src = self.eeg_embedding(src.reshape(src.shape[0] * src.shape[1], 1, 62, 100)).reshape(src.shape[0], 7, -1)
         tgt = tgt.reshape(tgt.shape[0], tgt.shape[1], -1)
         tgt = self.img_embedding(tgt)
@@ -117,12 +116,13 @@ class MyTransformer(nn.Module):
         src = self.positional_encoding(src)
         tgt = self.positional_encoding(tgt)
 
-        tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt.size()[-2]).to(tgt.device)
+        tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt.size(1)).to(tgt.device)
         encoder_output = self.transformer_encoder(src)
 
         new_tgt = torch.zeros((tgt.shape[0], 1, tgt.shape[2])).to(tgt.device)
         for i in range(6):
-            decoder_output = self.transformer_decoder(new_tgt, encoder_output, tgt_mask=tgt_mask[:i+1, :i+1])
+            step_mask = tgt_mask[:i+1, :i+1]
+            decoder_output = self.transformer_decoder(new_tgt, encoder_output, tgt_mask=step_mask)
             new_tgt = torch.cat((new_tgt, decoder_output[:, -1:, :]), dim=1)
 
         return self.predictor(new_tgt).reshape(new_tgt.shape[0], new_tgt.shape[1], 4, 36, 64)
@@ -152,7 +152,7 @@ def evaluate_loss(model, loader, criterion, device):
             padded_video = torch.zeros((b, 1, c, h, w)).to(device)
             full_video   = torch.cat((padded_video, video), dim=1)
             out = model(eeg, full_video)
-            loss = criterion(video, out[:, :-1, :])
+            loss = criterion(video, out[:, :-1, :, :, :])  # align 6 predicted with 6 GT frames
             total_loss += loss.item() * b
             count += b
     return total_loss / count
@@ -168,10 +168,10 @@ def train_subject(subname):
     eegdata    = np.load(eeg_path)      # (7,40,5,7,62,100)
     latentdata = np.load(latent_path)   # (7,40,5,6,4,36,64)
 
-    EEG   = rearrange(eegdata,    "g p d w c l -> (g p d) w c l")   # (1400,7,62,100)
+    EEG   = rearrange(eegdata,    "g p d w c l -> (g p d) w c l")
     VIDEO = rearrange(latentdata, "g p d f c h w -> (g p d) f c h w")
 
-    labels_block = np.repeat(np.arange(40), 5)   # 200 per block
+    labels_block = np.repeat(np.arange(40), 5)
     labels_all   = np.tile(labels_block, 7)
 
     if CLASS_SUBSET is not None:
@@ -186,10 +186,15 @@ def train_subject(subname):
     EEG_train, EEG_val, EEG_test = EEG[train_idx], EEG[val_idx], EEG[test_idx]
     VID_train, VID_val, VID_test = VIDEO[train_idx], VIDEO[val_idx], VIDEO[test_idx]
 
+    # === Scaling (flatten -> fit on train -> apply to all sets) ===
     b, w, c, l = EEG_train.shape
     scaler = StandardScaler().fit(EEG_train.reshape(b, -1))
+
     def scale(arr):
-        return torch.from_numpy(scaler.transform(arr.reshape(arr.shape[0], -1))).reshape(arr.shape[0], w, c, l)
+        arr2d = arr.reshape(arr.shape[0], -1)
+        arr_scaled = scaler.transform(arr2d)
+        return torch.from_numpy(arr_scaled).reshape(arr.shape[0], w, c, l)
+
     EEG_train, EEG_val, EEG_test = map(scale, [EEG_train, EEG_val, EEG_test])
 
     train_loader = DataLoader(EEGVideoDataset(EEG_train, VID_train), batch_size=batch_size, shuffle=True)
@@ -213,7 +218,7 @@ def train_subject(subname):
 
             optimizer.zero_grad()
             out = model(eeg, full_video)
-            loss  = criterion(video, out[:, :-1, :])
+            loss  = criterion(video, out[:, :-1, :, :, :])
             loss.backward()
             optimizer.step()
             scheduler.step()

@@ -191,6 +191,9 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
         for ft, sc in scalers.items():
             scaler_name = f"scaler_{ft}_{subname.replace('.npy','')}{subset_tag}.pkl"
             joblib.dump(sc, os.path.join(SEMANTIC_CKPT_DIR, scaler_name))
+        
+        print(f"Saved checkpoint: {model_name}")
+        print(f"Saved scaler: {scaler_name}")
     return net
 
 
