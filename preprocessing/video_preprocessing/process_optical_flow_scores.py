@@ -6,9 +6,14 @@ import numpy as np
 
 from core.gt_label import GT_LABEL   # shape (7,40), values 0–39
 
-# path
-drive_root = "/content/drive/MyDrive/EEG2Video_data"
-scores_path = os.path.join(drive_root, "raw", "meta-info", "All_video_optical_flow_score.npy")
+# paths
+drive_root   = "/content/drive/MyDrive/EEG2Video_data"
+raw_dir      = os.path.join(drive_root, "raw", "meta-info")
+processed_dir= os.path.join(drive_root, "processed", "meta-info")
+os.makedirs(processed_dir, exist_ok=True)
+
+scores_path  = os.path.join(raw_dir, "All_video_optical_flow_score.npy")
+save_path    = os.path.join(processed_dir, "All_video_optical_flow_score_byclass.npy")
 
 # load
 scores = np.load(scores_path)   # shape (7,200)
@@ -31,3 +36,8 @@ for block_id in range(num_blocks):
 
 print("Organized shape:", organized.shape)  # (7,40,5)
 print("Example block0, class0 scores:", organized[0,0])
+
+# save
+np.save(save_path, organized)
+print(f"Saved organized scores to {save_path}")
+print("\nProcessing complete.")
