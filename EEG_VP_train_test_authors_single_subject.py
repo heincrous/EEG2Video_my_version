@@ -1,7 +1,5 @@
 import numpy as np
-import time
-import os
-import torch
+import os, glob, time, torch
 from torch import nn
 from torch.utils import data
 from sklearn import metrics
@@ -25,73 +23,60 @@ run_device = "cuda"
 
 def Get_Dataloader(datat, labelt, istrain, batch_size):
     features = torch.tensor(datat, dtype=torch.float32)
-    labels = torch.tensor(labelt, dtype=torch.long)
+    labels   = torch.tensor(labelt, dtype=torch.long)
     return data.DataLoader(data.TensorDataset(features, labels), batch_size, shuffle=istrain)
 
-class Accumulator:
-    def __init__(self, n): self.data = [0.0] * n
-    def add(self, *args): self.data = [a + float(b) for a, b in zip(self.data, args)]
-    def __getitem__(self, idx): return self.data[idx]
+def cal_accuracy(y_hat,y):
+    if len(y_hat.shape)>1 and y_hat.shape[1]>1:
+        y_hat=torch.argmax(y_hat,axis=1)
+    return torch.sum(y_hat==y,dim=0)
 
-def cal_accuracy(y_hat, y):
-    if len(y_hat.shape) > 1 and y_hat.shape[1] > 1:
-        y_hat = torch.argmax(y_hat, axis=1)
-    return torch.sum(y_hat == y, dim=0)
-
-def evaluate_accuracy_gpu(net, data_iter, device=None):
-    if isinstance(net, nn.Module):
+def evaluate_accuracy_gpu(net,data_iter,device=None):
+    if isinstance(net,nn.Module):
         net.eval()
-        if not device: device = next(iter(net.parameters())).device
-    metric = Accumulator(2)
-    for X, y in data_iter:
-        X, y = X.to(device), y.to(device)
-        metric.add(cal_accuracy(net(X), y), y.numel())
-    return metric[0] / metric[1]
+        if not device: device=next(iter(net.parameters())).device
+    metric=[0.0,0.0]
+    for X,y in data_iter:
+        X,y=X.to(device),y.to(device)
+        metric[0]+=cal_accuracy(net(X),y)
+        metric[1]+=y.numel()
+    return metric[0]/metric[1]
 
-def topk_accuracy(output, target, topk=(1,)):
+def topk_accuracy(output,target,topk=(1,)):
     with torch.no_grad():
-        maxk = max(topk)
-        batch_size = target.size(0)
-        _, pred = output.topk(maxk, 1, True, True)
-        pred = pred.t()
-        correct = pred.eq(target.view(1, -1).expand_as(pred))
-        res = []
+        maxk=max(topk); bs=target.size(0)
+        _,pred=output.topk(maxk,1,True,True); pred=pred.t()
+        correct=pred.eq(target.view(1,-1).expand_as(pred))
+        res=[]
         for k in topk:
-            correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
-            res.append(correct_k.mul_(1.0 / batch_size).item())
+            correct_k=correct[:k].reshape(-1).float().sum(0,keepdim=True)
+            res.append(correct_k.mul_(1.0/bs).item())
         return res
 
-def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, save_path):
+def train(net,train_iter,val_iter,test_iter,num_epochs,lr,device,save_path):
     def init_weights(m):
-        if isinstance(m, (nn.Linear, nn.Conv2d)):
+        if isinstance(m,(nn.Linear,nn.Conv2d)):
             nn.init.xavier_uniform_(m.weight)
     net.apply(init_weights)
     net.to(device)
-    optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=0)
-    loss = nn.CrossEntropyLoss()
-    best_val_acc = 0
-    for epoch in range(num_epochs):
-        metric = Accumulator(3)
+    optim=torch.optim.AdamW(net.parameters(),lr=lr,weight_decay=0)
+    loss=nn.CrossEntropyLoss()
+    best_val=0
+    # use tqdm to track epochs
+    for _ in tqdm(range(num_epochs),leave=False):
         net.train()
-        for X, y in train_iter:
-            optimizer.zero_grad()
-            X, y = X.to(device), y.to(device)
-            y_hat = net(X)
-            l = loss(y_hat, y)
-            l.backward()
-            optimizer.step()
-            metric.add(l * X.shape[0], cal_accuracy(y_hat, y), X.shape[0])
-        test_acc = evaluate_accuracy_gpu(net, test_iter)
-        val_acc = evaluate_accuracy_gpu(net, val_iter)
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            torch.save(net, save_path)
-        if epoch % 3 == 0:
-            print(f'loss {metric[0]/metric[2]:.3f}, train acc {metric[1]/metric[2]:.3f}, '
-                  f'val acc {val_acc:.3f}, test acc {test_acc:.3f}')
-    return best_val_acc
+        for X,y in train_iter:
+            optim.zero_grad()
+            X,y=X.to(device),y.to(device)
+            out=net(X); l=loss(out,y)
+            l.backward(); optim.step()
+        # track val acc only
+        val_acc=evaluate_accuracy_gpu(net,val_iter)
+        if val_acc>best_val:
+            best_val=val_acc; torch.save(net,save_path)
+    return best_val
 
-# Ground truth labels
+# === Labels ===
 GT_label = np.array([
     [23,22,9,6,18,14,5,36,25,19,28,35,3,16,24,40,15,27,38,33,34,4,39,17,1,26,20,29,13,32,37,2,11,12,30,31,8,21,7,10],
     [27,33,22,28,31,12,38,4,18,17,35,39,40,5,24,32,15,13,2,16,34,25,19,30,23,3,8,29,7,20,11,14,37,6,21,1,10,36,26,9],
@@ -101,65 +86,76 @@ GT_label = np.array([
     [29,16,1,22,34,39,24,10,8,35,27,31,23,17,2,15,25,40,3,36,26,6,14,37,9,12,19,30,5,28,32,4,13,18,21,20,7,11,33,38],
     [38,34,40,10,28,7,1,37,22,9,16,5,12,36,20,30,6,15,35,2,31,26,18,24,8,3,23,19,14,13,21,4,25,11,32,17,39,29,33,27]
 ])
-GT_label = GT_label - 1
-All_label = np.concatenate([GT_label[b].repeat(10).reshape(1, 400) for b in range(7)], axis=0)
+GT_label=GT_label-1
+All_label=np.concatenate([GT_label[b].repeat(10).reshape(1,400) for b in range(7)],axis=0)
 
-# Pick one subject
-sub_list = ["sub10.npy"]
+# === Subjects: all .npy in folder ===
+sub_list=[os.path.basename(f) for f in glob.glob("/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s_authors/*.npy")]
 
-All_sub_top1, All_sub_top5 = [], []
+All_sub_top1,All_sub_top5=[],[]
 
 for subname in sub_list:
-    load_npy = np.load(f"/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s_authors/{subname}")
-    All_train = rearrange(load_npy, 'a b c d e f -> a (b c d) e f')
+    de_npy = np.load(f"/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s_authors/{subname}")
+    psd_npy= np.load(f"/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s_authors/{subname}")
+    All_train_de  = rearrange(de_npy, 'a b c d e f -> a (b c d) e f')
+    All_train_psd = rearrange(psd_npy,'a b c d e f -> a (b c d) e f')
 
-    Top_1, Top_K = [], []
-    all_test_label, all_test_pred = np.array([]), np.array([])
+    Top_1,Top_K=[],[]
+    all_test_label,all_test_pred=np.array([]),np.array([])
 
-    for test_set_id in tqdm(range(7), desc=f"Subject {subname} folds"):
-        val_set_id = (test_set_id - 1) % 7
-        train_data = np.concatenate([All_train[i].reshape(400, 62, 5) for i in range(7) if i != test_set_id])
-        test_data, val_data = All_train[test_set_id], All_train[val_set_id]
-        train_label = np.concatenate([All_label[i] for i in range(7) if i != test_set_id])
-        test_label, val_label = All_label[test_set_id], All_label[val_set_id]
+    for test_set_id in tqdm(range(7),desc=f"{subname} folds"):
+        val_set_id=(test_set_id-1)%7
 
-        # reshape + normalize
-        train_data, test_data, val_data = [x.reshape(x.shape[0], 62*5) for x in [train_data, test_data, val_data]]
-        scaler = StandardScaler().fit(train_data)
-        train_data, test_data, val_data = scaler.transform(train_data), scaler.transform(test_data), scaler.transform(val_data)
+        train_de=np.concatenate([All_train_de[i].reshape(400,62,5) for i in range(7) if i!=test_set_id])
+        test_de,val_de=All_train_de[test_set_id],All_train_de[val_set_id]
+        train_psd=np.concatenate([All_train_psd[i].reshape(400,62,5) for i in range(7) if i!=test_set_id])
+        test_psd,val_psd=All_train_psd[test_set_id],All_train_psd[val_set_id]
 
-        # dataloaders
-        train_iter = Get_Dataloader(train_data.reshape(train_data.shape[0], C, T), train_label, True, batch_size)
-        test_iter  = Get_Dataloader(test_data.reshape(test_data.shape[0], C, T), test_label, False, batch_size)
-        val_iter   = Get_Dataloader(val_data.reshape(val_data.shape[0], C, T), val_label, False, batch_size)
+        train_label=np.concatenate([All_label[i] for i in range(7) if i!=test_set_id])
+        test_label,val_label=All_label[test_set_id],All_label[val_set_id]
 
-        # train + reload best model
-        modelnet = models.glfnet_mlp(out_dim=40, emb_dim=64, input_dim=310)
-        print("\n🔵 Training single-feature model")
-        train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr, run_device, save_path=saved_model_path)
-        loaded_model = torch.load(saved_model_path, weights_only=False).to(run_device)
+        # normalize DE
+        tr,test,val=[x.reshape(x.shape[0],62*5) for x in [train_de,test_de,val_de]]
+        scaler=StandardScaler().fit(tr)
+        train_de,test_de,val_de=scaler.transform(tr),scaler.transform(test),scaler.transform(val)
 
-        block_top_1, block_top_k = [], []
-        for X, y in test_iter:
-            X, y = X.to(run_device), y.to(run_device)
-            y_hat = loaded_model(X)
-            top_K_results = topk_accuracy(y_hat, y, topk=(1,5))
-            block_top_1.append(top_K_results[0])
-            block_top_k.append(top_K_results[1])
-            preds = torch.argmax(y_hat, axis=1).cpu().numpy()
-            all_test_pred = np.concatenate((all_test_pred, preds))
-        all_test_label = np.concatenate((all_test_label, test_label))
+        # normalize PSD
+        tr,test,val=[x.reshape(x.shape[0],62*5) for x in [train_psd,test_psd,val_psd]]
+        scaler=StandardScaler().fit(tr)
+        train_psd,test_psd,val_psd=scaler.transform(tr),scaler.transform(test),scaler.transform(val)
 
-        print(f"Fold {test_set_id} → Top1: {np.mean(block_top_1):.3f}, Top5: {np.mean(block_top_k):.3f}")
-        Top_1.append(np.mean(block_top_1))
-        Top_K.append(np.mean(block_top_k))
+        train_iter_de=Get_Dataloader(train_de.reshape(train_de.shape[0],C,T),train_label,True,batch_size)
+        test_iter_de =Get_Dataloader(test_de.reshape(test_de.shape[0],C,T), test_label,False,batch_size)
+        val_iter_de  =Get_Dataloader(val_de.reshape(val_de.shape[0],C,T), val_label,False,batch_size)
+        train_iter_psd=Get_Dataloader(train_psd.reshape(train_psd.shape[0],C,T),train_label,True,batch_size)
+        test_iter_psd =Get_Dataloader(test_psd.reshape(test_psd.shape[0],C,T), test_label,False,batch_size)
+        val_iter_psd  =Get_Dataloader(val_psd.reshape(val_psd.shape[0],C,T), val_label,False,batch_size)
 
-    print(metrics.classification_report(all_test_label, all_test_pred))
-    print("Mean Top1:", np.mean(Top_1), "Mean Top5:", np.mean(Top_K))
-    All_sub_top1.append(np.mean(Top_1))
-    All_sub_top5.append(np.mean(Top_K))
+        model_de=models.glfnet_mlp(out_dim=40,emb_dim=64,input_dim=310)
+        train(model_de,train_iter_de,val_iter_de,test_iter_de,num_epochs,lr,run_device,saved_model_path+"_de")
+        model_de=torch.load(saved_model_path+"_de",weights_only=False).to(run_device)
 
-print(All_sub_top1)
-print(All_sub_top5)
-print("TOP1:", np.mean(np.array(All_sub_top1)), np.std(np.array(All_sub_top1)))
-print("TOP5:", np.mean(np.array(All_sub_top5)), np.std(np.array(All_sub_top5)))
+        model_psd=models.glfnet_mlp(out_dim=40,emb_dim=64,input_dim=310)
+        train(model_psd,train_iter_psd,val_iter_psd,test_iter_psd,num_epochs,lr,run_device,saved_model_path+"_psd")
+        model_psd=torch.load(saved_model_path+"_psd",weights_only=False).to(run_device)
+
+        # fusion evaluation
+        block_top1,block_topk=[],[]
+        for (Xd,y),(Xp,_) in zip(test_iter_de,test_iter_psd):
+            Xd,Xp,y=Xd.to(run_device),Xp.to(run_device),y.to(run_device)
+            probs_de=torch.softmax(model_de(Xd),dim=1)
+            probs_psd=torch.softmax(model_psd(Xp),dim=1)
+            combined=(probs_de+probs_psd)/2
+            topk_res=topk_accuracy(combined,y,topk=(1,5))
+            block_top1.append(topk_res[0]); block_topk.append(topk_res[1])
+            preds=torch.argmax(combined,axis=1).cpu().numpy()
+            all_test_pred=np.concatenate((all_test_pred,preds))
+        all_test_label=np.concatenate((all_test_label,test_label))
+        Top_1.append(np.mean(block_top1)); Top_K.append(np.mean(block_topk))
+
+    print(f"{subname} → Mean Top1 {np.mean(Top_1):.3f}, Mean Top5 {np.mean(Top_K):.3f}")
+    print(metrics.classification_report(all_test_label,all_test_pred))
+    All_sub_top1.append(np.mean(Top_1)); All_sub_top5.append(np.mean(Top_K))
+
+print("TOP1:",np.mean(All_sub_top1),np.std(All_sub_top1))
+print("TOP5:",np.mean(All_sub_top5),np.std(All_sub_top5))
