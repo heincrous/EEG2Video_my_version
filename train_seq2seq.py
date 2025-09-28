@@ -146,10 +146,10 @@ class EEGVideoDataset(torch.utils.data.Dataset):
 # ==========================================
 def train_subject(subname):
     eeg_path    = os.path.join(EEG_DIR, subname)
-    latent_path = os.path.join(LATENT_DIR, subname.replace(".npy", "_latents.npy"))
+    latent_path = os.path.join(LATENT_DIR, "Video_latents.npy")
 
     eegdata    = np.load(eeg_path)      # (7,40,5,7,62,5,100)
-    latentdata = np.load(latent_path)   # (7,40,5,6,4,36,64)
+    latentdata  = np.load(latent_path)  # (7,40,5,6,4,36,64)
 
     # rearrange: collapse blocks, classes, trials
     EEG   = rearrange(eegdata,    "g p d w c f l -> (g p d) w c l")   # (1400,7,62,100)
