@@ -192,4 +192,4 @@ def main(
 # Entrypoint
 # ==========================================
 if __name__ == "__main__":
-    main(pretrained_model_path=pretrained_model_path, num_epochs=20)
+    main(pretrained_model_path=pretrained_model_path, num_epochs=50)

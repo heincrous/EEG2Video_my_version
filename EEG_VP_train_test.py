@@ -24,10 +24,9 @@ emb_dim_segments = 512
 emb_dim_DE       = 128
 emb_dim_PSD      = 128
 
-# Choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["DE"]
+FEATURE_TYPES    = ["DE"]  # ["segments"], ["DE"], ["PSD"], or combinations
 USE_ALL_SUBJECTS = False
-LOSS_TYPE        = "crossentropy" # Options: ["crossentropy", "mse", "cosine", "mse+cosine"]
+LOSS_TYPE        = "crossentropy"
 
 USE_VAR_REG = False
 VAR_LAMBDA  = 0.01
@@ -53,7 +52,6 @@ class FusionNet(nn.Module):
         self.encoders = nn.ModuleDict(encoders)
         total_dim     = len(encoders) * num_classes
         self.classifier = nn.Linear(total_dim, num_classes)
-
     def forward(self, inputs):
         feats = []
         for name, enc in self.encoders.items():
@@ -73,9 +71,6 @@ class FusionDataset(data.Dataset):
         return {ft: torch.tensor(self.features[ft][idx], dtype=torch.float32) for ft in self.features}, \
                torch.tensor(self.labels[idx], dtype=torch.long)
 
-# ==========================================
-# Utilities
-# ==========================================
 def Get_Dataloader(features, labels, istrain, batch_size, multi=False):
     if multi:
         return data.DataLoader(FusionDataset(features, labels), batch_size, shuffle=istrain)
@@ -84,6 +79,9 @@ def Get_Dataloader(features, labels, istrain, batch_size, multi=False):
         labels   = torch.tensor(labels, dtype=torch.long)
         return data.DataLoader(data.TensorDataset(features, labels), batch_size, shuffle=istrain)
 
+# ==========================================
+# Metrics
+# ==========================================
 def cal_accuracy(y_hat, y):
     if y_hat.ndim > 1 and y_hat.shape[1] > 1:
         y_hat = torch.argmax(y_hat, axis=1)
@@ -169,30 +167,15 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, multi=Fa
 
         if epoch % 3 == 0:
             test_acc = evaluate_accuracy_gpu(net, test_iter, device, multi=multi)
-            print(f"[{epoch+1}] loss={total_loss/total:.3f}, train_acc={correct/total:.3f}, val_acc={val_acc:.3f}, test_acc={test_acc:.3f}")
+            print(f"[{epoch+1}] loss={total_loss/total:.3f}, "
+                  f"train_acc={correct/total:.3f}, val_acc={val_acc:.3f}, test_acc={test_acc:.3f}")
 
-    if best_state: 
+    if best_state:
         net.load_state_dict(best_state)
-
-        # --- Save checkpoint ---
-        save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/classifier_checkpoints"
-        os.makedirs(save_dir, exist_ok=True)
-
-        if multi:
-            fname = f"classifier_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}.pt"
-        else:
-            fname = f"classifier_{FEATURE_TYPES[0]}_{subname.replace('.npy','')}.pt"
-
-        torch.save({
-            "state_dict": net.state_dict(),
-            "feature_types": FEATURE_TYPES,
-            "loss_type": LOSS_TYPE,
-            "subject": subname.replace(".npy","")
-        }, os.path.join(save_dir, fname))
     return net
 
 # ==========================================
-# Label generation
+# Labels
 # ==========================================
 All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
 
@@ -203,12 +186,10 @@ sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else 
 All_sub_top1, All_sub_top5 = [], []
 
 for subname in sub_list:
-    # ----- Load -----
-    raw_data = {}
-    for ft in FEATURE_TYPES:
-        raw_data[ft] = np.load(os.path.join(FEATURE_PATHS[ft], subname))
+    # Load
+    raw_data = {ft: np.load(os.path.join(FEATURE_PATHS[ft], subname)) for ft in FEATURE_TYPES}
 
-    # ----- Reshape -----
+    # Reshape
     def reshape(ft, arr):
         if ft in ["DE","PSD"]:
             return rearrange(arr, "a b c d e f -> a (b c d) e f")
@@ -232,7 +213,7 @@ for subname in sub_list:
         val_label   = All_label[val_set_id]
         test_label  = All_label[test_set_id]
 
-        # Scale each feature separately
+        # Scale features
         for ft in train_data:
             tr = train_data[ft].reshape(train_data[ft].shape[0], -1)
             va = val_data[ft].reshape(val_data[ft].shape[0], -1)
