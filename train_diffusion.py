@@ -30,30 +30,28 @@ from core.unet import UNet3DConditionModel
 # Paths
 # ==========================================
 pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
-bundle_root           = "/content/drive/MyDrive/EEG2Video_data/processed/SubjectBundles"
+data_root             = "/content/drive/MyDrive/EEG2Video_data/processed"
 save_root             = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints"
 
 os.makedirs(save_root, exist_ok=True)
 
 
 # ==========================================
-# NPZ Dataset
+# Dataset (Video_latents.npy + BLIP_text.npy)
 # ==========================================
-class NPZVideoDataset(Dataset):
-    def __init__(self, file_path, tokenizer):
-        self.samples = []
+class LatentsTextDataset(Dataset):
+    def __init__(self, latents_path, text_path, tokenizer):
+        self.latents = np.load(latents_path, allow_pickle=True)  # (N,F,C,H,W)
+        self.texts   = np.load(text_path, allow_pickle=True)     # (N,)
+        assert len(self.latents) == len(self.texts), "Mismatch between latents and text length"
         self.tokenizer = tokenizer
-        data = np.load(file_path, allow_pickle=True)
-        vids  = data["Video_latents"]    # (N,F,C,H,W)
-        texts = data["BLIP_text"]        # (N,)
-        for i in range(len(vids)):
-            self.samples.append((vids[i], str(texts[i])))
 
     def __len__(self):
-        return len(self.samples)
+        return len(self.latents)
 
     def __getitem__(self, idx):
-        latents, text = self.samples[idx]
+        latents = self.latents[idx]  # (F,C,H,W)
+        text    = str(self.texts[idx])
         prompt_ids = self.tokenizer(
             text,
             max_length=self.tokenizer.model_max_length,
@@ -62,7 +60,7 @@ class NPZVideoDataset(Dataset):
             return_tensors="pt",
         ).input_ids[0]
         return {
-            "latents": torch.from_numpy(latents).float(),  # (F,C,H,W)
+            "latents": torch.from_numpy(latents).float(),
             "prompt_ids": prompt_ids,
         }
 
@@ -106,10 +104,9 @@ def main(
     optimizer = torch.optim.AdamW(unet.parameters(), lr=learning_rate)
 
     # === Dataset ===
-    all_bundles = sorted([f for f in os.listdir(bundle_root) if f.endswith("_train.npz")])
-    if not all_bundles:
-        raise FileNotFoundError("No *_train.npz found in SubjectBundles.")
-    dataset = NPZVideoDataset(os.path.join(bundle_root, all_bundles[0]), tokenizer)
+    latents_path = os.path.join(data_root, "Video_latents/Video_latents.npy")
+    text_path    = os.path.join(data_root, "BLIP_TEXT/BLIP_text.npy")
+    dataset = LatentsTextDataset(latents_path, text_path, tokenizer)
     print(f"Loaded {len(dataset)} samples")
 
     train_dataloader = DataLoader(
