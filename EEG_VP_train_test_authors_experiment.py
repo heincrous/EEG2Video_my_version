@@ -2,8 +2,7 @@
 # DE + PSD + Segments classification with probability fusion
 # ==========================================
 import numpy as np
-import time, os
-import torch
+import os, torch
 from torch import nn
 from torch.utils import data
 from sklearn import metrics
@@ -93,7 +92,7 @@ GT_label = np.array([
 ])
 GT_label = GT_label - 1
 All_label_depsd = np.concatenate([GT_label[b].repeat(10).reshape(1,400) for b in range(7)],axis=0)
-All_label_seg   = np.concatenate([GT_label[b].repeat(5).reshape(1,200) for b in range(7)],axis=0)
+All_label_seg   = np.concatenate([GT_label[b].repeat(10).reshape(1,400) for b in range(7)],axis=0)
 
 # === Subjects ===
 sub_list=["sub10.npy"]
@@ -105,9 +104,9 @@ for subname in sub_list:
     psd_npy = np.load(f"/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s_authors/{subname}")
     seg_npy = np.load(f"/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments_authors/{subname}")
 
-    All_train_de  = rearrange(de_npy,  'a b c d e f -> a (b c d) e f')   # (7,400,62,5)
-    All_train_psd = rearrange(psd_npy, 'a b c d e f -> a (b c d) e f')   # (7,400,62,5)
-    All_train_seg = rearrange(seg_npy, 'a b c d e -> a (b c) d e')       # (7,200,62,400)
+    All_train_de  = rearrange(de_npy,  'a b c d e f -> a (b c d) e f')               # (7,400,62,5)
+    All_train_psd = rearrange(psd_npy, 'a b c d e f -> a (b c d) e f')               # (7,400,62,5)
+    All_train_seg = rearrange(seg_npy, 'a b c d (s t) -> a (b c s) d t', s=2)        # (7,400,62,200)
 
     Top_1,Top_K=[],[]
     all_test_label,all_test_pred=np.array([]),np.array([])
@@ -130,8 +129,8 @@ for subname in sub_list:
         test_label_depsd  = All_label_depsd[test_set_id]
         val_label_depsd   = All_label_depsd[val_set_id]
 
-        # ===== Segments ===== (62,400)
-        train_seg = np.concatenate([All_train_seg[i].reshape(200,62,400) for i in range(7) if i!=test_set_id])
+        # ===== Segments ===== (62,200)
+        train_seg = np.concatenate([All_train_seg[i].reshape(400,62,200) for i in range(7) if i!=test_set_id])
         test_seg  = All_train_seg[test_set_id]
         val_seg   = All_train_seg[val_set_id]
 
@@ -140,7 +139,7 @@ for subname in sub_list:
         test_label_seg  = All_label_seg[test_set_id]
         val_label_seg   = All_label_seg[val_set_id]
 
-        # === Normalize DE/PSD ===
+        # === Normalize DE/PSD/Seg ===
         def norm_data(train,test,val,feat_dim):
             train=train.reshape(train.shape[0],feat_dim)
             test =test.reshape(test.shape[0],feat_dim)
@@ -151,7 +150,7 @@ for subname in sub_list:
                     scaler.transform(val))
         train_de,test_de,val_de=norm_data(train_de,test_de,val_de,62*5)
         train_psd,test_psd,val_psd=norm_data(train_psd,test_psd,val_psd,62*5)
-        train_seg,test_seg,val_seg=norm_data(train_seg,test_seg,val_seg,62*400)
+        train_seg,test_seg,val_seg=norm_data(train_seg,test_seg,val_seg,62*200)
 
         # === Reshape back ===
         # DE
@@ -165,13 +164,13 @@ for subname in sub_list:
         val_iter_psd   = Get_Dataloader(val_psd.reshape(val_psd.shape[0],C,T),    val_label_depsd, False, batch_size)
 
         # Segments
-        train_iter_seg = Get_Dataloader(train_seg.reshape(train_seg.shape[0],1,C,400), train_label_seg, True, batch_size)
-        test_iter_seg  = Get_Dataloader(test_seg.reshape(test_seg.shape[0],1,C,400),   test_label_seg, False, batch_size)
-        val_iter_seg   = Get_Dataloader(val_seg.reshape(val_seg.shape[0],1,C,400),    val_label_seg, False, batch_size)
+        train_iter_seg = Get_Dataloader(train_seg.reshape(train_seg.shape[0],1,C,200), train_label_seg, True, batch_size)
+        test_iter_seg  = Get_Dataloader(test_seg.reshape(test_seg.shape[0],1,C,200),   test_label_seg, False, batch_size)
+        val_iter_seg   = Get_Dataloader(val_seg.reshape(val_seg.shape[0],1,C,200),    val_label_seg, False, batch_size)
 
         # === Train models ===
         print("🔴 Training Segments model")
-        model_seg = models.glfnet(out_dim=40, emb_dim=64, C=62, T=400)
+        model_seg = models.glfnet(out_dim=40, emb_dim=64, C=62, T=200)
         train(model_seg,train_iter_seg,val_iter_seg,test_iter_seg,num_epochs,lr,run_device,saved_model_path+"_seg")
         model_seg=torch.load(saved_model_path+"_seg",weights_only=False).to(run_device)
 
