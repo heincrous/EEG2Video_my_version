@@ -185,9 +185,12 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
         model_name = f"dynpredictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.pt"
         torch.save({"state_dict": net.state_dict()},
                 os.path.join(DYNPRED_CKPT_DIR, model_name))
+        print(f"Saved checkpoint: {model_name}")
+
         for ft, sc in scalers.items():
             scaler_name = f"scaler_{ft}_{subname.replace('.npy','')}{subset_tag}.pkl"
             joblib.dump(sc, os.path.join(DYNPRED_CKPT_DIR, scaler_name))
+            print(f"Saved scaler: {scaler_name}")
     return net
 
 # ==========================================
