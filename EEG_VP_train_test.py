@@ -22,7 +22,7 @@ T             = 5
 run_device    = "cuda"
 
 emb_dim_segments = 512
-emb_dim_DE       = 256
+emb_dim_DE       = 64
 emb_dim_PSD      = 256
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
