@@ -84,7 +84,8 @@ def train(net,train_iter,val_iter,test_iter,num_epochs,lr,device,save_path):
 # === Labels ===
 GT_label=np.array([...])  # (same as your current GT_label definition)
 GT_label=GT_label-1
-All_label=np.concatenate([GT_label[b].repeat(10).reshape(1,400) for b in range(7)],axis=0)
+All_label_depsd = np.concatenate([GT_label[b].repeat(10).reshape(1,400) for b in range(7)],axis=0)
+All_label_seg   = np.concatenate([GT_label[b].repeat(5).reshape(1,200) for b in range(7)],axis=0)
 
 # === Subjects ===
 sub_list=["sub10.npy"]
@@ -96,9 +97,9 @@ for subname in sub_list:
     psd_npy = np.load(f"/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s_authors/{subname}")
     seg_npy = np.load(f"/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments_authors/{subname}")
 
-    All_train_de  = rearrange(de_npy,  'a b c d e f -> a (b c d) e f')
-    All_train_psd = rearrange(psd_npy, 'a b c d e f -> a (b c d) e f')
-    All_train_seg = rearrange(seg_npy, 'a b c d e f -> a (b c d) e f')
+    All_train_de  = rearrange(de_npy,  'a b c d e f -> a (b c d) e f')   # (7,400,62,5)
+    All_train_psd = rearrange(psd_npy, 'a b c d e f -> a (b c d) e f')   # (7,400,62,5)
+    All_train_seg = rearrange(seg_npy, 'a b c d e -> a (b c) d e')       # (7,200,62,400)
 
     Top_1,Top_K=[],[]
     all_test_label,all_test_pred=np.array([]),np.array([])
@@ -107,20 +108,29 @@ for subname in sub_list:
         val_set_id=(test_set_id-1)%7
 
         # ===== DE =====
-        train_de=np.concatenate([All_train_de[i].reshape(400,62,5) for i in range(7) if i!=test_set_id])
-        test_de,val_de=All_train_de[test_set_id],All_train_de[val_set_id]
+        train_de  = np.concatenate([All_train_de[i].reshape(400,62,5) for i in range(7) if i!=test_set_id])
+        test_de   = All_train_de[test_set_id]
+        val_de    = All_train_de[val_set_id]
 
         # ===== PSD =====
-        train_psd=np.concatenate([All_train_psd[i].reshape(400,62,5) for i in range(7) if i!=test_set_id])
-        test_psd,val_psd=All_train_psd[test_set_id],All_train_psd[val_set_id]
+        train_psd = np.concatenate([All_train_psd[i].reshape(400,62,5) for i in range(7) if i!=test_set_id])
+        test_psd  = All_train_psd[test_set_id]
+        val_psd   = All_train_psd[val_set_id]
+
+        # ===== DE/PSD labels =====
+        train_label_depsd = np.concatenate([All_label_depsd[i] for i in range(7) if i!=test_set_id])
+        test_label_depsd  = All_label_depsd[test_set_id]
+        val_label_depsd   = All_label_depsd[val_set_id]
 
         # ===== Segments ===== (62,400)
-        train_seg=np.concatenate([All_train_seg[i].reshape(400,62,400) for i in range(7) if i!=test_set_id])
-        test_seg,val_seg=All_train_seg[test_set_id],All_train_seg[val_set_id]
+        train_seg = np.concatenate([All_train_seg[i].reshape(200,62,400) for i in range(7) if i!=test_set_id])
+        test_seg  = All_train_seg[test_set_id]
+        val_seg   = All_train_seg[val_set_id]
 
-        # labels
-        train_label=np.concatenate([All_label[i] for i in range(7) if i!=test_set_id])
-        test_label,val_label=All_label[test_set_id],All_label[val_set_id]
+        # ===== Seg labels =====
+        train_label_seg = np.concatenate([All_label_seg[i] for i in range(7) if i!=test_set_id])
+        test_label_seg  = All_label_seg[test_set_id]
+        val_label_seg   = All_label_seg[val_set_id]
 
         # === Normalize DE/PSD ===
         def norm_data(train,test,val,feat_dim):
@@ -136,19 +146,27 @@ for subname in sub_list:
         train_seg,test_seg,val_seg=norm_data(train_seg,test_seg,val_seg,62*400)
 
         # === Reshape back ===
-        train_iter_de =Get_Dataloader(train_de.reshape(train_de.shape[0],C,T),train_label,True,batch_size)
-        test_iter_de  =Get_Dataloader(test_de.reshape(test_de.shape[0],C,T),test_label,False,batch_size)
-        val_iter_de   =Get_Dataloader(val_de.reshape(val_de.shape[0],C,T),val_label,False,batch_size)
+        # DE
+        train_iter_de = Get_Dataloader(train_de.reshape(train_de.shape[0],C,T), train_label_depsd, True, batch_size)
+        test_iter_de  = Get_Dataloader(test_de.reshape(test_de.shape[0],C,T),   test_label_depsd, False, batch_size)
+        val_iter_de   = Get_Dataloader(val_de.reshape(val_de.shape[0],C,T),    val_label_depsd, False, batch_size)
 
-        train_iter_psd=Get_Dataloader(train_psd.reshape(train_psd.shape[0],C,T),train_label,True,batch_size)
-        test_iter_psd =Get_Dataloader(test_psd.reshape(test_psd.shape[0],C,T),test_label,False,batch_size)
-        val_iter_psd  =Get_Dataloader(val_psd.reshape(val_psd.shape[0],C,T),val_label,False,batch_size)
+        # PSD
+        train_iter_psd = Get_Dataloader(train_psd.reshape(train_psd.shape[0],C,T), train_label_depsd, True, batch_size)
+        test_iter_psd  = Get_Dataloader(test_psd.reshape(test_psd.shape[0],C,T),   test_label_depsd, False, batch_size)
+        val_iter_psd   = Get_Dataloader(val_psd.reshape(val_psd.shape[0],C,T),    val_label_depsd, False, batch_size)
 
-        train_iter_seg=Get_Dataloader(train_seg.reshape(train_seg.shape[0],1,C,400),train_label,True,batch_size)
-        test_iter_seg =Get_Dataloader(test_seg.reshape(test_seg.shape[0],1,C,400),test_label,False,batch_size)
-        val_iter_seg  =Get_Dataloader(val_seg.reshape(val_seg.shape[0],1,C,400),val_label,False,batch_size)
+        # Segments
+        train_iter_seg = Get_Dataloader(train_seg.reshape(train_seg.shape[0],1,C,400), train_label_seg, True, batch_size)
+        test_iter_seg  = Get_Dataloader(test_seg.reshape(test_seg.shape[0],1,C,400),   test_label_seg, False, batch_size)
+        val_iter_seg   = Get_Dataloader(val_seg.reshape(val_seg.shape[0],1,C,400),    val_label_seg, False, batch_size)
 
         # === Train models ===
+        print("🔴 Training Segments model")
+        model_seg = models.glfnet(out_dim=40, emb_dim=64, C=62, T=400)
+        train(model_seg,train_iter_seg,val_iter_seg,test_iter_seg,num_epochs,lr,run_device,saved_model_path+"_seg")
+        model_seg=torch.load(saved_model_path+"_seg",weights_only=False).to(run_device)
+
         print("\n🔵 Training DE model")
         model_de=models.glfnet_mlp(out_dim=40,emb_dim=64,input_dim=310)
         train(model_de,train_iter_de,val_iter_de,test_iter_de,num_epochs,lr,run_device,saved_model_path+"_de")
@@ -158,11 +176,6 @@ for subname in sub_list:
         model_psd=models.glfnet_mlp(out_dim=40,emb_dim=64,input_dim=310)
         train(model_psd,train_iter_psd,val_iter_psd,test_iter_psd,num_epochs,lr,run_device,saved_model_path+"_psd")
         model_psd=torch.load(saved_model_path+"_psd",weights_only=False).to(run_device)
-
-        print("🔴 Training Segments model")
-        model_seg=models.glfnet(out_dim=40)   # conv net
-        train(model_seg,train_iter_seg,val_iter_seg,test_iter_seg,num_epochs,lr,run_device,saved_model_path+"_seg")
-        model_seg=torch.load(saved_model_path+"_seg",weights_only=False).to(run_device)
 
         # === Fusion ===
         block_top_1,block_top_k=[],[]
@@ -176,7 +189,7 @@ for subname in sub_list:
             block_top_1.append(topk_res[0]); block_top_k.append(topk_res[1])
             preds=torch.argmax(combined,axis=1).cpu().numpy()
             all_test_pred=np.concatenate((all_test_pred,preds))
-        all_test_label=np.concatenate((all_test_label,test_label))
+        all_test_label = np.concatenate((all_test_label, test_label_depsd))
 
         print(f"Fold {test_set_id} → Top1 {np.mean(block_top_1):.3f}, Top5 {np.mean(block_top_k):.3f}")
         Top_1.append(np.mean(block_top_1)); Top_K.append(np.mean(block_top_k))
