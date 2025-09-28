@@ -22,12 +22,8 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed
 
 # === Repo imports ===
-repo_root = "/content/EEG2Video_my_version"
-sys.path.append(os.path.join(repo_root, "pipelines"))
-from pipeline_tuneavideo import TuneAVideoPipeline
-
-sys.path.append(os.path.join(repo_root, "core_files"))
-from unet import UNet3DConditionModel
+from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
+from core.unet import UNet3DConditionModel
 
 
 # ==========================================
