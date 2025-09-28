@@ -232,10 +232,17 @@ def load_subject_data(subname, feature_types):
 # ==========================================
 # Main
 # ==========================================
+# ==========================================
+# Main
+# ==========================================
 if __name__ == "__main__":
     ofs_all = np.load(OFS_PATH).reshape(-1,1)    # (1400,1)
-    labels_all = np.tile(np.arange(40).repeat(5), 7)
+    labels_all = np.tile(np.arange(40).repeat(5), 7)  # (1400,)
     threshold = np.median(ofs_all)
+
+    # Duplicate to match 2 EEG windows per clip → 2800 samples
+    ofs_all    = np.repeat(ofs_all, 2, axis=0)     # (2800,1)
+    labels_all = np.repeat(labels_all, 2, axis=0)  # (2800,)
 
     sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else [subject_name]
     for subname in sub_list:
@@ -247,15 +254,20 @@ if __name__ == "__main__":
             for ft in features: features[ft] = features[ft][mask]
             ofs_all, labels_all = ofs_all[mask], labels_all[mask]
 
-        samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5
-        train_idx, val_idx, test_idx = np.arange(0, 5*samples_per_block), np.arange(5*samples_per_block, 6*samples_per_block), np.arange(6*samples_per_block, 7*samples_per_block)
+        samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5 * 2  # note ×2 windows
+        train_idx = np.arange(0, 5*samples_per_block)
+        val_idx   = np.arange(5*samples_per_block, 6*samples_per_block)
+        test_idx  = np.arange(6*samples_per_block, 7*samples_per_block)
 
         if len(FEATURE_TYPES) > 1:
             encoders = {ft: MODEL_MAP[ft]() for ft in FEATURE_TYPES}
             modelnet = FusionNet(encoders, {ft: EMB_DIMS[ft] for ft in FEATURE_TYPES})
-            train_iter = Get_Dataloader({ft: features[ft][train_idx] for ft in FEATURE_TYPES}, ofs_all[train_idx], labels_all[train_idx], True, batch_size, multi=True)
-            val_iter   = Get_Dataloader({ft: features[ft][val_idx]   for ft in FEATURE_TYPES}, ofs_all[val_idx],   labels_all[val_idx],   False, batch_size, multi=True)
-            test_iter  = Get_Dataloader({ft: features[ft][test_idx]  for ft in FEATURE_TYPES}, ofs_all[test_idx],  labels_all[test_idx],  False, batch_size, multi=True)
+            train_iter = Get_Dataloader({ft: features[ft][train_idx] for ft in FEATURE_TYPES},
+                                        ofs_all[train_idx], labels_all[train_idx], True, batch_size, multi=True)
+            val_iter   = Get_Dataloader({ft: features[ft][val_idx] for ft in FEATURE_TYPES},
+                                        ofs_all[val_idx], labels_all[val_idx], False, batch_size, multi=True)
+            test_iter  = Get_Dataloader({ft: features[ft][test_idx] for ft in FEATURE_TYPES},
+                                        ofs_all[test_idx], labels_all[test_idx], False, batch_size, multi=True)
         else:
             ft = FEATURE_TYPES[0]
             modelnet = SingleNet(MODEL_MAP[ft](), EMB_DIMS[ft])
@@ -263,5 +275,6 @@ if __name__ == "__main__":
             val_iter   = Get_Dataloader(features[ft][val_idx],   ofs_all[val_idx],   labels_all[val_idx],   False, batch_size)
             test_iter  = Get_Dataloader(features[ft][test_idx],  ofs_all[test_idx],  labels_all[test_idx],  False, batch_size)
 
-        modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr, run_device,
+        modelnet = train(modelnet, train_iter, val_iter, test_iter,
+                         num_epochs, lr, run_device,
                          subname=subname, scalers=scalers, threshold=threshold)
