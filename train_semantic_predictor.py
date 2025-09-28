@@ -21,14 +21,14 @@ lr            = 0.0005
 run_device    = "cuda"
 
 # Choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["DE"]
+FEATURE_TYPES    = ["segments","DE"]
 USE_ALL_SUBJECTS = False
 
 # Loss type: "mse", "cosine", "mse+cosine", "contrastive"
-LOSS_TYPE        = "mse+cosine"
+LOSS_TYPE        = "mse"
 
 USE_VAR_REG = True
-VAR_LAMBDA  = 0.01
+VAR_LAMBDA  = 0.05
 
 FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
