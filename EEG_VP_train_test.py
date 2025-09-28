@@ -28,7 +28,7 @@ emb_dim_PSD      = 256
 WEIGHT_DECAY     = 0 # or 0.01
 
 # choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["DE", "PSD"]
+FEATURE_TYPES    = ["segments","DE","PSD"]
 
 # default is subject 1 only; set to True to use all subjects in folder
 USE_ALL_SUBJECTS = False
