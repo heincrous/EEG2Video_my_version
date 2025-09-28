@@ -4,7 +4,6 @@
 
 # === Standard libraries ===
 import os
-import sys
 from typing import Optional
 
 # === Third-party libraries ===
@@ -105,7 +104,7 @@ def main(
 
     # === Dataset ===
     latents_path = os.path.join(data_root, "Video_latents/Video_latents.npy")
-    text_path    = os.path.join(data_root, "BLIP_TEXT/BLIP_text.npy")
+    text_path    = os.path.join(data_root, "BLIP_text/BLIP_text.npy")
     dataset = LatentsTextDataset(latents_path, text_path, tokenizer)
     print(f"Loaded {len(dataset)} samples")
 
