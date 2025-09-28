@@ -1,5 +1,5 @@
 # ==========================================
-# EEG classification (single, multi, or fusion)
+# EEG classification (embedding-level fusion)
 # ==========================================
 import os, random
 import numpy as np
@@ -37,27 +37,30 @@ FEATURE_PATHS = {
     "PSD":      "/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s",
 }
 
+# ==========================================
+# Encoders → embeddings
+# ==========================================
 MODEL_MAP = {
-    "segments": lambda: models.glfnet(out_dim=40, emb_dim=emb_dim_segments, C=62, T=200),
-    "DE":       lambda: models.glfnet_mlp(out_dim=40, emb_dim=emb_dim_DE, input_dim=62*5),
-    "PSD":      lambda: models.glfnet_mlp(out_dim=40, emb_dim=emb_dim_PSD, input_dim=62*5),
+    "segments": lambda: models.glfnet(out_dim=emb_dim_segments, emb_dim=emb_dim_segments, C=62, T=200),
+    "DE":       lambda: models.glfnet_mlp(out_dim=emb_dim_DE, emb_dim=emb_dim_DE, input_dim=62*5),
+    "PSD":      lambda: models.glfnet_mlp(out_dim=emb_dim_PSD, emb_dim=emb_dim_PSD, input_dim=62*5),
 }
 
 # ==========================================
-# Fusion model
+# Fusion model (embedding level)
 # ==========================================
 class FusionNet(nn.Module):
-    def __init__(self, encoders, num_classes=40):
+    def __init__(self, encoders, emb_dims, num_classes=40):
         super().__init__()
         self.encoders = nn.ModuleDict(encoders)
-        total_dim     = len(encoders) * num_classes
+        total_dim     = sum(emb_dims.values())
         self.classifier = nn.Linear(total_dim, num_classes)
     def forward(self, inputs):
         feats = []
         for name, enc in self.encoders.items():
-            feats.append(enc(inputs[name]))
+            feats.append(enc(inputs[name]))  # each gives embedding
         fused = torch.cat(feats, dim=-1)
-        return self.classifier(fused)
+        return self.classifier(fused)       # logits
 
 # ==========================================
 # Dataset wrappers
@@ -237,7 +240,8 @@ for subname in sub_list:
             val_iter   = Get_Dataloader(val_data,   val_label,   False, batch_size, multi=True)
             test_iter  = Get_Dataloader(test_data,  test_label,  False, batch_size, multi=True)
             encoders   = {ft: MODEL_MAP[ft]() for ft in FEATURE_TYPES}
-            modelnet   = FusionNet(encoders, num_classes=40)
+            emb_dims   = {"segments": emb_dim_segments, "DE": emb_dim_DE, "PSD": emb_dim_PSD}
+            modelnet   = FusionNet(encoders, emb_dims, num_classes=40)
         else:
             ft = FEATURE_TYPES[0]
             train_iter = Get_Dataloader(train_data[ft], train_label, True, batch_size)
