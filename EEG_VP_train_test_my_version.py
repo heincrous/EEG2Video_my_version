@@ -1,7 +1,7 @@
 # ==========================================
 # EEG classification
 # ==========================================
-import os, random
+import os
 import numpy as np
 import torch
 from torch import nn
@@ -196,16 +196,6 @@ All_sub_top1, All_sub_top5 = [], []
 
 for subname in sub_list:
     raw_data = {ft: np.load(os.path.join(FEATURE_PATHS[ft], subname)) for ft in FEATURE_TYPES}
-
-    # === Reorder raw_data blocks to match GT_LABEL ===
-    for ft in raw_data:
-        arr = raw_data[ft]   # shape [7, 40, ...]
-        reordered = np.zeros_like(arr)
-        for b in range(7):
-            # GT_LABEL[b] is e.g. [23,22,9,...] (class indices)
-            reordered[b] = arr[b, GT_LABEL[b]]
-        raw_data[ft] = reordered
-    # ================================================
 
     def reshape(ft, arr):
         if ft.startswith("DE") or ft.startswith("PSD"):

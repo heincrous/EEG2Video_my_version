@@ -27,7 +27,7 @@ WEIGHT_DECAY   = 0.01
 SCHEDULER_TYPE = "cosine"
 
 # choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES  = ["DE", "PSD"]
+FEATURE_TYPES  = ["DE"]
 
 # default is subject 1 only; set to True to use all subjects in folder
 USE_ALL_SUBJECTS = False

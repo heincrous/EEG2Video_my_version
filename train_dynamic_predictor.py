@@ -1,5 +1,5 @@
 # ==========================================
-# EEG → Dynamic Predictor
+# EEG → Dynamic Predictor (clean single vs fusion)
 # ==========================================
 import os, numpy as np, torch, joblib
 from torch import nn
@@ -52,15 +52,29 @@ FEATURE_PATHS = {
 OFS_PATH         = "/content/drive/MyDrive/EEG2Video_data/processed/meta-info/All_video_optical_flow_score_byclass.npy"
 DYNPRED_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/dynamic_checkpoints"
 
+
 # ==========================================
-# Encoders → embeddings
+# Encoders
 # ==========================================
-MODEL_MAP = {
-    "segments": lambda: models.glfnet(out_dim=emb_dim_segments, emb_dim=emb_dim_segments, C=C, T=200),
-    "DE":       lambda: models.glfnet_mlp(out_dim=emb_dim_DE, emb_dim=emb_dim_DE, input_dim=C*T),
-    "PSD":      lambda: models.glfnet_mlp(out_dim=emb_dim_PSD, emb_dim=emb_dim_PSD, input_dim=C*T),
-}
-EMB_DIMS = {"segments": emb_dim_segments, "DE": emb_dim_DE, "PSD": emb_dim_PSD}
+def make_encoder(ft, return_logits=False):
+    """Build encoder. If return_logits=True, attach classifier head."""
+    if ft == "segments":
+        base = models.glfnet(out_dim=emb_dim_segments, emb_dim=emb_dim_segments, C=C, T=200)
+        emb_dim = emb_dim_segments
+    elif ft == "DE":
+        base = models.glfnet_mlp(out_dim=emb_dim_DE, emb_dim=emb_dim_DE, input_dim=C*T)
+        emb_dim = emb_dim_DE
+    elif ft == "PSD":
+        base = models.glfnet_mlp(out_dim=emb_dim_PSD, emb_dim=emb_dim_PSD, input_dim=C*T)
+        emb_dim = emb_dim_PSD
+    else:
+        raise ValueError(f"Unknown feature type {ft}")
+
+    if return_logits:
+        return nn.Sequential(base, nn.Linear(emb_dim, 2))  # encoder + classifier
+    else:
+        return base, emb_dim  # just embeddings
+
 
 # ==========================================
 # Fusion classifier (embedding-level)
@@ -78,13 +92,6 @@ class FusionNet(nn.Module):
         fused = torch.cat(feats, dim=-1)
         return self.classifier(fused)
 
-class SingleNet(nn.Module):
-    def __init__(self, encoder, emb_dim):
-        super().__init__()
-        self.encoder = encoder
-        self.classifier = nn.Linear(emb_dim, 2)   # 2 logits
-    def forward(self, x):
-        return self.classifier(self.encoder(x))
 
 # ==========================================
 # Dataset
@@ -110,6 +117,7 @@ def Get_Dataloader(features, targets, labels, istrain, batch_size, multi=False):
         lbls  = torch.tensor(labels, dtype=torch.long)
         return data.DataLoader(data.TensorDataset(feats, tgts, lbls), batch_size, shuffle=istrain)
 
+
 # ==========================================
 # Losses
 # ==========================================
@@ -119,6 +127,7 @@ def contrastive_loss_fn(y_hat, y, margin=1.0):
     sim_matrix = torch.matmul(y_hat, y.t())
     pos = torch.diag(sim_matrix)
     return torch.mean(F.relu(margin - pos[:, None] + sim_matrix))
+
 
 # ==========================================
 # Training loop
@@ -208,6 +217,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
             print(f"Saved scaler: {scaler_name}")
     return net
 
+
 # ==========================================
 # Evaluation
 # ==========================================
@@ -231,6 +241,7 @@ def evaluate_with_classification(net, data_iter, device, threshold):
             correct += (pred_cls.cpu() == y_cls.cpu()).sum().item()
     return total_mse / count, correct / count
 
+
 # ==========================================
 # Helpers
 # ==========================================
@@ -246,6 +257,7 @@ def load_subject_data(subname, feature_types):
         scalers[ft] = scaler
         feats[ft] = arr
     return feats, scalers
+
 
 # ==========================================
 # Main
@@ -275,8 +287,15 @@ if __name__ == "__main__":
         test_idx  = np.arange(6*samples_per_block, 7*samples_per_block)
 
         if len(FEATURE_TYPES) > 1:
-            encoders = {ft: MODEL_MAP[ft]() for ft in FEATURE_TYPES}
-            modelnet = FusionNet(encoders, {ft: EMB_DIMS[ft] for ft in FEATURE_TYPES})
+            # multi-feature fusion: encoders output embeddings only
+            encoders = {}
+            emb_dims = {}
+            for ft in FEATURE_TYPES:
+                enc, dim = make_encoder(ft, return_logits=False)
+                encoders[ft] = enc
+                emb_dims[ft] = dim
+            modelnet = FusionNet(encoders, emb_dims)
+
             train_iter = Get_Dataloader({ft: features[ft][train_idx] for ft in FEATURE_TYPES},
                                         ofs_all[train_idx], labels_all[train_idx], True, batch_size, multi=True)
             val_iter   = Get_Dataloader({ft: features[ft][val_idx] for ft in FEATURE_TYPES},
@@ -284,8 +303,10 @@ if __name__ == "__main__":
             test_iter  = Get_Dataloader({ft: features[ft][test_idx] for ft in FEATURE_TYPES},
                                         ofs_all[test_idx], labels_all[test_idx], False, batch_size, multi=True)
         else:
+            # single feature: encoder already outputs logits
             ft = FEATURE_TYPES[0]
-            modelnet = SingleNet(MODEL_MAP[ft](), EMB_DIMS[ft])
+            modelnet = make_encoder(ft, return_logits=True)
+
             train_iter = Get_Dataloader(features[ft][train_idx], ofs_all[train_idx], labels_all[train_idx], True, batch_size)
             val_iter   = Get_Dataloader(features[ft][val_idx],   ofs_all[val_idx],   labels_all[val_idx],   False, batch_size)
             test_iter  = Get_Dataloader(features[ft][test_idx],  ofs_all[test_idx],  labels_all[test_idx],  False, batch_size)
