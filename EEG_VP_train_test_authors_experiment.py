@@ -1,5 +1,5 @@
 import numpy as np
-import os, glob, torch
+import os, glob, torch, gc
 from torch import nn
 from torch.utils import data
 from sklearn.preprocessing import StandardScaler
@@ -13,10 +13,6 @@ num_epochs = 100
 lr = 0.001
 C = 62
 T = 5
-output_dir = '/content/drive/MyDrive/EEG2Video_outputs'
-os.makedirs(output_dir, exist_ok=True)
-network_name = "GLMNet_mlp"
-saved_model_path = os.path.join(output_dir, network_name + '_40c.pth')
 run_device = "cuda"
 ##########################################################################################
 
@@ -52,7 +48,7 @@ def topk_accuracy(output,target,topk=(1,)):
             res.append(correct_k.mul_(1.0/bs).item())
         return res
 
-def train(net,train_iter,val_iter,test_iter,num_epochs,lr,device,save_path):
+def train(net,train_iter,val_iter,test_iter,num_epochs,lr,device):
     def init_weights(m):
         if isinstance(m,(nn.Linear,nn.Conv2d)):
             nn.init.xavier_uniform_(m.weight)
@@ -61,6 +57,7 @@ def train(net,train_iter,val_iter,test_iter,num_epochs,lr,device,save_path):
     optim=torch.optim.AdamW(net.parameters(),lr=lr,weight_decay=0)
     loss=nn.CrossEntropyLoss()
     best_val=0
+    best_state=None
     for _ in range(num_epochs):
         net.train()
         for X,y in train_iter:
@@ -70,8 +67,11 @@ def train(net,train_iter,val_iter,test_iter,num_epochs,lr,device,save_path):
             l.backward(); optim.step()
         val_acc=evaluate_accuracy_gpu(net,val_iter)
         if val_acc>best_val:
-            best_val=val_acc; torch.save(net,save_path)
-    return best_val
+            best_val=val_acc
+            best_state=net.state_dict()
+    if best_state is not None:
+        net.load_state_dict(best_state)
+    return net
 
 # === Labels ===
 GT_label = np.array([
@@ -128,13 +128,13 @@ for subname in sub_list:
         test_iter_psd =Get_Dataloader(test_psd.reshape(test_psd.shape[0],C,T), test_label,False,batch_size)
         val_iter_psd  =Get_Dataloader(val_psd.reshape(val_psd.shape[0],C,T), val_label,False,batch_size)
 
+        # Train DE model (kept in RAM)
         model_de=models.glfnet_mlp(out_dim=40,emb_dim=64,input_dim=310)
-        train(model_de,train_iter_de,val_iter_de,test_iter_de,num_epochs,lr,run_device,saved_model_path+"_de")
-        model_de=torch.load(saved_model_path+"_de",weights_only=False).to(run_device)
+        model_de=train(model_de,train_iter_de,val_iter_de,test_iter_de,num_epochs,lr,run_device)
 
+        # Train PSD model (kept in RAM)
         model_psd=models.glfnet_mlp(out_dim=40,emb_dim=64,input_dim=310)
-        train(model_psd,train_iter_psd,val_iter_psd,test_iter_psd,num_epochs,lr,run_device,saved_model_path+"_psd")
-        model_psd=torch.load(saved_model_path+"_psd",weights_only=False).to(run_device)
+        model_psd=train(model_psd,train_iter_psd,val_iter_psd,test_iter_psd,num_epochs,lr,run_device)
 
         block_top1,block_topk=[],[]
         for (Xd,y),(Xp,_) in zip(test_iter_de,test_iter_psd):
@@ -145,6 +145,12 @@ for subname in sub_list:
             topk_res=topk_accuracy(combined,y,topk=(1,5))
             block_top1.append(topk_res[0]); block_topk.append(topk_res[1])
         Top_1.append(np.mean(block_top1)); Top_K.append(np.mean(block_topk))
+
+        # cleanup
+        del model_de, model_psd
+        del train_de, test_de, val_de, train_psd, test_psd, val_psd
+        torch.cuda.empty_cache()
+        gc.collect()
 
     print(f"{subname} → Mean Top1 {np.mean(Top_1):.3f}, Mean Top5 {np.mean(Top_K):.3f}")
     All_sub_top1.append(np.mean(Top_1)); All_sub_top5.append(np.mean(Top_K))

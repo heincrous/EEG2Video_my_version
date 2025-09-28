@@ -1,8 +1,7 @@
 import numpy as np
-import os, glob, time, torch
+import os, glob, torch, gc
 from torch import nn
 from torch.utils import data
-from sklearn import metrics
 from sklearn.preprocessing import StandardScaler
 from einops import rearrange
 from tqdm import tqdm
@@ -14,10 +13,6 @@ num_epochs = 100
 lr = 0.001
 C = 62
 T = 5
-output_dir = '/content/drive/MyDrive/EEG2Video_outputs'
-os.makedirs(output_dir, exist_ok=True)
-network_name = "GLMNet_mlp"
-saved_model_path = os.path.join(output_dir, network_name + '_40c.pth')
 run_device = "cuda"
 ##########################################################################################
 
@@ -53,7 +48,7 @@ def topk_accuracy(output,target,topk=(1,)):
             res.append(correct_k.mul_(1.0/bs).item())
         return res
 
-def train(net,train_iter,val_iter,test_iter,num_epochs,lr,device,save_path):
+def train(net,train_iter,val_iter,num_epochs,lr,device):
     def init_weights(m):
         if isinstance(m,(nn.Linear,nn.Conv2d)):
             nn.init.xavier_uniform_(m.weight)
@@ -62,19 +57,21 @@ def train(net,train_iter,val_iter,test_iter,num_epochs,lr,device,save_path):
     optim=torch.optim.AdamW(net.parameters(),lr=lr,weight_decay=0)
     loss=nn.CrossEntropyLoss()
     best_val=0
-    # use tqdm to track epochs
-    for _ in tqdm(range(num_epochs),leave=False):
+    best_state=None
+    for _ in range(num_epochs):
         net.train()
         for X,y in train_iter:
             optim.zero_grad()
             X,y=X.to(device),y.to(device)
             out=net(X); l=loss(out,y)
             l.backward(); optim.step()
-        # track val acc only
         val_acc=evaluate_accuracy_gpu(net,val_iter)
         if val_acc>best_val:
-            best_val=val_acc; torch.save(net,save_path)
-    return best_val
+            best_val=val_acc
+            best_state=net.state_dict()
+    if best_state is not None:
+        net.load_state_dict(best_state)
+    return net
 
 # === Labels ===
 GT_label = np.array([
@@ -101,8 +98,8 @@ for subname in sub_list:
     All_train_psd = rearrange(psd_npy,'a b c d e f -> a (b c d) e f')
 
     Top_1,Top_K=[],[]
-    all_test_label,all_test_pred=np.array([]),np.array([])
 
+    # Fold-level progress bar only
     for test_set_id in tqdm(range(7),desc=f"{subname} folds"):
         val_set_id=(test_set_id-1)%7
 
@@ -131,15 +128,14 @@ for subname in sub_list:
         test_iter_psd =Get_Dataloader(test_psd.reshape(test_psd.shape[0],C,T), test_label,False,batch_size)
         val_iter_psd  =Get_Dataloader(val_psd.reshape(val_psd.shape[0],C,T), val_label,False,batch_size)
 
+        # Train DE model
         model_de=models.glfnet_mlp(out_dim=40,emb_dim=64,input_dim=310)
-        train(model_de,train_iter_de,val_iter_de,test_iter_de,num_epochs,lr,run_device,saved_model_path+"_de")
-        model_de=torch.load(saved_model_path+"_de",weights_only=False).to(run_device)
+        model_de=train(model_de,train_iter_de,val_iter_de,num_epochs,lr,run_device)
 
+        # Train PSD model
         model_psd=models.glfnet_mlp(out_dim=40,emb_dim=64,input_dim=310)
-        train(model_psd,train_iter_psd,val_iter_psd,test_iter_psd,num_epochs,lr,run_device,saved_model_path+"_psd")
-        model_psd=torch.load(saved_model_path+"_psd",weights_only=False).to(run_device)
+        model_psd=train(model_psd,train_iter_psd,val_iter_psd,num_epochs,lr,run_device)
 
-        # fusion evaluation
         block_top1,block_topk=[],[]
         for (Xd,y),(Xp,_) in zip(test_iter_de,test_iter_psd):
             Xd,Xp,y=Xd.to(run_device),Xp.to(run_device),y.to(run_device)
@@ -148,13 +144,15 @@ for subname in sub_list:
             combined=(probs_de+probs_psd)/2
             topk_res=topk_accuracy(combined,y,topk=(1,5))
             block_top1.append(topk_res[0]); block_topk.append(topk_res[1])
-            preds=torch.argmax(combined,axis=1).cpu().numpy()
-            all_test_pred=np.concatenate((all_test_pred,preds))
-        all_test_label=np.concatenate((all_test_label,test_label))
         Top_1.append(np.mean(block_top1)); Top_K.append(np.mean(block_topk))
 
+        # cleanup
+        del model_de, model_psd
+        del train_de, test_de, val_de, train_psd, test_psd, val_psd
+        torch.cuda.empty_cache()
+        gc.collect()
+
     print(f"{subname} → Mean Top1 {np.mean(Top_1):.3f}, Mean Top5 {np.mean(Top_K):.3f}")
-    print(metrics.classification_report(all_test_label,all_test_pred))
     All_sub_top1.append(np.mean(Top_1)); All_sub_top5.append(np.mean(Top_K))
 
 print("TOP1:",np.mean(All_sub_top1),np.std(All_sub_top1))
