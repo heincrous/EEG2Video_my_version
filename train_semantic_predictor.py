@@ -22,13 +22,13 @@ run_device    = "cuda"
 
 # optimizer: "adam" or "adamw"
 OPTIMIZER_TYPE = "adam"
-WEIGHT_DECAY = 0.01
+WEIGHT_DECAY   = 0.01
 
 # scheduler: "cosine" or "constant"
 SCHEDULER_TYPE = "cosine"
 
 # choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["DE"]
+FEATURE_TYPES  = ["DE"]
 
 # default is subject 1 only; set to True to use all subjects in folder
 USE_ALL_SUBJECTS = False
@@ -214,29 +214,33 @@ def evaluate(net, data_iter, device):
     net.eval()
     cos = nn.CosineSimilarity(dim=-1)
     total_mse, total_cos, count, dim = 0, 0, 0, None
-    preds_all, targets_all = [], []
+    preds_all, labels_all = [], []
     with torch.no_grad():
-        for X, y, _ in data_iter:
-            X, y = X.to(device), y.to(device)
+        for X, y, lbl in data_iter:
+            X, y, lbl = X.to(device), y.to(device), lbl.to(device)
             y_hat = net(X)
             total_mse += F.mse_loss(y_hat, y, reduction="sum").item()
             total_cos += cos(y_hat, y).mean().item() * y.size(0)
             preds_all.append(y_hat.cpu().numpy())
-            targets_all.append(y.cpu().numpy())
+            labels_all.append(lbl.cpu().numpy())
             count += y.size(0)
             dim = y.size(1)
-    preds_all = np.concatenate(preds_all, axis=0)
+    preds_all  = np.concatenate(preds_all, axis=0)
+    labels_all = np.concatenate(labels_all, axis=0)
+
+    # compute fisher score dynamically
     try:
-        preds_all = preds_all.reshape(40, 5, 2, -1)
-        class_samples = preds_all.reshape(40, -1, preds_all.shape[-1])
-        class_means = class_samples.mean(axis=1)
-        overall_mean = class_means.mean(axis=0)
-        between = np.sum([len(c) * np.sum((m - overall_mean) ** 2)
-                          for m, c in zip(class_means, class_samples)])
-        within = np.sum([np.sum((c - m) ** 2) for m, c in zip(class_means, class_samples)])
+        classes = np.unique(labels_all)
+        class_samples = [preds_all[labels_all == c] for c in classes]
+        class_means   = [c.mean(axis=0) for c in class_samples]
+        overall_mean  = np.mean(class_means, axis=0)
+        between = sum(len(c) * np.sum((m - overall_mean) ** 2)
+                      for c, m in zip(class_samples, class_means))
+        within  = sum(np.sum((c - m) ** 2) for c, m in zip(class_samples, class_means))
         fisher_score = between / (within + 1e-8)
     except Exception:
         fisher_score = 0.0
+
     return total_mse / (count * dim), total_cos / count, fisher_score
 
 
