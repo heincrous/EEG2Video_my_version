@@ -53,7 +53,7 @@ WEIGHT_DECAY     = 0
 FEATURE_TYPES = ["DE_mlp"]
 
 # default is subject 1 only; set to True to use all subjects in folder
-USE_ALL_SUBJECTS = True
+USE_ALL_SUBJECTS = False
 subject_name     = "sub1.npy"
 
 # loss type: "mse", "cosine", "mse+cosine", "contrastive", "crossentropy"
