@@ -196,7 +196,7 @@ def get_files_names_in_directory(directory):
     return files_names
 
 # Pick one subject only
-sub_list = ["sub10.npy"]   # change sub10.npy to whichever subject file you want
+sub_list = ["sub10.npy.npy"]   # change sub10.npy to whichever subject file you want
 
 All_sub_top1 = []
 All_sub_top5 = []
