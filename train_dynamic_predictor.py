@@ -1,5 +1,5 @@
 # ==========================================
-# EEG → Dynamic Predictor (with Encoders)
+# EEG → Dynamic Predictor
 # ==========================================
 import os, numpy as np, torch, joblib
 from torch import nn
@@ -23,28 +23,23 @@ emb_dim_segments = 512
 emb_dim_DE       = 128
 emb_dim_PSD      = 128
 
-# optimizer & scheduler
-OPTIMIZER_TYPE = "adamw"     # "adam" or "adamw"
-SCHEDULER_TYPE = "cosine"    # "cosine" or "constant"
-WEIGHT_DECAY   = 0.01        # default for AdamW
+WEIGHT_DECAY   = 0.01
 
 # choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
 FEATURE_TYPES    = ["DE"]
 
-# default is subject 1 only; set to True to use all subjects in folder
 USE_ALL_SUBJECTS = False
 subject_name     = "sub1.npy"
 
-# restrict to certain classes (0–39); set None for all
+# restrict to certain classes (0–39); set to None for all
 CLASS_SUBSET     = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
 
-# loss type: "mse", "cosine", "mse+cosine", "contrastive"
+# loss type: "mse", "cosine", "mse+cosine", "contrastive", "crossentropy"
 LOSS_TYPE        = "mse"
 
 USE_VAR_REG = False
 VAR_LAMBDA  = 0.01
 
-# paths
 FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
     "DE":       "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s",
@@ -54,27 +49,38 @@ OFS_PATH         = "/content/drive/MyDrive/EEG2Video_data/processed/meta-info/Al
 DYNPRED_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/dynamic_checkpoints"
 
 # ==========================================
-# Model map (encoders)
+# Encoders → embeddings
 # ==========================================
 MODEL_MAP = {
-    "segments": lambda: models.glfnet(out_dim=1, emb_dim=emb_dim_segments, C=C, T=200),
-    "DE":       lambda: models.glfnet_mlp(out_dim=1, emb_dim=emb_dim_DE, input_dim=C*T),
-    "PSD":      lambda: models.glfnet_mlp(out_dim=1, emb_dim=emb_dim_PSD, input_dim=C*T),
+    "segments": lambda: models.glfnet(out_dim=emb_dim_segments, emb_dim=emb_dim_segments, C=C, T=200),
+    "DE":       lambda: models.glfnet_mlp(out_dim=emb_dim_DE, emb_dim=emb_dim_DE, input_dim=C*T),
+    "PSD":      lambda: models.glfnet_mlp(out_dim=emb_dim_PSD, emb_dim=emb_dim_PSD, input_dim=C*T),
 }
+EMB_DIMS = {"segments": emb_dim_segments, "DE": emb_dim_DE, "PSD": emb_dim_PSD}
 
-# Fusion model wrapper
+# ==========================================
+# Fusion regressor (embedding-level)
+# ==========================================
 class FusionNet(nn.Module):
-    def __init__(self, encoders):
+    def __init__(self, encoders, emb_dims):
         super().__init__()
         self.encoders = nn.ModuleDict(encoders)
-        total_dim     = len(encoders) * 1
-        self.fc       = nn.Linear(total_dim, 1)
+        total_dim     = sum(emb_dims.values())
+        self.regressor = nn.Linear(total_dim, 1)
     def forward(self, inputs):
         feats = []
         for name, enc in self.encoders.items():
             feats.append(enc(inputs[name]))
         fused = torch.cat(feats, dim=-1)
-        return self.fc(fused)
+        return self.regressor(fused)
+
+class SingleNet(nn.Module):
+    def __init__(self, encoder, emb_dim):
+        super().__init__()
+        self.encoder = encoder
+        self.regressor = nn.Linear(emb_dim, 1)
+    def forward(self, x):
+        return self.regressor(self.encoder(x))
 
 # ==========================================
 # Dataset
@@ -116,23 +122,12 @@ def contrastive_loss_fn(y_hat, y, margin=1.0):
 def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
           subname="subject", scalers=None, threshold=None):
     net.to(device)
-
-    if OPTIMIZER_TYPE.lower() == "adam":
-        optimizer = torch.optim.Adam(net.parameters(), lr=lr)
-    elif OPTIMIZER_TYPE.lower() == "adamw":
-        optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
-    else:
-        raise ValueError(f"Unknown OPTIMIZER_TYPE {OPTIMIZER_TYPE}")
-
-    if SCHEDULER_TYPE.lower() == "cosine":
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=num_epochs * len(train_iter)
-        )
-    else:
-        scheduler = None
+    optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(train_iter))
 
     mse_loss  = nn.MSELoss()
     cos_loss  = nn.CosineEmbeddingLoss()
+    ce_loss   = nn.CrossEntropyLoss()
 
     best_val, best_state = 1e12, None
     for epoch in range(num_epochs):
@@ -158,6 +153,10 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
                 loss = mse_loss(y_hat, y) + cos_loss(y_hat, y, target)
             elif LOSS_TYPE == "contrastive":
                 loss = contrastive_loss_fn(y_hat, y)
+            elif LOSS_TYPE == "crossentropy":
+                # threshold into classes for CE
+                y_cls = (y > threshold).long().view(-1)
+                loss  = ce_loss(y_hat.view(-1,1), y_cls)  # Note: expect classifier if extended to 2 logits
             else:
                 raise ValueError(f"Unknown LOSS_TYPE {LOSS_TYPE}")
 
@@ -166,7 +165,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
 
             loss.backward()
             optimizer.step()
-            if scheduler: scheduler.step()
+            scheduler.step()
             total_loss += loss.item() * y.size(0)
 
         val_mse, val_acc = evaluate_with_classification(net, val_iter, device, threshold)
@@ -253,13 +252,13 @@ if __name__ == "__main__":
 
         if len(FEATURE_TYPES) > 1:
             encoders = {ft: MODEL_MAP[ft]() for ft in FEATURE_TYPES}
-            modelnet = FusionNet(encoders)
+            modelnet = FusionNet(encoders, {ft: EMB_DIMS[ft] for ft in FEATURE_TYPES})
             train_iter = Get_Dataloader({ft: features[ft][train_idx] for ft in FEATURE_TYPES}, ofs_all[train_idx], labels_all[train_idx], True, batch_size, multi=True)
             val_iter   = Get_Dataloader({ft: features[ft][val_idx]   for ft in FEATURE_TYPES}, ofs_all[val_idx],   labels_all[val_idx],   False, batch_size, multi=True)
             test_iter  = Get_Dataloader({ft: features[ft][test_idx]  for ft in FEATURE_TYPES}, ofs_all[test_idx],  labels_all[test_idx],  False, batch_size, multi=True)
         else:
             ft = FEATURE_TYPES[0]
-            modelnet = MODEL_MAP[ft]()
+            modelnet = SingleNet(MODEL_MAP[ft](), EMB_DIMS[ft])
             train_iter = Get_Dataloader(features[ft][train_idx], ofs_all[train_idx], labels_all[train_idx], True, batch_size)
             val_iter   = Get_Dataloader(features[ft][val_idx],   ofs_all[val_idx],   labels_all[val_idx],   False, batch_size)
             test_iter  = Get_Dataloader(features[ft][test_idx],  ofs_all[test_idx],  labels_all[test_idx],  False, batch_size)

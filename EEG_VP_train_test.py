@@ -1,5 +1,5 @@
 # ==========================================
-# EEG classification (embedding-level fusion)
+# EEG classification
 # ==========================================
 import os, random
 import numpy as np
@@ -9,6 +9,7 @@ from torch.utils import data
 from sklearn.preprocessing import StandardScaler
 from einops import rearrange
 import models
+
 
 # ==========================================
 # Config
@@ -24,8 +25,16 @@ emb_dim_segments = 512
 emb_dim_DE       = 128
 emb_dim_PSD      = 128
 
-FEATURE_TYPES    = ["DE"]  # ["segments"], ["DE"], ["PSD"], or combinations
+WEIGHT_DECAY     = 0.01
+
+# choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
+FEATURE_TYPES    = ["DE"]
+
+# default is subject 1 only; set to True to use all subjects in folder
 USE_ALL_SUBJECTS = False
+subject_name     = "sub1.npy"
+
+# loss type: "mse", "cosine", "mse+cosine", "contrastive", "crossentropy"
 LOSS_TYPE        = "crossentropy"
 
 USE_VAR_REG = False
@@ -37,6 +46,7 @@ FEATURE_PATHS = {
     "PSD":      "/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s",
 }
 
+
 # ==========================================
 # Encoders → embeddings
 # ==========================================
@@ -45,9 +55,11 @@ MODEL_MAP = {
     "DE":       lambda: models.glfnet_mlp(out_dim=emb_dim_DE, emb_dim=emb_dim_DE, input_dim=62*5),
     "PSD":      lambda: models.glfnet_mlp(out_dim=emb_dim_PSD, emb_dim=emb_dim_PSD, input_dim=62*5),
 }
+EMB_DIMS = {"segments": emb_dim_segments, "DE": emb_dim_DE, "PSD": emb_dim_PSD}
+
 
 # ==========================================
-# Fusion model (embedding level)
+# Models
 # ==========================================
 class FusionNet(nn.Module):
     def __init__(self, encoders, emb_dims, num_classes=40):
@@ -56,11 +68,19 @@ class FusionNet(nn.Module):
         total_dim     = sum(emb_dims.values())
         self.classifier = nn.Linear(total_dim, num_classes)
     def forward(self, inputs):
-        feats = []
-        for name, enc in self.encoders.items():
-            feats.append(enc(inputs[name]))  # each gives embedding
+        feats = [enc(inputs[name]) for name, enc in self.encoders.items()]
         fused = torch.cat(feats, dim=-1)
-        return self.classifier(fused)       # logits
+        return self.classifier(fused)  # logits
+
+class SingleNet(nn.Module):
+    def __init__(self, encoder, emb_dim, num_classes=40):
+        super().__init__()
+        self.encoder = encoder
+        self.classifier = nn.Linear(emb_dim, num_classes)
+    def forward(self, x):
+        emb = self.encoder(x)
+        return self.classifier(emb)  # logits
+
 
 # ==========================================
 # Dataset wrappers
@@ -81,6 +101,7 @@ def Get_Dataloader(features, labels, istrain, batch_size, multi=False):
         features = torch.tensor(features, dtype=torch.float32)
         labels   = torch.tensor(labels, dtype=torch.long)
         return data.DataLoader(data.TensorDataset(features, labels), batch_size, shuffle=istrain)
+
 
 # ==========================================
 # Metrics
@@ -112,6 +133,7 @@ def topk_accuracy(output, target, topk=(1,5)):
         correct = pred.eq(target.view(1, -1).expand_as(pred))
         return [(correct[:k].reshape(-1).float().sum(0, keepdim=True) / target.size(0)).item() for k in topk]
 
+
 # ==========================================
 # Training loop
 # ==========================================
@@ -121,7 +143,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, multi=Fa
             nn.init.xavier_uniform_(m.weight)
     net.apply(init_weights)
     net.to(device)
-    optimizer = torch.optim.AdamW(net.parameters(), lr=lr)
+    optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
     ce_loss   = nn.CrossEntropyLoss()
     mse_loss  = nn.MSELoss()
     cos_loss  = nn.CosineEmbeddingLoss()
@@ -177,22 +199,22 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, multi=Fa
         net.load_state_dict(best_state)
     return net
 
+
 # ==========================================
 # Labels
 # ==========================================
 All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
 
+
 # ==========================================
 # Main
 # ==========================================
-sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else ["sub1.npy"]
+sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else [subject_name]
 All_sub_top1, All_sub_top5 = [], []
 
 for subname in sub_list:
-    # Load
     raw_data = {ft: np.load(os.path.join(FEATURE_PATHS[ft], subname)) for ft in FEATURE_TYPES}
 
-    # Reshape
     def reshape(ft, arr):
         if ft in ["DE","PSD"]:
             return rearrange(arr, "a b c d e f -> a (b c d) e f")
@@ -205,7 +227,6 @@ for subname in sub_list:
     Top_1, Top_K = [], []
     for test_set_id in range(7):
         val_set_id = (test_set_id - 1) % 7
-
         train_data, val_data, test_data = {}, {}, {}
         for ft in All_train:
             train_data[ft] = np.concatenate([All_train[ft][i] for i in range(7) if i not in [test_set_id,val_set_id]])
@@ -216,7 +237,6 @@ for subname in sub_list:
         val_label   = All_label[val_set_id]
         test_label  = All_label[test_set_id]
 
-        # Scale features
         for ft in train_data:
             tr = train_data[ft].reshape(train_data[ft].shape[0], -1)
             va = val_data[ft].reshape(val_data[ft].shape[0], -1)
@@ -240,17 +260,17 @@ for subname in sub_list:
             val_iter   = Get_Dataloader(val_data,   val_label,   False, batch_size, multi=True)
             test_iter  = Get_Dataloader(test_data,  test_label,  False, batch_size, multi=True)
             encoders   = {ft: MODEL_MAP[ft]() for ft in FEATURE_TYPES}
-            emb_dims   = {"segments": emb_dim_segments, "DE": emb_dim_DE, "PSD": emb_dim_PSD}
+            emb_dims   = {ft: EMB_DIMS[ft] for ft in FEATURE_TYPES}
             modelnet   = FusionNet(encoders, emb_dims, num_classes=40)
         else:
             ft = FEATURE_TYPES[0]
             train_iter = Get_Dataloader(train_data[ft], train_label, True, batch_size)
             val_iter   = Get_Dataloader(val_data[ft],   val_label,   False, batch_size)
             test_iter  = Get_Dataloader(test_data[ft],  test_label,  False, batch_size)
-            modelnet   = MODEL_MAP[ft]()
+            modelnet   = SingleNet(MODEL_MAP[ft](), EMB_DIMS[ft], num_classes=40)
 
-        # Train & evaluate
         modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr, run_device, multi=multi)
+
         block_top1, block_top5 = [], []
         with torch.no_grad():
             for X, y in test_iter:

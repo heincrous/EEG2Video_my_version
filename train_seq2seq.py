@@ -19,9 +19,11 @@ num_epochs       = 200
 lr               = 0.0005
 run_device       = "cuda"
 
+# default is subject 1 only; set to True to use all subjects in folder
 USE_ALL_SUBJECTS = False
 subject_name     = "sub1.npy"
 
+# restrict to certain classes (0–39); set to None for all
 CLASS_SUBSET     = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
 
 EEG_DIR          = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_windows_100"
