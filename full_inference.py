@@ -15,7 +15,7 @@ from train_semantic_predictor import SemanticPredictor, FusionNet, MODEL_MAP, FE
 # Config (set these manually)
 # ==========================================
 SUBJECT       = "sub1.npy"          # e.g. "sub10.npy"
-FEATURE_TYPES = ["DE"]        # e.g. ["DE"], ["segments"], ["DE","PSD"]
+FEATURE_TYPES = ["DE"]              # e.g. ["DE"], ["segments"], ["DE","PSD"]
 
 CHECKPOINT_DIR     = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
@@ -143,7 +143,7 @@ def run_inference(eeg_feat, idx):
     negative = semantic_pred.mean(dim=0, keepdim=True).float().to(device)
 
     video_length, fps = 6, 3
-    video = pipe(
+    result = pipe(
         model=None,
         eeg=semantic_pred,
         negative_eeg=negative,
@@ -153,11 +153,11 @@ def run_inference(eeg_feat, idx):
         width=512,
         num_inference_steps=100,
         guidance_scale=12.5,
-    ).videos
+    )
 
-    frames = (video[0] * 255).clamp(0,255).to(torch.uint8).permute(0,2,3,1).cpu().numpy()
-    if frames.shape[-1] > 3: frames = frames[...,:3]
-    elif frames.shape[-1] == 1: frames = np.repeat(frames, 3, axis=-1)
+    video_tensor = result["videos"]
+    frames = (video_tensor[0] * 255).clamp(0,255).to(torch.uint8)
+    frames = rearrange(frames, "c f h w -> f h w c").cpu().numpy()
 
     caption = get_caption(idx)
     inf_base = f"{SUBJECT.replace('.npy','')}_{ft_tag}_sample{idx}"
