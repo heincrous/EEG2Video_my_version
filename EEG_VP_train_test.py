@@ -303,7 +303,7 @@ for subname in sub_list:
             tr_scaled = scaler.fit_transform(tr)
             va_scaled = scaler.transform(va)
             te_scaled = scaler.transform(te)
-            if ft == "segments":
+            if ft.startswith("segments"):
                 train_data[ft] = tr_scaled.reshape(-1, 1, C, 200)
                 val_data[ft]   = va_scaled.reshape(-1, 1, C, 200)
                 test_data[ft]  = te_scaled.reshape(-1, 1, C, 200)
