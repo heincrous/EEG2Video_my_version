@@ -1,5 +1,5 @@
 # ==========================================
-# EEG2Video Seq2Seq Training (with val/test logging)
+# EEG2Video Seq2Seq Training
 # ==========================================
 import os, math, joblib
 import numpy as np
@@ -33,9 +33,10 @@ SEQ2SEQ_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpo
 # EEG Encoder
 # ==========================================
 class MyEEGNet_embedding(nn.Module):
-    def __init__(self, d_model=128, C=62, T=100, F1=16, D=4, F2=16, cross_subject=False):
+    def __init__(self, d_model=128, C=62, T=100, F1=16, D=4, F2=16):
         super().__init__()
-        self.drop_out = 0.25 if cross_subject else 0.5
+        drop_out = 0.5  # fixed dropout (no cross-subject flag)
+
         self.block_1 = nn.Sequential(
             nn.ZeroPad2d((31, 32, 0, 0)),
             nn.Conv2d(1, F1, (1, 64), bias=False),
@@ -46,7 +47,7 @@ class MyEEGNet_embedding(nn.Module):
             nn.BatchNorm2d(F1 * D),
             nn.ELU(),
             nn.AvgPool2d((1, 4)),
-            nn.Dropout(self.drop_out)
+            nn.Dropout(drop_out)
         )
         self.block_3 = nn.Sequential(
             nn.ZeroPad2d((7, 8, 0, 0)),
@@ -55,7 +56,7 @@ class MyEEGNet_embedding(nn.Module):
             nn.BatchNorm2d(F2),
             nn.ELU(),
             nn.AvgPool2d((1, 8)),
-            nn.Dropout(self.drop_out)
+            nn.Dropout(drop_out)
         )
         self.embedding = nn.Linear(48, d_model)
 
@@ -89,7 +90,7 @@ class PositionalEncoding(nn.Module):
 # ==========================================
 # Transformer Seq2Seq
 # ==========================================
-class myTransformer(nn.Module):
+class MyTransformer(nn.Module):
     def __init__(self, d_model=512):
         super().__init__()
         self.img_embedding = nn.Linear(4 * 36 * 64, d_model)
@@ -105,14 +106,14 @@ class myTransformer(nn.Module):
         )
 
         self.positional_encoding = PositionalEncoding(d_model, dropout=0)
-        self.txtpredictor = nn.Linear(d_model, 13)
-        self.predictor = nn.Linear(d_model, 4 * 36 * 64)
+        self.predictor = nn.Linear(d_model, 4 * 36 * 64)  # video latent reconstruction
 
     def forward(self, src, tgt):
         # src: (batch, 7, 62, 100)
         src = self.eeg_embedding(src.reshape(src.shape[0] * src.shape[1], 1, 62, 100)).reshape(src.shape[0], 7, -1)
         tgt = tgt.reshape(tgt.shape[0], tgt.shape[1], -1)
         tgt = self.img_embedding(tgt)
+
         src = self.positional_encoding(src)
         tgt = self.positional_encoding(tgt)
 
@@ -124,8 +125,7 @@ class myTransformer(nn.Module):
             decoder_output = self.transformer_decoder(new_tgt, encoder_output, tgt_mask=tgt_mask[:i+1, :i+1])
             new_tgt = torch.cat((new_tgt, decoder_output[:, -1:, :]), dim=1)
 
-        encoder_output = torch.mean(encoder_output, dim=1)
-        return self.txtpredictor(encoder_output), self.predictor(new_tgt).reshape(new_tgt.shape[0], new_tgt.shape[1], 4, 36, 64)
+        return self.predictor(new_tgt).reshape(new_tgt.shape[0], new_tgt.shape[1], 4, 36, 64)
 
 
 # ==========================================
@@ -151,7 +151,7 @@ def evaluate_loss(model, loader, criterion, device):
             b, f, c, h, w = video.shape
             padded_video = torch.zeros((b, 1, c, h, w)).to(device)
             full_video   = torch.cat((padded_video, video), dim=1)
-            _, out = model(eeg, full_video)
+            out = model(eeg, full_video)
             loss = criterion(video, out[:, :-1, :])
             total_loss += loss.item() * b
             count += b
@@ -196,7 +196,7 @@ def train_subject(subname):
     val_loader   = DataLoader(EEGVideoDataset(EEG_val,   VID_val),   batch_size=batch_size, shuffle=False)
     test_loader  = DataLoader(EEGVideoDataset(EEG_test,  VID_test),  batch_size=batch_size, shuffle=False)
 
-    model = myTransformer().to(run_device)
+    model = MyTransformer().to(run_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(train_loader))
     criterion = nn.MSELoss()
@@ -212,7 +212,7 @@ def train_subject(subname):
             full_video   = torch.cat((padded_video, video), dim=1)
 
             optimizer.zero_grad()
-            _, out = model(eeg, full_video)
+            out = model(eeg, full_video)
             loss  = criterion(video, out[:, :-1, :])
             loss.backward()
             optimizer.step()
