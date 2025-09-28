@@ -9,6 +9,7 @@ from torch.utils import data
 from sklearn.preprocessing import StandardScaler
 from einops import rearrange
 import models
+from core.gt_label import GT_LABEL
 
 
 # ==========================================
@@ -21,101 +22,38 @@ C             = 62
 T             = 5
 run_device    = "cuda"
 
+# embedding dims (tune here!)
 emb_dim_segments = 256
-emb_dim_DE       = 64
+emb_dim_DE       = 64     # authors use 64 for DE
 emb_dim_PSD      = 256
 
-# optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
-WEIGHT_DECAY     = 0
+WEIGHT_DECAY     = 0   # 0 to match authors' Adam setup
 
-# ==========================================
-# Select which features and encoders to use
-# ==========================================
-# For SEGMENTS (raw EEG windows, shape [B,1,62,200]):
-#   FEATURE_TYPES = ["segments_shallow"]
-#   FEATURE_TYPES = ["segments_deep"]
-#   FEATURE_TYPES = ["segments_eegnet"]
-#   FEATURE_TYPES = ["segments_tsconv"]
-#   FEATURE_TYPES = ["segments_glf"]
-#   FEATURE_TYPES = ["segments_conformer"]
-#
-# For DE or PSD (frequency features, shape [B,62,5]):
-#   FEATURE_TYPES = ["DE_glf"]         # glfnet_mlp
-#   FEATURE_TYPES = ["DE_mlp"]         # plain mlpnet
-#   FEATURE_TYPES = ["PSD_glf"]
-#   FEATURE_TYPES = ["PSD_mlp"]
-#
-# For multi-feature fusion, just combine:
-#   FEATURE_TYPES = ["DE_glf", "PSD_glf"]
-#   FEATURE_TYPES = ["segments_glf", "DE_mlp"]
-#   FEATURE_TYPES = ["segments_conformer", "DE_glf", "PSD_mlp"]
-# ==========================================
-FEATURE_TYPES = ["segments_conformer", "PSD_mlp"]
-
-# default is subject 1 only; set to True to use all subjects in folder
+FEATURE_TYPES    = ["segments_conformer", "PSD_mlp"]
 USE_ALL_SUBJECTS = False
 subject_name     = "sub1.npy"
 
-# loss type: "mse", "cosine", "mse+cosine", "contrastive", "crossentropy"
-LOSS_TYPE        = "crossentropy"
+LOSS_TYPE        = "crossentropy"   # crossentropy | mse | cosine | mse+cosine
+USE_VAR_REG      = False
+VAR_LAMBDA       = 0.01
 
-USE_VAR_REG = False
-VAR_LAMBDA  = 0.01
 
 FEATURE_PATHS = {
-    "segments_shallow": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
-    "segments_deep":    "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
-    "segments_eegnet":  "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
-    "segments_tsconv":  "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
-    "segments_glf":     "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
+    "segments_shallow":   "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
+    "segments_deep":      "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
+    "segments_eegnet":    "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
+    "segments_tsconv":    "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
+    "segments_glf":       "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
     "segments_conformer": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
-
     "DE_glf":  "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s",
     "DE_mlp":  "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s",
-
     "PSD_glf": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s",
     "PSD_mlp": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s",
 }
 
 
 # ==========================================
-# Encoders → embeddings
-# ==========================================
-MODEL_MAP = {
-    # Segments-based models (CNN-style)
-    "segments_shallow":   lambda: models.shallownet(out_dim=emb_dim_segments, C=62, T=200),
-    "segments_deep":      lambda: models.deepnet(out_dim=emb_dim_segments, C=62, T=200),
-    "segments_eegnet":    lambda: models.eegnet(out_dim=emb_dim_segments, C=62, T=200),
-    "segments_tsconv":    lambda: models.tsconv(out_dim=emb_dim_segments, C=62, T=200),
-    "segments_glf":       lambda: models.glfnet(out_dim=emb_dim_segments, emb_dim=emb_dim_segments, C=62, T=200),
-    "segments_conformer": lambda: models.conformer(emb_size=40, depth=3, out_dim=emb_dim_segments),
-
-    # DE/PSD-based models (MLP-style)
-    "DE_glf":   lambda: models.glfnet_mlp(out_dim=emb_dim_DE, emb_dim=emb_dim_DE, input_dim=62*5),
-    "DE_mlp":   lambda: models.mlpnet(out_dim=emb_dim_DE, input_dim=62*5),
-    "PSD_glf":  lambda: models.glfnet_mlp(out_dim=emb_dim_PSD, emb_dim=emb_dim_PSD, input_dim=62*5),
-    "PSD_mlp":  lambda: models.mlpnet(out_dim=emb_dim_PSD, input_dim=62*5),
-}
-
-EMB_DIMS = {
-    # Segments
-    "segments_shallow":   emb_dim_segments,
-    "segments_deep":      emb_dim_segments,
-    "segments_eegnet":    emb_dim_segments,
-    "segments_tsconv":    emb_dim_segments,
-    "segments_glf":       emb_dim_segments,
-    "segments_conformer": emb_dim_segments,
-
-    # DE/PSD
-    "DE_glf":   emb_dim_DE,
-    "DE_mlp":   emb_dim_DE,
-    "PSD_glf":  emb_dim_PSD,
-    "PSD_mlp":  emb_dim_PSD,
-}
-
-
-# ==========================================
-# Models
+# FusionNet
 # ==========================================
 class FusionNet(nn.Module):
     def __init__(self, encoders, emb_dims, num_classes=40):
@@ -126,16 +64,7 @@ class FusionNet(nn.Module):
     def forward(self, inputs):
         feats = [enc(inputs[name]) for name, enc in self.encoders.items()]
         fused = torch.cat(feats, dim=-1)
-        return self.classifier(fused)  # logits
-
-class SingleNet(nn.Module):
-    def __init__(self, encoder, emb_dim, num_classes=40):
-        super().__init__()
-        self.encoder = encoder
-        self.classifier = nn.Linear(emb_dim, num_classes)
-    def forward(self, x):
-        emb = self.encoder(x)
-        return self.classifier(emb)  # logits
+        return self.classifier(fused)
 
 
 # ==========================================
@@ -172,10 +101,8 @@ def evaluate_accuracy_gpu(net, data_iter, device, multi=False):
     correct, total = 0, 0
     with torch.no_grad():
         for X, y in data_iter:
-            if multi:
-                X = {ft: X[ft].to(device) for ft in X}
-            else:
-                X = X.to(device)
+            if multi: X = {ft: X[ft].to(device) for ft in X}
+            else:     X = X.to(device)
             y = y.to(device)
             correct += cal_accuracy(net(X), y)
             total   += y.numel()
@@ -209,15 +136,14 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, multi=Fa
         net.train()
         total_loss, correct, total = 0, 0, 0
         for X, y in train_iter:
-            if multi:
-                X = {ft: X[ft].to(device) for ft in X}
-            else:
-                X = X.to(device)
+            if multi: X = {ft: X[ft].to(device) for ft in X}
+            else:     X = X.to(device)
             y = y.to(device)
 
             optimizer.zero_grad()
             y_hat = net(X)
 
+            # loss selection
             if LOSS_TYPE == "crossentropy":
                 loss = ce_loss(y_hat, y)
             elif LOSS_TYPE == "mse":
@@ -259,7 +185,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, multi=Fa
 # ==========================================
 # Labels
 # ==========================================
-All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
+All_label = np.tile(GT_LABEL, (1, 10))  # shape [7, 400]
 
 
 # ==========================================
@@ -271,10 +197,17 @@ All_sub_top1, All_sub_top5 = [], []
 for subname in sub_list:
     raw_data = {ft: np.load(os.path.join(FEATURE_PATHS[ft], subname)) for ft in FEATURE_TYPES}
 
+    # === Reorder blocks to match authors' GT_LABEL ===
+    for ft in raw_data:
+        arr = raw_data[ft]   # shape [7, 40, ...]
+        reordered = np.zeros_like(arr)
+        for b in range(7):
+            reordered[b] = arr[b, GT_LABEL[b]]
+        raw_data[ft] = reordered
+    # ================================================
+
     def reshape(ft, arr):
-        if ft.startswith("DE"):
-            return rearrange(arr, "a b c d e f -> a (b c d) e f")
-        elif ft.startswith("PSD"):
+        if ft.startswith("DE") or ft.startswith("PSD"):
             return rearrange(arr, "a b c d e f -> a (b c d) e f")
         elif ft.startswith("segments"):
             return rearrange(arr, "a b c d (w t) -> a (b c w) d t", w=2)
@@ -295,6 +228,7 @@ for subname in sub_list:
         val_label   = All_label[val_set_id]
         test_label  = All_label[test_set_id]
 
+        # scale
         for ft in train_data:
             tr = train_data[ft].reshape(train_data[ft].shape[0], -1)
             va = val_data[ft].reshape(val_data[ft].shape[0], -1)
@@ -314,28 +248,61 @@ for subname in sub_list:
 
         multi = len(FEATURE_TYPES) > 1
         if multi:
+            # Fusion mode: encoders → embeddings
             train_iter = Get_Dataloader(train_data, train_label, True, batch_size, multi=True)
             val_iter   = Get_Dataloader(val_data,   val_label,   False, batch_size, multi=True)
             test_iter  = Get_Dataloader(test_data,  test_label,  False, batch_size, multi=True)
-            encoders   = {ft: MODEL_MAP[ft]() for ft in FEATURE_TYPES}
-            emb_dims   = {ft: EMB_DIMS[ft] for ft in FEATURE_TYPES}
-            modelnet   = FusionNet(encoders, emb_dims, num_classes=40)
+
+            encoders, emb_dims = {}, {}
+            for ft in FEATURE_TYPES:
+                if ft.startswith("DE") or ft.startswith("PSD"):
+                    emb_size = emb_dim_DE if "DE" in ft else emb_dim_PSD
+                    if "glf" in ft:
+                        encoders[ft] = models.glfnet_mlp(out_dim=emb_size, emb_dim=emb_size, input_dim=62*5)
+                    else:
+                        encoders[ft] = models.mlpnet(out_dim=emb_size, input_dim=62*5)
+                    emb_dims[ft] = emb_size
+                else:
+                    if "shallow" in ft:     encoders[ft] = models.shallownet(emb_dim_segments, C, 200)
+                    elif "deep" in ft:      encoders[ft] = models.deepnet(emb_dim_segments, C, 200)
+                    elif "eegnet" in ft:    encoders[ft] = models.eegnet(emb_dim_segments, C, 200)
+                    elif "tsconv" in ft:    encoders[ft] = models.tsconv(emb_dim_segments, C, 200)
+                    elif "glf" in ft:       encoders[ft] = models.glfnet(emb_dim_segments, emb_dim_segments, C, 200)
+                    elif "conformer" in ft: encoders[ft] = models.conformer(out_dim=emb_dim_segments)
+                    emb_dims[ft] = emb_dim_segments
+
+            modelnet = FusionNet(encoders, emb_dims, num_classes=40)
+
         else:
+            # Single feature: use authors' model directly (out_dim=40)
             ft = FEATURE_TYPES[0]
             train_iter = Get_Dataloader(train_data[ft], train_label, True, batch_size)
             val_iter   = Get_Dataloader(val_data[ft],   val_label,   False, batch_size)
             test_iter  = Get_Dataloader(test_data[ft],  test_label,  False, batch_size)
-            modelnet   = SingleNet(MODEL_MAP[ft](), EMB_DIMS[ft], num_classes=40)
 
+            if ft.startswith("DE") or ft.startswith("PSD"):
+                if "glf" in ft:
+                    emb_size = emb_dim_DE if "DE" in ft else emb_dim_PSD
+                    modelnet = models.glfnet_mlp(out_dim=40, emb_dim=emb_size, input_dim=62*5)
+                else:
+                    modelnet = models.mlpnet(out_dim=40, input_dim=62*5)
+            else:
+                if "shallow" in ft:     modelnet = models.shallownet(40, C, 200)
+                elif "deep" in ft:      modelnet = models.deepnet(40, C, 200)
+                elif "eegnet" in ft:    modelnet = models.eegnet(40, C, 200)
+                elif "tsconv" in ft:    modelnet = models.tsconv(40, C, 200)
+                elif "glf" in ft:       modelnet = models.glfnet(40, emb_dim_segments, C, 200)
+                elif "conformer" in ft: modelnet = models.conformer(out_dim=40)
+
+        # train
         modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr, run_device, multi=multi)
 
+        # eval
         block_top1, block_top5 = [], []
         with torch.no_grad():
             for X, y in test_iter:
-                if multi:
-                    X = {ft: X[ft].to(run_device) for ft in X}
-                else:
-                    X = X.to(run_device)
+                if multi: X = {ft: X[ft].to(run_device) for ft in X}
+                else:     X = X.to(run_device)
                 y = y.to(run_device)
                 logits = modelnet(X)
                 t1, t5 = topk_accuracy(logits, y, (1,5))
