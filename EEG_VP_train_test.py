@@ -185,7 +185,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, multi=Fa
 # ==========================================
 # Labels
 # ==========================================
-All_label = np.tile(GT_LABEL, (1, 10))  # shape [7, 400]
+All_label = np.tile(np.arange(40).repeat(10), 7).reshape(7, 400)
 
 
 # ==========================================
@@ -197,11 +197,12 @@ All_sub_top1, All_sub_top5 = [], []
 for subname in sub_list:
     raw_data = {ft: np.load(os.path.join(FEATURE_PATHS[ft], subname)) for ft in FEATURE_TYPES}
 
-    # === Reorder blocks to match authors' GT_LABEL ===
+    # === Reorder raw_data blocks to match GT_LABEL ===
     for ft in raw_data:
         arr = raw_data[ft]   # shape [7, 40, ...]
         reordered = np.zeros_like(arr)
         for b in range(7):
+            # GT_LABEL[b] is e.g. [23,22,9,...] (class indices)
             reordered[b] = arr[b, GT_LABEL[b]]
         raw_data[ft] = reordered
     # ================================================
