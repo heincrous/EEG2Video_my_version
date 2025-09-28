@@ -18,19 +18,16 @@
 #   EEG2Video_data/processed/EEG_segments/subX.npy
 # ==========================================
 
-# === Standard libraries ===
 import os
 
-# === Third-party libraries ===
 import numpy as np
 from tqdm import tqdm
 
-# === Repo imports ===
 from core.gt_label import GT_LABEL   # shape (7,40), values 0–39
 
 
 # ==========================================
-# CONFIGURATION (EDITABLE PARAMETERS)
+# CONFIG
 # ==========================================
 config = {
     "sampling_rate":    200,   # Hz
@@ -42,7 +39,7 @@ config = {
     "drive_root":       "/content/drive/MyDrive/EEG2Video_data"
 }
 
-# Derived values
+# derived values
 config["segment_len"] = config["segment_seconds"] * config["sampling_rate"]
 config["hint_len"]    = config["hint_seconds"] * config["sampling_rate"]
 

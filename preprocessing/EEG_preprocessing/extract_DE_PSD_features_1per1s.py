@@ -17,19 +17,16 @@
 #   EEG2Video_data/processed/EEG_PSD_1per1s/subX.npy  [7, 40, 5, 2, 62, 5]
 # ==========================================
 
-# === Standard libraries ===
 import os
 
-# === Third-party libraries ===
 import numpy as np
 from tqdm import tqdm
 
-# === Repo imports ===
 from .DE_PSD import DE_PSD
 
 
 # ==========================================
-# CONFIGURATION (EDITABLE PARAMETERS)
+# CONFIG
 # ==========================================
 config = {
     "sampling_rate": 200,  # Hz
@@ -39,7 +36,7 @@ config = {
     "drive_root":    "/content/drive/MyDrive/EEG2Video_data"
 }
 
-# Paths
+# paths
 in_dir      = os.path.join(config["drive_root"], "processed", "EEG_segments")
 out_de_dir  = os.path.join(config["drive_root"], "processed", "EEG_DE_1per1s")
 out_psd_dir = os.path.join(config["drive_root"], "processed", "EEG_PSD_1per1s")

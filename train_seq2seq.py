@@ -1,5 +1,5 @@
 # ==========================================
-# EEG2Video Seq2Seq Training
+# Seq2Seq Training
 # ==========================================
 import os, math, joblib
 import numpy as np

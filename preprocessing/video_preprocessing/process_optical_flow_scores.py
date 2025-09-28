@@ -1,5 +1,5 @@
 # ==========================================
-# Organize Optical Flow Scores by GT Label
+# Process Optical Flow Scores
 # ==========================================
 import os
 import numpy as np

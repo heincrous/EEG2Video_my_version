@@ -22,6 +22,7 @@ run_device    = "cuda"
 
 # optimizer: "adam" or "adamw"
 OPTIMIZER_TYPE = "adam"
+WEIGHT_DECAY = 0.01
 
 # scheduler: "cosine" or "constant"
 SCHEDULER_TYPE = "cosine"
@@ -120,7 +121,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
     if OPTIMIZER_TYPE.lower() == "adam":
         optimizer = torch.optim.Adam(net.parameters(), lr=lr)
     elif OPTIMIZER_TYPE.lower() == "adamw":
-        optimizer = torch.optim.AdamW(net.parameters(), lr=lr)
+        optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
     else:
         raise ValueError(f"Unknown OPTIMIZER_TYPE {OPTIMIZER_TYPE}")
 

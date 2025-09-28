@@ -19,38 +19,36 @@
 #       Shape = [7, 40, 5, 7, 62, 100]
 # ==========================================
 
-# === Standard libraries ===
 import os
 
-# === Third-party libraries ===
 import numpy as np
 from tqdm import tqdm
 
 
 # ==========================================
-# CONFIGURATION (EDITABLE PARAMETERS)
+# CONFIG
 # ==========================================
 config = {
     "drive_root": "/content/drive/MyDrive/EEG2Video_data",
     "segment_len": 400,    # samples (2 s @ 200 Hz)
 
-    # Window type A (1 s @ 200 Hz)
+    # window type A (1 s @ 200 Hz)
     "winA_size": 200,
     "winA_overlap": 100,
 
-    # Window type B (0.5 s @ 200 Hz)
+    # window type B (0.5 s @ 200 Hz)
     "winB_size": 100,
     "winB_overlap": 50,
 }
 
-# Derived values
+# derived values
 config["winA_step"] = config["winA_size"] - config["winA_overlap"]
 config["winB_step"] = config["winB_size"] - config["winB_overlap"]
 
 config["winA_num"] = (config["segment_len"] - config["winA_size"]) // config["winA_step"] + 1
 config["winB_num"] = (config["segment_len"] - config["winB_size"]) // config["winB_step"] + 1
 
-# Paths
+# paths
 in_dir   = os.path.join(config["drive_root"], "processed", "EEG_segments")
 outA_dir = os.path.join(config["drive_root"], "processed", "EEG_windows_200")
 outB_dir = os.path.join(config["drive_root"], "processed", "EEG_windows_100")

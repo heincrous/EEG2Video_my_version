@@ -18,10 +18,8 @@
 #   Shape = [7, 40, 5, 6, 4, 36, 64]
 # ==========================================
 
-# === Standard libraries ===
 import os
 
-# === Third-party libraries ===
 import cv2
 import numpy as np
 import torch
@@ -30,7 +28,7 @@ from diffusers import AutoencoderKL
 
 
 # ==========================================
-# CONFIGURATION (EDITABLE PARAMETERS)
+# CONFIG
 # ==========================================
 config = {
     "fps":           24,
@@ -44,11 +42,11 @@ config = {
     "vae_path":   "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4",
 }
 
-# Derived values
+# derived values
 config["clip_len"] = 2 * config["fps"]    # 48 frames
 config["hint_len"] = 3 * config["fps"]    # 72 frames
 
-# Paths
+# paths
 in_dir  = os.path.join(config["drive_root"], "processed", "Video_mp4")
 out_dir = os.path.join(config["drive_root"], "processed", "Video_latents")
 os.makedirs(out_dir, exist_ok=True)

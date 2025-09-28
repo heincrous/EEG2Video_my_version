@@ -19,21 +19,18 @@
 #       Shape [7, 40, 5, 77, 768]
 # ==========================================
 
-# === Standard libraries ===
 import os
 
-# === Third-party libraries ===
 import numpy as np
 import torch
 from tqdm import tqdm
 from transformers import CLIPTokenizer, CLIPTextModel
 
-# === Repo imports ===
 from core.gt_label import GT_LABEL
 
 
 # ==========================================
-# CONFIGURATION (EDITABLE PARAMETERS)
+# CONFIG
 # ==========================================
 config = {
     "drive_root": "/content/drive/MyDrive/EEG2Video_data",

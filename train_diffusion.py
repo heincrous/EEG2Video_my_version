@@ -1,5 +1,5 @@
 # ==========================================
-# Diffusion Training (with Class Subset Support)
+# Diffusion Training
 # ==========================================
 import os
 from typing import Optional

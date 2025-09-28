@@ -16,20 +16,17 @@
 #   EEG2Video_data/processed/Video_mp4/BlockY/classYY_clipZZ.mp4
 # ==========================================
 
-# === Standard libraries ===
 import os
 import re
 
-# === Third-party libraries ===
 import cv2
 from tqdm import tqdm
 
-# === Repo imports ===
 from core.gt_label import GT_LABEL   # shape (7,40), values 0–39
 
 
 # ==========================================
-# CONFIGURATION (EDITABLE PARAMETERS)
+# CONFIG
 # ==========================================
 config = {
     "fps":             24,
@@ -42,11 +39,11 @@ config = {
     "drive_root": "/content/drive/MyDrive/EEG2Video_data",
 }
 
-# Derived values
+# derived values
 config["clip_len"] = config["clip_seconds"] * config["fps"]  # 48 frames
 config["hint_len"] = config["hint_seconds"] * config["fps"]  # 72 frames
 
-# Paths
+# paths
 in_dir  = os.path.join(config["drive_root"], "raw", "Video")
 out_dir = os.path.join(config["drive_root"], "processed", "Video_mp4")
 os.makedirs(out_dir, exist_ok=True)
