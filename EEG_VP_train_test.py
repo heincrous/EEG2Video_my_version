@@ -22,8 +22,8 @@ T             = 5
 run_device    = "cuda"
 
 emb_dim_segments = 512
-emb_dim_DE       = 128
-emb_dim_PSD      = 128
+emb_dim_DE       = 256
+emb_dim_PSD      = 256
 
 WEIGHT_DECAY     = 0 # or 0.01
 
