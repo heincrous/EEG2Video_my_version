@@ -19,6 +19,9 @@ num_epochs       = 200
 lr               = 0.0005
 run_device       = "cuda"
 
+# scheduler: "cosine" or "constant"
+SCHEDULER_TYPE = "cosine"
+
 # default is subject 1 only; set to True to use all subjects in folder
 USE_ALL_SUBJECTS = False
 subject_name     = "sub1.npy"
@@ -205,7 +208,15 @@ def train_subject(subname):
 
     model = MyTransformer().to(run_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(train_loader))
+
+    # scheduler (per epoch stepping)
+    if SCHEDULER_TYPE.lower() == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=num_epochs
+        )
+    else:
+        scheduler = None
+
     criterion = nn.MSELoss()
 
     best_val, best_state = float("inf"), None
@@ -223,9 +234,12 @@ def train_subject(subname):
             loss  = criterion(video, out[:, :-1, :, :, :])
             loss.backward()
             optimizer.step()
-            scheduler.step()
             total_loss += loss.item() * b
             count += b
+
+        # scheduler step once per epoch
+        if scheduler is not None:
+            scheduler.step()
 
         train_loss = total_loss / count
         val_loss   = evaluate_loss(model, val_loader, criterion, run_device)

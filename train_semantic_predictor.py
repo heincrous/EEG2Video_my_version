@@ -20,18 +20,17 @@ num_epochs    = 50
 lr            = 0.0005
 run_device    = "cuda"
 
-# optimizer: "adam" or "adamw"
-OPTIMIZER_TYPE = "adam"
+# optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
 WEIGHT_DECAY   = 0.01
 
 # scheduler: "cosine" or "constant"
 SCHEDULER_TYPE = "cosine"
 
 # choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES  = ["DE"]
+FEATURE_TYPES  = ["DE", "PSD"]
 
 # default is subject 1 only; set to True to use all subjects in folder
-USE_ALL_SUBJECTS = False
+USE_ALL_SUBJECTS = True
 subject_name     = "sub1.npy"
 
 # restrict to certain classes (0–39); set to None for all
@@ -118,17 +117,12 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
     net.to(device)
 
     # optimizer
-    if OPTIMIZER_TYPE.lower() == "adam":
-        optimizer = torch.optim.Adam(net.parameters(), lr=lr)
-    elif OPTIMIZER_TYPE.lower() == "adamw":
-        optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
-    else:
-        raise ValueError(f"Unknown OPTIMIZER_TYPE {OPTIMIZER_TYPE}")
+    optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
 
-    # scheduler
+    # scheduler (step once per epoch)
     if SCHEDULER_TYPE.lower() == "cosine":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=num_epochs * len(train_iter)
+            optimizer, T_max=num_epochs
         )
     else:
         scheduler = None
@@ -163,8 +157,11 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
 
             loss.backward()
             optimizer.step()
-            if scheduler: scheduler.step()
             total_loss += loss.item() * y.size(0)
+
+        # step scheduler once per epoch
+        if scheduler:
+            scheduler.step()
 
         val_mse = evaluate_mse(net, val_iter, device)
         if val_mse < best_val:
@@ -191,9 +188,9 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
         for ft, sc in scalers.items():
             scaler_name = f"scaler_{ft}_{subname.replace('.npy','')}{subset_tag}.pkl"
             joblib.dump(sc, os.path.join(SEMANTIC_CKPT_DIR, scaler_name))
+            print(f"Saved scaler: {scaler_name}")
         
         print(f"Saved checkpoint: {model_name}")
-        print(f"Saved scaler: {scaler_name}")
     return net
 
 

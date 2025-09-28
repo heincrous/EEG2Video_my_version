@@ -20,10 +20,14 @@ run_device    = "cuda"
 # EEG dimensions
 C, T = 62, 5
 emb_dim_segments = 512
-emb_dim_DE       = 128
-emb_dim_PSD      = 128
+emb_dim_DE       = 256
+emb_dim_PSD      = 256
 
-WEIGHT_DECAY   = 0.01
+# optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
+WEIGHT_DECAY   = 0
+
+# scheduler: "cosine" or "constant"
+SCHEDULER_TYPE = "cosine"
 
 # choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
 FEATURE_TYPES    = ["DE"]
@@ -123,7 +127,14 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
           subname="subject", scalers=None, threshold=None):
     net.to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(train_iter))
+    
+    # scheduler
+    if SCHEDULER_TYPE.lower() == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=num_epochs * len(train_iter)
+        )
+    else:
+        scheduler = None
 
     mse_loss  = nn.MSELoss()
     cos_loss  = nn.CosineEmbeddingLoss()

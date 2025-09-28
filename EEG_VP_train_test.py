@@ -25,7 +25,8 @@ emb_dim_segments = 512
 emb_dim_DE       = 256
 emb_dim_PSD      = 256
 
-WEIGHT_DECAY     = 0 # or 0.01
+# optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
+WEIGHT_DECAY     = 0
 
 # choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
 FEATURE_TYPES    = ["segments","DE","PSD"]
