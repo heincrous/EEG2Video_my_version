@@ -28,8 +28,29 @@ emb_dim_PSD      = 256
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
 WEIGHT_DECAY     = 0
 
-# choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["DE","PSD"]
+# ==========================================
+# Select which features and encoders to use
+# ==========================================
+# For SEGMENTS (raw EEG windows, shape [B,1,62,200]):
+#   FEATURE_TYPES = ["segments_shallow"]
+#   FEATURE_TYPES = ["segments_deep"]
+#   FEATURE_TYPES = ["segments_eegnet"]
+#   FEATURE_TYPES = ["segments_tsconv"]
+#   FEATURE_TYPES = ["segments_glf"]
+#   FEATURE_TYPES = ["segments_conformer"]
+#
+# For DE or PSD (frequency features, shape [B,62,5]):
+#   FEATURE_TYPES = ["DE_glf"]         # glfnet_mlp
+#   FEATURE_TYPES = ["DE_mlp"]         # plain mlpnet
+#   FEATURE_TYPES = ["PSD_glf"]
+#   FEATURE_TYPES = ["PSD_mlp"]
+#
+# For multi-feature fusion, just combine:
+#   FEATURE_TYPES = ["DE_glf", "PSD_glf"]
+#   FEATURE_TYPES = ["segments_glf", "DE_mlp"]
+#   FEATURE_TYPES = ["segments_conformer", "DE_glf", "PSD_mlp"]
+# ==========================================
+FEATURE_TYPES = ["DE_mlp"]
 
 # default is subject 1 only; set to True to use all subjects in folder
 USE_ALL_SUBJECTS = True
@@ -47,16 +68,40 @@ FEATURE_PATHS = {
     "PSD":      "/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s",
 }
 
-
 # ==========================================
 # Encoders → embeddings
 # ==========================================
 MODEL_MAP = {
-    "segments": lambda: models.glfnet(out_dim=emb_dim_segments, emb_dim=emb_dim_segments, C=62, T=200),
-    "DE":       lambda: models.glfnet_mlp(out_dim=emb_dim_DE, emb_dim=emb_dim_DE, input_dim=62*5),
-    "PSD":      lambda: models.glfnet_mlp(out_dim=emb_dim_PSD, emb_dim=emb_dim_PSD, input_dim=62*5),
+    # Segments-based models (CNN-style)
+    "segments_shallow":   lambda: models.shallownet(out_dim=emb_dim_segments, C=62, T=200),
+    "segments_deep":      lambda: models.deepnet(out_dim=emb_dim_segments, C=62, T=200),
+    "segments_eegnet":    lambda: models.eegnet(out_dim=emb_dim_segments, C=62, T=200),
+    "segments_tsconv":    lambda: models.tsconv(out_dim=emb_dim_segments, C=62, T=200),
+    "segments_glf":       lambda: models.glfnet(out_dim=emb_dim_segments, emb_dim=emb_dim_segments, C=62, T=200),
+    "segments_conformer": lambda: models.conformer(emb_size=40, depth=3, out_dim=emb_dim_segments),
+
+    # DE/PSD-based models (MLP-style)
+    "DE_glf":   lambda: models.glfnet_mlp(out_dim=emb_dim_DE, emb_dim=emb_dim_DE, input_dim=62*5),
+    "DE_mlp":   lambda: models.mlpnet(out_dim=emb_dim_DE, input_dim=62*5),
+    "PSD_glf":  lambda: models.glfnet_mlp(out_dim=emb_dim_PSD, emb_dim=emb_dim_PSD, input_dim=62*5),
+    "PSD_mlp":  lambda: models.mlpnet(out_dim=emb_dim_PSD, input_dim=62*5),
 }
-EMB_DIMS = {"segments": emb_dim_segments, "DE": emb_dim_DE, "PSD": emb_dim_PSD}
+
+EMB_DIMS = {
+    # Segments
+    "segments_shallow":   emb_dim_segments,
+    "segments_deep":      emb_dim_segments,
+    "segments_eegnet":    emb_dim_segments,
+    "segments_tsconv":    emb_dim_segments,
+    "segments_glf":       emb_dim_segments,
+    "segments_conformer": emb_dim_segments,
+
+    # DE/PSD
+    "DE_glf":   emb_dim_DE,
+    "DE_mlp":   emb_dim_DE,
+    "PSD_glf":  emb_dim_PSD,
+    "PSD_mlp":  emb_dim_PSD,
+}
 
 
 # ==========================================

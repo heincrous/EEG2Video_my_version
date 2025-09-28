@@ -322,7 +322,7 @@ class GELU(nn.Module):
 class TransformerEncoderBlock(nn.Sequential):
     def __init__(self,
                  emb_size,
-                 num_heads=10,
+                 num_heads=8, # changed fromn 10 to 8
                  drop_p=0.5,
                  forward_expansion=4,
                  forward_drop_p=0.5):

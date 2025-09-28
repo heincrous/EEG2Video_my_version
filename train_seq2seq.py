@@ -209,10 +209,10 @@ def train_subject(subname):
     model = MyTransformer().to(run_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
-    # scheduler (per epoch stepping)
+    # scheduler (per batch stepping, like authors)
     if SCHEDULER_TYPE.lower() == "cosine":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=num_epochs
+            optimizer, T_max=num_epochs * len(train_loader)
         )
     else:
         scheduler = None
@@ -234,12 +234,10 @@ def train_subject(subname):
             loss  = criterion(video, out[:, :-1, :, :, :])
             loss.backward()
             optimizer.step()
+            if scheduler is not None:
+                scheduler.step()  # step once per batch
             total_loss += loss.item() * b
             count += b
-
-        # scheduler step once per epoch
-        if scheduler is not None:
-            scheduler.step()
 
         train_loss = total_loss / count
         val_loss   = evaluate_loss(model, val_loader, criterion, run_device)

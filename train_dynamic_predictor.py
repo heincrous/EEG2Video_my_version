@@ -63,28 +63,28 @@ MODEL_MAP = {
 EMB_DIMS = {"segments": emb_dim_segments, "DE": emb_dim_DE, "PSD": emb_dim_PSD}
 
 # ==========================================
-# Fusion regressor (embedding-level)
+# Fusion classifier (embedding-level)
 # ==========================================
 class FusionNet(nn.Module):
     def __init__(self, encoders, emb_dims):
         super().__init__()
         self.encoders = nn.ModuleDict(encoders)
         total_dim     = sum(emb_dims.values())
-        self.regressor = nn.Linear(total_dim, 1)
+        self.classifier = nn.Linear(total_dim, 2)  # 2 logits
     def forward(self, inputs):
         feats = []
         for name, enc in self.encoders.items():
             feats.append(enc(inputs[name]))
         fused = torch.cat(feats, dim=-1)
-        return self.regressor(fused)
+        return self.classifier(fused)
 
 class SingleNet(nn.Module):
     def __init__(self, encoder, emb_dim):
         super().__init__()
         self.encoder = encoder
-        self.regressor = nn.Linear(emb_dim, 1)
+        self.classifier = nn.Linear(emb_dim, 2)   # 2 logits
     def forward(self, x):
-        return self.regressor(self.encoder(x))
+        return self.classifier(self.encoder(x))
 
 # ==========================================
 # Dataset
@@ -128,7 +128,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
     net.to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
     
-    # scheduler
+    # scheduler (per batch, like authors)
     if SCHEDULER_TYPE.lower() == "cosine":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=num_epochs * len(train_iter)
@@ -152,22 +152,25 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
             y = y.to(device).view(-1,1)
 
             optimizer.zero_grad()
-            y_hat = net(X)
+            y_hat = net(X)   # (batch,2) logits
 
             if LOSS_TYPE == "mse":
-                loss = mse_loss(y_hat, y)
+                probs = torch.softmax(y_hat, dim=-1)[:,1].view(-1,1)
+                loss = mse_loss(probs, y)
             elif LOSS_TYPE == "cosine":
-                target = torch.ones(y_hat.size(0), device=device)
-                loss = cos_loss(y_hat, y, target)
+                probs = torch.softmax(y_hat, dim=-1)[:,1].view(-1,1)
+                target = torch.ones(probs.size(0), device=device)
+                loss = cos_loss(probs, y, target)
             elif LOSS_TYPE in ["mse+cosine", "cosine+mse"]:
-                target = torch.ones(y_hat.size(0), device=device)
-                loss = mse_loss(y_hat, y) + cos_loss(y_hat, y, target)
+                probs = torch.softmax(y_hat, dim=-1)[:,1].view(-1,1)
+                target = torch.ones(probs.size(0), device=device)
+                loss = mse_loss(probs, y) + cos_loss(probs, y, target)
             elif LOSS_TYPE == "contrastive":
-                loss = contrastive_loss_fn(y_hat, y)
+                probs = torch.softmax(y_hat, dim=-1)[:,1].view(-1,1)
+                loss = contrastive_loss_fn(probs, y)
             elif LOSS_TYPE == "crossentropy":
-                # threshold into classes for CE
-                y_cls = (y > threshold).long().view(-1)
-                loss  = ce_loss(y_hat.view(-1,1), y_cls)  # Note: expect classifier if extended to 2 logits
+                y_cls = (y > threshold).long().view(-1)  # 0/1 labels
+                loss  = ce_loss(y_hat, y_cls)
             else:
                 raise ValueError(f"Unknown LOSS_TYPE {LOSS_TYPE}")
 
@@ -176,7 +179,8 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
 
             loss.backward()
             optimizer.step()
-            scheduler.step()
+            if scheduler:
+                scheduler.step()
             total_loss += loss.item() * y.size(0)
 
         val_mse, val_acc = evaluate_with_classification(net, val_iter, device, threshold)
@@ -207,8 +211,6 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
 # ==========================================
 # Evaluation
 # ==========================================
-def classify_fast_slow(values, threshold): return (values > threshold).astype(int)
-
 def evaluate_with_classification(net, data_iter, device, threshold):
     net.eval()
     mse_loss = nn.MSELoss(reduction="sum")
@@ -220,11 +222,13 @@ def evaluate_with_classification(net, data_iter, device, threshold):
             else:
                 X = X.to(device)
             y = y.to(device).view(-1,1)
-            y_hat = net(X)
-            total_mse += mse_loss(y_hat, y).item()
+            y_hat = net(X)   # (batch,2)
+            probs = torch.softmax(y_hat, dim=-1)[:,1].view(-1,1)
+            total_mse += mse_loss(probs, y).item()
             count += y.size(0)
-            y_cls, yhat_cls = classify_fast_slow(y.cpu().numpy(), threshold), classify_fast_slow(y_hat.cpu().numpy(), threshold)
-            correct += (y_cls == yhat_cls).sum()
+            y_cls = (y > threshold).long().view(-1)
+            pred_cls = torch.argmax(y_hat, dim=-1)
+            correct += (pred_cls.cpu() == y_cls.cpu()).sum().item()
     return total_mse / count, correct / count
 
 # ==========================================
@@ -243,9 +247,6 @@ def load_subject_data(subname, feature_types):
         feats[ft] = arr
     return feats, scalers
 
-# ==========================================
-# Main
-# ==========================================
 # ==========================================
 # Main
 # ==========================================
@@ -268,7 +269,7 @@ if __name__ == "__main__":
             for ft in features: features[ft] = features[ft][mask]
             ofs_all, labels_all = ofs_all[mask], labels_all[mask]
 
-        samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5 * 2  # note ×2 windows
+        samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5 * 2
         train_idx = np.arange(0, 5*samples_per_block)
         val_idx   = np.arange(5*samples_per_block, 6*samples_per_block)
         test_idx  = np.arange(6*samples_per_block, 7*samples_per_block)

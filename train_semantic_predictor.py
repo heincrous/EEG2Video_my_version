@@ -116,13 +116,12 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
           subname="subject", scalers=None):
     net.to(device)
 
-    # optimizer
     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
 
-    # scheduler (step once per epoch)
+    # scheduler (step per batch, like authors)
     if SCHEDULER_TYPE.lower() == "cosine":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=num_epochs
+            optimizer, T_max=num_epochs * len(train_iter)
         )
     else:
         scheduler = None
@@ -157,11 +156,10 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
 
             loss.backward()
             optimizer.step()
-            total_loss += loss.item() * y.size(0)
+            if scheduler:
+                scheduler.step()   # step once per batch
 
-        # step scheduler once per epoch
-        if scheduler:
-            scheduler.step()
+            total_loss += loss.item() * y.size(0)
 
         val_mse = evaluate_mse(net, val_iter, device)
         if val_mse < best_val:
