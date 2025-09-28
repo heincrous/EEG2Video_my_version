@@ -148,7 +148,7 @@ GT_label = GT_label - 1
 All_label = np.concatenate([GT_label[b].repeat(10).reshape(1, 400) for b in range(7)], axis=0)
 
 # Subjects
-sub_list = ["sub10.npy.npy"]
+sub_list = ["sub10.npy"]
 
 All_sub_top1 = []
 All_sub_top5 = []
