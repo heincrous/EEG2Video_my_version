@@ -1,5 +1,5 @@
 # ==========================================
-# EEG2Video Seq2Seq Training
+# EEG2Video Seq2Seq Training (with val/test logging)
 # ==========================================
 import os, math, joblib
 import numpy as np
@@ -19,14 +19,11 @@ num_epochs       = 200
 lr               = 0.0005
 run_device       = "cuda"
 
-# default is subject 1 only; set to True to use all subjects in folder
 USE_ALL_SUBJECTS = False
 subject_name     = "sub1.npy"
 
-# restrict to certain classes (0–39); set to None for all
 CLASS_SUBSET     = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
 
-# paths
 EEG_DIR          = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_windows_100"
 LATENT_DIR       = "/content/drive/MyDrive/EEG2Video_data/processed/Video_latents"
 SEQ2SEQ_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/seq2seq_checkpoints"
@@ -112,7 +109,7 @@ class myTransformer(nn.Module):
         self.predictor = nn.Linear(d_model, 4 * 36 * 64)
 
     def forward(self, src, tgt):
-        # src: (batch, 7, 62, 100) windows
+        # src: (batch, 7, 62, 100)
         src = self.eeg_embedding(src.reshape(src.shape[0] * src.shape[1], 1, 62, 100)).reshape(src.shape[0], 7, -1)
         tgt = tgt.reshape(tgt.shape[0], tgt.shape[1], -1)
         tgt = self.img_embedding(tgt)
@@ -143,6 +140,25 @@ class EEGVideoDataset(torch.utils.data.Dataset):
 
 
 # ==========================================
+# Evaluation helpers
+# ==========================================
+def evaluate_loss(model, loader, criterion, device):
+    model.eval()
+    total_loss, count = 0, 0
+    with torch.no_grad():
+        for eeg, video in loader:
+            eeg, video = eeg.float().to(device), video.float().to(device)
+            b, f, c, h, w = video.shape
+            padded_video = torch.zeros((b, 1, c, h, w)).to(device)
+            full_video   = torch.cat((padded_video, video), dim=1)
+            _, out = model(eeg, full_video)
+            loss = criterion(video, out[:, :-1, :])
+            total_loss += loss.item() * b
+            count += b
+    return total_loss / count
+
+
+# ==========================================
 # Train function
 # ==========================================
 def train_subject(subname):
@@ -152,12 +168,11 @@ def train_subject(subname):
     eegdata    = np.load(eeg_path)      # (7,40,5,7,62,100)
     latentdata = np.load(latent_path)   # (7,40,5,6,4,36,64)
 
-    # rearrange: collapse blocks, classes, trials
     EEG   = rearrange(eegdata,    "g p d w c l -> (g p d) w c l")   # (1400,7,62,100)
-    VIDEO = rearrange(latentdata, "g p d f c h w -> (g p d) f c h w") # (1400,6,4,36,64)
+    VIDEO = rearrange(latentdata, "g p d f c h w -> (g p d) f c h w")
 
     labels_block = np.repeat(np.arange(40), 5)   # 200 per block
-    labels_all   = np.tile(labels_block, 7)      # 1400 total
+    labels_all   = np.tile(labels_block, 7)
 
     if CLASS_SUBSET is not None:
         mask = np.isin(labels_all, CLASS_SUBSET)
@@ -177,55 +192,55 @@ def train_subject(subname):
         return torch.from_numpy(scaler.transform(arr.reshape(arr.shape[0], -1))).reshape(arr.shape[0], w, c, l)
     EEG_train, EEG_val, EEG_test = map(scale, [EEG_train, EEG_val, EEG_test])
 
-    train_set = EEGVideoDataset(EEG_train, VID_train)
-    val_set   = EEGVideoDataset(EEG_val,   VID_val)
-    test_set  = EEGVideoDataset(EEG_test,  VID_test)
-
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
-    val_loader   = DataLoader(val_set,   batch_size=batch_size, shuffle=False)
-    test_loader  = DataLoader(test_set,  batch_size=batch_size, shuffle=False)
+    train_loader = DataLoader(EEGVideoDataset(EEG_train, VID_train), batch_size=batch_size, shuffle=True)
+    val_loader   = DataLoader(EEGVideoDataset(EEG_val,   VID_val),   batch_size=batch_size, shuffle=False)
+    test_loader  = DataLoader(EEGVideoDataset(EEG_test,  VID_test),  batch_size=batch_size, shuffle=False)
 
     model = myTransformer().to(run_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(train_loader))
     criterion = nn.MSELoss()
 
-    best_loss, best_state = float("inf"), None
-    for epoch in tqdm(range(num_epochs), desc=f"Training {subname}"):
+    best_val, best_state = float("inf"), None
+    for epoch in range(num_epochs):
         model.train()
-        epoch_loss = 0
+        total_loss, count = 0, 0
         for eeg, video in train_loader:
-            eeg = eeg.float().to(run_device)
+            eeg, video = eeg.float().to(run_device), video.float().to(run_device)
             b, f, c, h, w = video.shape
-            padded_video = torch.zeros((b, 1, c, h, w))
-            full_video   = torch.cat((padded_video, video), dim=1).float().to(run_device)
+            padded_video = torch.zeros((b, 1, c, h, w)).to(run_device)
+            full_video   = torch.cat((padded_video, video), dim=1)
 
             optimizer.zero_grad()
             _, out = model(eeg, full_video)
-            video = video.float().to(run_device)
             loss  = criterion(video, out[:, :-1, :])
             loss.backward()
             optimizer.step()
             scheduler.step()
-            epoch_loss += loss.item()
-        print(f"[{epoch}] Loss: {epoch_loss:.6f}")
-        if epoch_loss < best_loss:
-            best_loss, best_state = epoch_loss, model.state_dict()
+            total_loss += loss.item() * b
+            count += b
 
-    os.makedirs(SEQ2SEQ_CKPT_DIR, exist_ok=True)
-    subset_tag = ""
-    if CLASS_SUBSET is not None:
-        subset_tag = "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
+        train_loss = total_loss / count
+        val_loss   = evaluate_loss(model, val_loader, criterion, run_device)
+        test_loss  = evaluate_loss(model, test_loader, criterion, run_device)
 
-    base_name = subname.replace(".npy","") + subset_tag
-    ckpt_name = f"seq2seq_{base_name}.pt"
-    scaler_name = f"scaler_{base_name}.pkl"
+        if val_loss < best_val:
+            best_val, best_state = val_loss, model.state_dict()
 
-    torch.save({"state_dict": best_state}, os.path.join(SEQ2SEQ_CKPT_DIR, ckpt_name))
-    joblib.dump(scaler, os.path.join(SEQ2SEQ_CKPT_DIR, scaler_name))
+        if epoch % 3 == 0:
+            print(f"[{epoch+1}] train_loss={train_loss:.6f}, val_loss={val_loss:.6f}, test_loss={test_loss:.6f}")
 
-    print(f"Saved checkpoint: {ckpt_name}")
-    print(f"Saved scaler: {scaler_name}")
+    if best_state:
+        model.load_state_dict(best_state)
+        os.makedirs(SEQ2SEQ_CKPT_DIR, exist_ok=True)
+        subset_tag = "" if CLASS_SUBSET is None else "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
+        base_name = subname.replace(".npy","") + subset_tag
+        ckpt_name = f"seq2seq_{base_name}.pt"
+        scaler_name = f"scaler_{base_name}.pkl"
+        torch.save({"state_dict": best_state}, os.path.join(SEQ2SEQ_CKPT_DIR, ckpt_name))
+        joblib.dump(scaler, os.path.join(SEQ2SEQ_CKPT_DIR, scaler_name))
+        print(f"Saved checkpoint: {ckpt_name}")
+        print(f"Saved scaler: {scaler_name}")
 
 
 # ==========================================

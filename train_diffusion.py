@@ -1,5 +1,5 @@
 # ==========================================
-# Diffusion Training
+# Diffusion Training (with Class Subset Support)
 # ==========================================
 import os
 from typing import Optional
@@ -23,19 +23,22 @@ from core.unet import UNet3DConditionModel
 # ==========================================
 # Config
 # ==========================================
-train_batch_size          = 2
-num_epochs                = 50
-learning_rate             = 3e-5
-gradient_accumulation     = 1
-gradient_checkpointing    = True
-mixed_precision           = "fp16"   # "fp16", "bf16", or None
-max_grad_norm             = 1.0
-seed                      = 42
+train_batch_size       = 2
+num_epochs             = 50
+learning_rate          = 3e-5
+gradient_accumulation  = 1
+gradient_checkpointing = True
+mixed_precision        = "fp16"   # "fp16", "bf16", or None
+max_grad_norm          = 1.0
+seed                   = 42
+
+# restrict to certain classes (0–39); set to None for all
+CLASS_SUBSET           = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
 
 # paths
-PRETRAINED_MODEL_PATH     = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
-DATA_ROOT                 = "/content/drive/MyDrive/EEG2Video_data/processed"
-SAVE_ROOT                 = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints"
+PRETRAINED_MODEL_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
+DATA_ROOT              = "/content/drive/MyDrive/EEG2Video_data/processed"
+SAVE_ROOT              = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints"
 
 os.makedirs(SAVE_ROOT, exist_ok=True)
 
@@ -44,19 +47,33 @@ os.makedirs(SAVE_ROOT, exist_ok=True)
 # Dataset
 # ==========================================
 class LatentsTextDataset(Dataset):
-    def __init__(self, latents_path, text_path, tokenizer):
+    def __init__(self, latents_path, text_path, tokenizer, class_subset=None):
         latents = np.load(latents_path, allow_pickle=True)  # (7,40,5,6,4,36,64)
         texts   = np.load(text_path, allow_pickle=True)     # (7,40,5)
 
-        self.latents = latents.reshape(-1, 6, 4, 36, 64)  # (1400, 6, 4, 36, 64)
-        self.texts   = texts.reshape(-1)                  # (1400,)
-        assert len(self.latents) == len(self.texts)
+        # flatten to trial-level
+        latents = latents.reshape(-1, 6, 4, 36, 64)  # (2800, 6, 4, 36, 64)
+        texts   = texts.reshape(-1)                  # (2800,)
+
+        # build class labels
+        labels_block = np.repeat(np.arange(40), 5*2)  # 400 per block
+        labels_all   = np.tile(labels_block, 7)       # 2800 total
+
+        # apply class subset filter
+        if class_subset is not None:
+            mask = np.isin(labels_all, class_subset)
+            latents, texts, labels_all = latents[mask], texts[mask], labels_all[mask]
+
+        self.latents   = latents
+        self.texts     = texts
+        self.labels    = labels_all
         self.tokenizer = tokenizer
 
-        print(f"Dataset prepared: {self.latents.shape[0]} clips, "
-              f"{self.latents.shape[1]} frames each, latents {self.latents.shape[2:]}")
+        print(f"Dataset prepared: {self.latents.shape[0]} clips "
+              f"(subset={class_subset})")
 
-    def __len__(self): return len(self.latents)
+    def __len__(self): 
+        return len(self.latents)
 
     def __getitem__(self, idx):
         latents = self.latents[idx]
@@ -101,7 +118,8 @@ def main():
     # dataset
     latents_path = os.path.join(DATA_ROOT, "Video_latents/Video_latents.npy")
     text_path    = os.path.join(DATA_ROOT, "BLIP_text/BLIP_text.npy")
-    dataset      = LatentsTextDataset(latents_path, text_path, tokenizer)
+    dataset      = LatentsTextDataset(latents_path, text_path, tokenizer,
+                                      class_subset=CLASS_SUBSET)
     print(f"Loaded {len(dataset)} samples")
 
     train_dataloader = DataLoader(
@@ -138,7 +156,10 @@ def main():
                     latents = batch["latents"].to(accelerator.device, dtype=weight_dtype)
                     latents = rearrange(latents, "b f c h w -> b c f h w")
                     noise = torch.randn_like(latents)
-                    timesteps = torch.randint(0, noise_scheduler.num_train_timesteps, (latents.size(0),), device=latents.device).long()
+                    timesteps = torch.randint(
+                        0, noise_scheduler.num_train_timesteps, 
+                        (latents.size(0),), device=latents.device
+                    ).long()
                     noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
                     encoder_hidden_states = text_encoder(batch["prompt_ids"].to(accelerator.device))[0]
@@ -170,10 +191,15 @@ def main():
             vae=vae,
             unet=unet,
         )
-        pipeline.save_pretrained(os.path.join(SAVE_ROOT, "pipeline_final"))
-        print(f"Saved final pipeline to {os.path.join(SAVE_ROOT, 'pipeline_final')}")
+        subset_tag = ""
+        if CLASS_SUBSET is not None:
+            subset_tag = "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
+        save_dir = os.path.join(SAVE_ROOT, f"pipeline_final{subset_tag}")
+        pipeline.save_pretrained(save_dir)
+        print(f"Saved final pipeline to {save_dir}")
 
     accelerator.end_training()
+
 
 # ==========================================
 # Entrypoint
