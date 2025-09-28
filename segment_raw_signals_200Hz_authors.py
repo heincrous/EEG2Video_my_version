@@ -16,6 +16,8 @@ def get_files_names_in_directory(directory):
     return files_names
 
 sub_list = get_files_names_in_directory("/content/drive/MyDrive/EEG2Video_data/raw/EEG/")
+save_root = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments_authors"
+os.makedirs(save_root, exist_ok=True)
 
 for subname in sub_list:
     npydata = np.load('/content/drive/MyDrive/EEG2Video_data/raw/EEG/' + subname)
@@ -36,4 +38,4 @@ for subname in sub_list:
             block_data = np.concatenate((block_data, class_data.reshape(1, 5, 62, 2*fre)))
         save_data = np.concatenate((save_data, block_data.reshape(1, 40, 5, 62, 2*fre)))
 
-    np.save('/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments_authors/' + subname, save_data)
+    np.save(os.path.join(save_root, subname), save_data)
