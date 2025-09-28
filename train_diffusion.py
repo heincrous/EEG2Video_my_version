@@ -76,7 +76,7 @@ class NPZVideoDataset(Dataset):
 # ==========================================
 def main(
     pretrained_model_path: str,
-    train_batch_size: int = 4,
+    train_batch_size: int = 2,
     learning_rate: float = 3e-5,
     gradient_accumulation_steps: int = 1,
     gradient_checkpointing: bool = True,
