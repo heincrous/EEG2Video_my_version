@@ -179,7 +179,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, multi=Fa
         os.makedirs(save_dir, exist_ok=True)
 
         if multi:
-            fname = f"classifier_fusion_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}.pt"
+            fname = f"classifier_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}.pt"
         else:
             fname = f"classifier_{FEATURE_TYPES[0]}_{subname.replace('.npy','')}.pt"
 

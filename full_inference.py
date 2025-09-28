@@ -156,7 +156,6 @@ def run_inference(eeg_feat, idx):
     ).videos
 
     frames = (video[0] * 255).clamp(0,255).to(torch.uint8).permute(0,2,3,1).cpu().numpy()
-    frames = frames[:video_length]
     if frames.shape[-1] > 3: frames = frames[...,:3]
     elif frames.shape[-1] == 1: frames = np.repeat(frames, 3, axis=-1)
 
