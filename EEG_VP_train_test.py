@@ -229,15 +229,22 @@ for subname in sub_list:
         val_label   = All_label[val_set_id]
         test_label  = All_label[test_set_id]
 
-        # scale
+        # scale (authors’ style: fit scaler separately for each split)
         for ft in train_data:
             tr = train_data[ft].reshape(train_data[ft].shape[0], -1)
             va = val_data[ft].reshape(val_data[ft].shape[0], -1)
             te = test_data[ft].reshape(test_data[ft].shape[0], -1)
-            scaler = StandardScaler()
-            tr_scaled = scaler.fit_transform(tr)
-            va_scaled = scaler.transform(va)
-            te_scaled = scaler.transform(te)
+
+            # Fit separate scalers for each split
+            scaler_tr = StandardScaler().fit(tr)
+            tr_scaled = scaler_tr.transform(tr)
+
+            scaler_va = StandardScaler().fit(va)
+            va_scaled = scaler_va.transform(va)
+
+            scaler_te = StandardScaler().fit(te)
+            te_scaled = scaler_te.transform(te)
+
             if ft.startswith("segments"):
                 train_data[ft] = tr_scaled.reshape(-1, 1, C, 200)
                 val_data[ft]   = va_scaled.reshape(-1, 1, C, 200)
