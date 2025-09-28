@@ -1,12 +1,8 @@
 # ==========================================
-# Diffusion Training (Final Minimal Version)
+# Diffusion Training
 # ==========================================
-
-# === Standard libraries ===
 import os
 from typing import Optional
-
-# === Third-party libraries ===
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -20,31 +16,38 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from accelerate import Accelerator
 from accelerate.utils import set_seed
 
-# === Repo imports ===
 from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
 from core.unet import UNet3DConditionModel
 
 
 # ==========================================
-# Paths
+# Config
 # ==========================================
-pretrained_model_path = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
-data_root             = "/content/drive/MyDrive/EEG2Video_data/processed"
-save_root             = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints"
+train_batch_size          = 2
+num_epochs                = 50
+learning_rate             = 3e-5
+gradient_accumulation     = 1
+gradient_checkpointing    = True
+mixed_precision           = "fp16"   # "fp16", "bf16", or None
+max_grad_norm             = 1.0
+seed                      = 42
 
-os.makedirs(save_root, exist_ok=True)
+# paths
+PRETRAINED_MODEL_PATH     = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
+DATA_ROOT                 = "/content/drive/MyDrive/EEG2Video_data/processed"
+SAVE_ROOT                 = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints"
+
+os.makedirs(SAVE_ROOT, exist_ok=True)
 
 
 # ==========================================
-# Dataset (Video_latents.npy + BLIP_text.npy)
+# Dataset
 # ==========================================
 class LatentsTextDataset(Dataset):
     def __init__(self, latents_path, text_path, tokenizer):
-        # Load
         latents = np.load(latents_path, allow_pickle=True)  # (7,40,5,6,4,36,64)
         texts   = np.load(text_path, allow_pickle=True)     # (7,40,5)
 
-        # Flatten blocks, classes, trials into single dimension
         self.latents = latents.reshape(-1, 6, 4, 36, 64)  # (1400, 6, 4, 36, 64)
         self.texts   = texts.reshape(-1)                  # (1400,)
         assert len(self.latents) == len(self.texts)
@@ -53,11 +56,10 @@ class LatentsTextDataset(Dataset):
         print(f"Dataset prepared: {self.latents.shape[0]} clips, "
               f"{self.latents.shape[1]} frames each, latents {self.latents.shape[2:]}")
 
-    def __len__(self):
-        return len(self.latents)
+    def __len__(self): return len(self.latents)
 
     def __getitem__(self, idx):
-        latents = self.latents[idx]  # (6,4,36,64)
+        latents = self.latents[idx]
         text    = str(self.texts[idx])
         prompt_ids = self.tokenizer(
             text,
@@ -66,54 +68,40 @@ class LatentsTextDataset(Dataset):
             truncation=True,
             return_tensors="pt",
         ).input_ids[0]
-        return {
-            "latents": torch.from_numpy(latents).float(),
-            "prompt_ids": prompt_ids,
-        }
+        return {"latents": torch.from_numpy(latents).float(),
+                "prompt_ids": prompt_ids}
 
 
 # ==========================================
 # Main training
 # ==========================================
-def main(
-    pretrained_model_path: str,
-    train_batch_size: int = 2,
-    learning_rate: float = 3e-5,
-    gradient_accumulation_steps: int = 1,
-    gradient_checkpointing: bool = True,
-    mixed_precision: Optional[str] = "fp16",
-    max_grad_norm: float = 1.0,
-    num_epochs: int = 1,
-    seed: Optional[int] = None,
-):
+def main():
     accelerator = Accelerator(
-        gradient_accumulation_steps=gradient_accumulation_steps,
+        gradient_accumulation_steps=gradient_accumulation,
         mixed_precision=mixed_precision,
     )
-
     if seed is not None:
         set_seed(seed)
 
-    # === Load pretrained models ===
-    noise_scheduler = DDPMScheduler.from_pretrained(pretrained_model_path, subfolder="scheduler")
-    tokenizer       = CLIPTokenizer.from_pretrained(pretrained_model_path, subfolder="tokenizer")
-    text_encoder    = CLIPTextModel.from_pretrained(pretrained_model_path, subfolder="text_encoder")
-    vae             = AutoencoderKL.from_pretrained(pretrained_model_path, subfolder="vae")
-    unet            = UNet3DConditionModel.from_pretrained_2d(pretrained_model_path, subfolder="unet")
+    # load pretrained models
+    noise_scheduler = DDPMScheduler.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="scheduler")
+    tokenizer       = CLIPTokenizer.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="tokenizer")
+    text_encoder    = CLIPTextModel.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="text_encoder")
+    vae             = AutoencoderKL.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="vae")
+    unet            = UNet3DConditionModel.from_pretrained_2d(PRETRAINED_MODEL_PATH, subfolder="unet")
 
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
     unet.requires_grad_(True)
-
     if gradient_checkpointing:
         unet.enable_gradient_checkpointing()
 
     optimizer = torch.optim.AdamW(unet.parameters(), lr=learning_rate)
 
-    # === Dataset ===
-    latents_path = os.path.join(data_root, "Video_latents/Video_latents.npy")
-    text_path    = os.path.join(data_root, "BLIP_text/BLIP_text.npy")
-    dataset = LatentsTextDataset(latents_path, text_path, tokenizer)
+    # dataset
+    latents_path = os.path.join(DATA_ROOT, "Video_latents/Video_latents.npy")
+    text_path    = os.path.join(DATA_ROOT, "BLIP_text/BLIP_text.npy")
+    dataset      = LatentsTextDataset(latents_path, text_path, tokenizer)
     print(f"Loaded {len(dataset)} samples")
 
     train_dataloader = DataLoader(
@@ -131,7 +119,7 @@ def main(
         num_training_steps=num_epochs * len(train_dataloader),
     )
 
-    # Prepare with accelerator
+    # accelerator prep
     unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
         unet, optimizer, train_dataloader, lr_scheduler
     )
@@ -140,7 +128,7 @@ def main(
     text_encoder.to(accelerator.device, dtype=weight_dtype)
     vae.to(accelerator.device, dtype=weight_dtype)
 
-    # === Training loop ===
+    # training loop
     for epoch in range(1, num_epochs + 1):
         unet.train()
         total_loss = 0.0
@@ -173,23 +161,22 @@ def main(
 
     accelerator.wait_for_everyone()
 
-    # === Save final pipeline only ===
+    # save final pipeline
     if accelerator.is_main_process:
         unet = accelerator.unwrap_model(unet)
         pipeline = TuneAVideoPipeline.from_pretrained(
-            pretrained_model_path,
+            PRETRAINED_MODEL_PATH,
             text_encoder=text_encoder,
             vae=vae,
             unet=unet,
         )
-        pipeline.save_pretrained(os.path.join(save_root, "pipeline_final"))
-        print(f"Saved final pipeline to {os.path.join(save_root, 'pipeline_final')}")
+        pipeline.save_pretrained(os.path.join(SAVE_ROOT, "pipeline_final"))
+        print(f"Saved final pipeline to {os.path.join(SAVE_ROOT, 'pipeline_final')}")
 
     accelerator.end_training()
-
 
 # ==========================================
 # Entrypoint
 # ==========================================
 if __name__ == "__main__":
-    main(pretrained_model_path=pretrained_model_path, num_epochs=50)
+    main()

@@ -1,6 +1,5 @@
 # ==========================================
-# EEG → CLIP semantic predictor (multi-feature fusion, authors' MLP logic)
-# With per-feature scaling + saving scalers
+# EEG → CLIP semantic predictor
 # ==========================================
 import os
 import numpy as np
@@ -12,23 +11,35 @@ import torch.nn.functional as F
 from einops import rearrange
 import joblib
 
+
 # ==========================================
 # Config
 # ==========================================
-batch_size    = 256
+batch_size    = 32
 num_epochs    = 200
 lr            = 0.0005
 run_device    = "cuda"
 
-# Choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["segments","DE"]
-USE_ALL_SUBJECTS = False
+# optimizer: "adam" or "adamw"
+OPTIMIZER_TYPE = "adam"
 
-# Loss type: "mse", "cosine", "mse+cosine", "contrastive"
+# scheduler: "cosine" or "constant"
+SCHEDULER_TYPE = "cosine"
+
+# choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
+FEATURE_TYPES    = ["DE"]
+
+# default is subject 1 only; set to True to use all subjects in folder
+USE_ALL_SUBJECTS = "sub1.npy"
+
+# restrict to certain classes (0–39); set to None for all
+CLASS_SUBSET     = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
+
+# loss type: "mse", "cosine", "mse+cosine", "contrastive"
 LOSS_TYPE        = "mse"
 
-USE_VAR_REG = True
-VAR_LAMBDA  = 0.05
+USE_VAR_REG = False
+VAR_LAMBDA  = 0.01
 
 FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
@@ -39,8 +50,9 @@ FEATURE_PATHS = {
 CLIP_EMB_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy"
 SEMANTIC_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
 
+
 # ==========================================
-# Semantic MLP (authors' structure)
+# Semantic MLP
 # ==========================================
 class SemanticMLP(nn.Module):
     def __init__(self, input_dim):
@@ -55,6 +67,7 @@ class SemanticMLP(nn.Module):
     def forward(self, x):
         return self.mlp(x)
 
+
 # ==========================================
 # Fusion wrapper
 # ==========================================
@@ -64,6 +77,7 @@ class SemanticPredictor(nn.Module):
         self.head = SemanticMLP(input_dim)
     def forward(self, x):
         return self.head(x)
+
 
 # ==========================================
 # Dataset
@@ -82,6 +96,7 @@ class FusionDataset(data.Dataset):
 def Get_Dataloader(features, targets, labels, istrain, batch_size):
     return data.DataLoader(FusionDataset(features, targets, labels), batch_size, shuffle=istrain)
 
+
 # ==========================================
 # Contrastive loss
 # ==========================================
@@ -92,13 +107,30 @@ def contrastive_loss_fn(y_hat, y, margin=1.0):
     pos = torch.diag(sim_matrix)
     return torch.mean(F.relu(margin - pos[:, None] + sim_matrix))
 
+
 # ==========================================
 # Training loop
 # ==========================================
 def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
           subname="subject", scalers=None):
     net.to(device)
-    optimizer = torch.optim.AdamW(net.parameters(), lr=lr)
+
+    # optimizer
+    if OPTIMIZER_TYPE.lower() == "adam":
+        optimizer = torch.optim.Adam(net.parameters(), lr=lr)
+    elif OPTIMIZER_TYPE.lower() == "adamw":
+        optimizer = torch.optim.AdamW(net.parameters(), lr=lr)
+    else:
+        raise ValueError(f"Unknown OPTIMIZER_TYPE {OPTIMIZER_TYPE}")
+
+    # scheduler
+    if SCHEDULER_TYPE.lower() == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=num_epochs * len(train_iter)
+        )
+    else:
+        scheduler = None
+
     mse_loss  = nn.MSELoss()
     cos_loss  = nn.CosineEmbeddingLoss()
 
@@ -129,6 +161,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
 
             loss.backward()
             optimizer.step()
+            if scheduler: scheduler.step()
             total_loss += loss.item() * y.size(0)
 
         val_mse = evaluate_mse(net, val_iter, device)
@@ -144,13 +177,23 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
     if best_state:
         net.load_state_dict(best_state)
         os.makedirs(SEMANTIC_CKPT_DIR, exist_ok=True)
-        fname = f"semantic_predictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}"
+
+        # build subset tag
+        subset_tag = ""
+        if CLASS_SUBSET is not None:
+            subset_tag = "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
+
         # save model
-        torch.save({"state_dict": net.state_dict()}, os.path.join(SEMANTIC_CKPT_DIR, fname + ".pt"))
-        # save scalers per feature
+        model_name = f"semantic_predictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.pt"
+        torch.save({"state_dict": net.state_dict()},
+                os.path.join(SEMANTIC_CKPT_DIR, model_name))
+
+        # save scalers
         for ft, sc in scalers.items():
-            joblib.dump(sc, os.path.join(SEMANTIC_CKPT_DIR, fname + f"_{ft}_scaler.pkl"))
+            scaler_name = f"scaler_{ft}_{subname.replace('.npy','')}{subset_tag}.pkl"
+            joblib.dump(sc, os.path.join(SEMANTIC_CKPT_DIR, scaler_name))
     return net
+
 
 # ==========================================
 # Evaluation
@@ -197,6 +240,7 @@ def evaluate(net, data_iter, device):
         fisher_score = 0.0
     return total_mse / (count * dim), total_cos / count, fisher_score
 
+
 # ==========================================
 # Helpers
 # ==========================================
@@ -216,15 +260,16 @@ def load_subject_data(subname, feature_types):
         feats.append(arr)
     return np.concatenate(feats, axis=1), scalers
 
+
 # ==========================================
 # Main
 # ==========================================
 if __name__ == "__main__":
-    clip_embeddings = np.load(CLIP_EMB_PATH)               # [7,40,5,77,768]
-    clip_embeddings = clip_embeddings.reshape(-1, 77*768)  # [1400, 77*768]
+    clip_embeddings = np.load(CLIP_EMB_PATH)                 # [7,40,5,77,768]
+    clip_embeddings = clip_embeddings.reshape(-1, 77*768)    # [1400, 77*768]
     clip_embeddings = np.repeat(clip_embeddings, 2, axis=0)  # [2800, 77*768]
 
-    labels_block = np.repeat(np.arange(40), 5*2)
+    labels_block = np.repeat(np.arange(40), 5*2)  # per block labels
     labels_all   = np.tile(labels_block, 7)
 
     sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else ["sub1.npy"]
@@ -232,17 +277,21 @@ if __name__ == "__main__":
     for subname in sub_list:
         print(f"\n=== Training subject {subname} with {FEATURE_TYPES} ===")
 
-        # --- Load and scale features (per-feature) ---
+        # load and scale features
         features, scalers = load_subject_data(subname, FEATURE_TYPES)
 
-        # valid length
         samples_per_block = 400
         valid_len = samples_per_block * 7
         features = features[:valid_len]
         Y = clip_embeddings[:valid_len]
         L = labels_all[:valid_len]
 
-        # Splits (5 train, 1 val, 1 test)
+        # apply class subset mask BEFORE block split
+        if CLASS_SUBSET is not None:
+            mask = np.isin(L, CLASS_SUBSET)
+            features, Y, L = features[mask], Y[mask], L[mask]
+
+        # block-based split (always 5 train, 1 val, 1 test)
         train_idx = np.arange(0, 5*samples_per_block)
         val_idx   = np.arange(5*samples_per_block, 6*samples_per_block)
         test_idx  = np.arange(6*samples_per_block, 7*samples_per_block)
@@ -251,11 +300,12 @@ if __name__ == "__main__":
         Y_train, Y_val, Y_test = Y[train_idx], Y[val_idx], Y[test_idx]
         L_train, L_val, L_test = L[train_idx], L[val_idx], L[test_idx]
 
+        # dataloaders
         train_iter = Get_Dataloader(X_train, Y_train, L_train, True,  batch_size)
         val_iter   = Get_Dataloader(X_val,   Y_val,   L_val,   False, batch_size)
         test_iter  = Get_Dataloader(X_test,  Y_test,  L_test,  False, batch_size)
 
-        # --- Train ---
+        # train
         input_dim = features.shape[1]
         modelnet = SemanticPredictor(input_dim)
         modelnet = train(modelnet, train_iter, val_iter, test_iter,
