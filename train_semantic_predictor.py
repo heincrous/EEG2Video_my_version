@@ -30,7 +30,8 @@ SCHEDULER_TYPE = "cosine"
 FEATURE_TYPES    = ["DE"]
 
 # default is subject 1 only; set to True to use all subjects in folder
-USE_ALL_SUBJECTS = "sub1.npy"
+USE_ALL_SUBJECTS = False
+subject_name     = "sub1.npy"
 
 # restrict to certain classes (0–39); set to None for all
 CLASS_SUBSET     = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
@@ -178,17 +179,14 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
         net.load_state_dict(best_state)
         os.makedirs(SEMANTIC_CKPT_DIR, exist_ok=True)
 
-        # build subset tag
         subset_tag = ""
         if CLASS_SUBSET is not None:
             subset_tag = "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
 
-        # save model
         model_name = f"semantic_predictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.pt"
         torch.save({"state_dict": net.state_dict()},
                 os.path.join(SEMANTIC_CKPT_DIR, model_name))
 
-        # save scalers
         for ft, sc in scalers.items():
             scaler_name = f"scaler_{ft}_{subname.replace('.npy','')}{subset_tag}.pkl"
             joblib.dump(sc, os.path.join(SEMANTIC_CKPT_DIR, scaler_name))
@@ -272,15 +270,15 @@ if __name__ == "__main__":
     labels_block = np.repeat(np.arange(40), 5*2)  # per block labels
     labels_all   = np.tile(labels_block, 7)
 
-    sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else ["sub1.npy"]
+    sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else [subject_name]
 
     for subname in sub_list:
         print(f"\n=== Training subject {subname} with {FEATURE_TYPES} ===")
 
-        # load and scale features
         features, scalers = load_subject_data(subname, FEATURE_TYPES)
 
-        samples_per_block = 400
+        # length before masking
+        samples_per_block = 40 * 5 * 2
         valid_len = samples_per_block * 7
         features = features[:valid_len]
         Y = clip_embeddings[:valid_len]
@@ -291,6 +289,9 @@ if __name__ == "__main__":
             mask = np.isin(L, CLASS_SUBSET)
             features, Y, L = features[mask], Y[mask], L[mask]
 
+        # recompute per-block size after masking
+        samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5 * 2
+
         # block-based split (always 5 train, 1 val, 1 test)
         train_idx = np.arange(0, 5*samples_per_block)
         val_idx   = np.arange(5*samples_per_block, 6*samples_per_block)
@@ -300,12 +301,10 @@ if __name__ == "__main__":
         Y_train, Y_val, Y_test = Y[train_idx], Y[val_idx], Y[test_idx]
         L_train, L_val, L_test = L[train_idx], L[val_idx], L[test_idx]
 
-        # dataloaders
         train_iter = Get_Dataloader(X_train, Y_train, L_train, True,  batch_size)
         val_iter   = Get_Dataloader(X_val,   Y_val,   L_val,   False, batch_size)
         test_iter  = Get_Dataloader(X_test,  Y_test,  L_test,  False, batch_size)
 
-        # train
         input_dim = features.shape[1]
         modelnet = SemanticPredictor(input_dim)
         modelnet = train(modelnet, train_iter, val_iter, test_iter,

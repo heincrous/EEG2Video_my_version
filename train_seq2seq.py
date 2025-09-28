@@ -20,7 +20,8 @@ lr               = 0.0005
 run_device       = "cuda"
 
 # default is subject 1 only; set to True to use all subjects in folder
-USE_ALL_SUBJECTS = "sub1.npy"
+USE_ALL_SUBJECTS = False
+subject_name     = "sub1.npy"
 
 # restrict to certain classes (0–39); set to None for all
 CLASS_SUBSET     = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
@@ -148,23 +149,20 @@ def train_subject(subname):
     eeg_path    = os.path.join(EEG_DIR, subname)
     latent_path = os.path.join(LATENT_DIR, "Video_latents.npy")
 
-    eegdata    = np.load(eeg_path)      # (7,40,5,7,62,5,100)
-    latentdata  = np.load(latent_path)  # (7,40,5,6,4,36,64)
+    eegdata    = np.load(eeg_path)      # (7,40,5,7,62,100)
+    latentdata = np.load(latent_path)   # (7,40,5,6,4,36,64)
 
     # rearrange: collapse blocks, classes, trials
-    EEG   = rearrange(eegdata,    "g p d w c f l -> (g p d) w c l")   # (1400,7,62,100)
+    EEG   = rearrange(eegdata,    "g p d w c l -> (g p d) w c l")   # (1400,7,62,100)
     VIDEO = rearrange(latentdata, "g p d f c h w -> (g p d) f c h w") # (1400,6,4,36,64)
 
-    # labels 0–39
     labels_block = np.repeat(np.arange(40), 5)   # 200 per block
     labels_all   = np.tile(labels_block, 7)      # 1400 total
 
-    # apply class filtering
     if CLASS_SUBSET is not None:
         mask = np.isin(labels_all, CLASS_SUBSET)
         EEG, VIDEO, labels_all = EEG[mask], VIDEO[mask], labels_all[mask]
 
-    # block-based split
     samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5
     train_idx = np.arange(0, 5*samples_per_block)
     val_idx   = np.arange(5*samples_per_block, 6*samples_per_block)
@@ -173,14 +171,12 @@ def train_subject(subname):
     EEG_train, EEG_val, EEG_test = EEG[train_idx], EEG[val_idx], EEG[test_idx]
     VID_train, VID_val, VID_test = VIDEO[train_idx], VIDEO[val_idx], VIDEO[test_idx]
 
-    # scale EEG (flatten windows)
     b, w, c, l = EEG_train.shape
     scaler = StandardScaler().fit(EEG_train.reshape(b, -1))
     def scale(arr):
         return torch.from_numpy(scaler.transform(arr.reshape(arr.shape[0], -1))).reshape(arr.shape[0], w, c, l)
     EEG_train, EEG_val, EEG_test = map(scale, [EEG_train, EEG_val, EEG_test])
 
-    # build datasets
     train_set = EEGVideoDataset(EEG_train, VID_train)
     val_set   = EEGVideoDataset(EEG_val,   VID_val)
     test_set  = EEGVideoDataset(EEG_test,  VID_test)
@@ -189,7 +185,6 @@ def train_subject(subname):
     val_loader   = DataLoader(val_set,   batch_size=batch_size, shuffle=False)
     test_loader  = DataLoader(test_set,  batch_size=batch_size, shuffle=False)
 
-    # model + optimizer
     model = myTransformer().to(run_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(train_loader))
@@ -217,7 +212,6 @@ def train_subject(subname):
         if epoch_loss < best_loss:
             best_loss, best_state = epoch_loss, model.state_dict()
 
-    # save best model + scaler
     os.makedirs(SEQ2SEQ_CKPT_DIR, exist_ok=True)
     subset_tag = ""
     if CLASS_SUBSET is not None:
