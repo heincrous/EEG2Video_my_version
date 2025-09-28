@@ -21,11 +21,11 @@ lr            = 0.0005
 run_device    = "cuda"
 
 # Choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["segments","DE","PSD"]
+FEATURE_TYPES    = ["DE"]
 USE_ALL_SUBJECTS = False
 
 # Loss type: "mse", "cosine", "mse+cosine", "contrastive"
-LOSS_TYPE        = "mse"
+LOSS_TYPE        = "contrastive"
 
 USE_VAR_REG = True
 VAR_LAMBDA  = 0.01
