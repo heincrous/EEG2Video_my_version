@@ -29,7 +29,7 @@ emb_dim_PSD      = 256
 
 WEIGHT_DECAY     = 0   # 0 to match authors' Adam setup
 
-FEATURE_TYPES    = ["segments_conformer", "PSD_mlp"]
+FEATURE_TYPES    = ["DE_glf"]
 USE_ALL_SUBJECTS = False
 subject_name     = "sub1.npy"
 
