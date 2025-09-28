@@ -16,7 +16,7 @@ import joblib
 # Config
 # ==========================================
 batch_size    = 32
-num_epochs    = 200
+num_epochs    = 50
 lr            = 0.0005
 run_device    = "cuda"
 
