@@ -30,7 +30,7 @@ SCHEDULER_TYPE = "cosine"
 FEATURE_TYPES  = ["DE", "PSD"]
 
 # default is subject 1 only; set to True to use all subjects in folder
-USE_ALL_SUBJECTS = True
+USE_ALL_SUBJECTS = False
 subject_name     = "sub1.npy"
 
 # restrict to certain classes (0–39); set to None for all
