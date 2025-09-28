@@ -272,12 +272,14 @@ for subname in sub_list:
     raw_data = {ft: np.load(os.path.join(FEATURE_PATHS[ft], subname)) for ft in FEATURE_TYPES}
 
     def reshape(ft, arr):
-        if ft in ["DE","PSD"]:
+        if ft.startswith("DE"):
             return rearrange(arr, "a b c d e f -> a (b c d) e f")
-        elif ft == "segments":
+        elif ft.startswith("PSD"):
+            return rearrange(arr, "a b c d e f -> a (b c d) e f")
+        elif ft.startswith("segments"):
             return rearrange(arr, "a b c d (w t) -> a (b c w) d t", w=2)
         else:
-            raise ValueError
+            raise ValueError(f"Unknown feature type: {ft}")
     All_train = {ft: reshape(ft, raw_data[ft]) for ft in raw_data}
 
     Top_1, Top_K = [], []
