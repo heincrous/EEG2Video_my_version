@@ -4,18 +4,17 @@
 import os
 import numpy as np
 
-# === Repo imports ===
 from core.gt_label import GT_LABEL   # shape (7,40), values 0–39
 
-# === Path ===
+# path
 drive_root = "/content/drive/MyDrive/EEG2Video_data"
 scores_path = os.path.join(drive_root, "raw", "meta-info", "All_video_optical_flow_score.npy")
 
-# === Load ===
+# load
 scores = np.load(scores_path)   # shape (7,200)
 print("Scores shape:", scores.shape)
 
-# === Reorganize into [blocks, classes, 5 clips] ===
+# reorganize into [blocks, classes, 5 clips]
 num_blocks, num_slots = scores.shape
 clips_per_class = 5
 num_classes = 40
