@@ -40,16 +40,24 @@ os.makedirs(save_root, exist_ok=True)
 # ==========================================
 class LatentsTextDataset(Dataset):
     def __init__(self, latents_path, text_path, tokenizer):
-        self.latents = np.load(latents_path, allow_pickle=True)  # (N,F,C,H,W)
-        self.texts   = np.load(text_path, allow_pickle=True)     # (N,)
-        assert len(self.latents) == len(self.texts), "Mismatch between latents and text length"
+        # Load
+        latents = np.load(latents_path, allow_pickle=True)  # (7,40,5,6,4,36,64)
+        texts   = np.load(text_path, allow_pickle=True)     # (7,40,5)
+
+        # Flatten blocks, classes, trials into single dimension
+        self.latents = latents.reshape(-1, 6, 4, 36, 64)  # (1400, 6, 4, 36, 64)
+        self.texts   = texts.reshape(-1)                  # (1400,)
+        assert len(self.latents) == len(self.texts)
         self.tokenizer = tokenizer
+
+        print(f"Dataset prepared: {self.latents.shape[0]} clips, "
+              f"{self.latents.shape[1]} frames each, latents {self.latents.shape[2:]}")
 
     def __len__(self):
         return len(self.latents)
 
     def __getitem__(self, idx):
-        latents = self.latents[idx]  # (F,C,H,W)
+        latents = self.latents[idx]  # (6,4,36,64)
         text    = str(self.texts[idx])
         prompt_ids = self.tokenizer(
             text,
