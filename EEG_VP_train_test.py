@@ -16,7 +16,7 @@ from core.gt_label import GT_LABEL
 # Config
 # ==========================================
 batch_size    = 256
-num_epochs    = 100
+num_epochs    = 50
 lr            = 0.001
 C             = 62
 T             = 5
@@ -30,7 +30,7 @@ emb_dim_PSD      = 256
 WEIGHT_DECAY     = 0   # 0 to match authors' Adam setup
 
 FEATURE_TYPES    = ["DE_glf"]
-USE_ALL_SUBJECTS = False
+USE_ALL_SUBJECTS = True
 subject_name     = "sub1.npy"
 
 LOSS_TYPE        = "crossentropy"   # crossentropy | mse | cosine | mse+cosine
