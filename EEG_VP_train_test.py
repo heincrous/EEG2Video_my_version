@@ -50,7 +50,7 @@ WEIGHT_DECAY     = 0
 #   FEATURE_TYPES = ["segments_glf", "DE_mlp"]
 #   FEATURE_TYPES = ["segments_conformer", "DE_glf", "PSD_mlp"]
 # ==========================================
-FEATURE_TYPES = ["DE_mlp"]
+FEATURE_TYPES = ["DE_mlp", "PSD_mlp"]
 
 # default is subject 1 only; set to True to use all subjects in folder
 USE_ALL_SUBJECTS = False
