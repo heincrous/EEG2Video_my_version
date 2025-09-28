@@ -104,8 +104,7 @@ class PatchEmbedding(nn.Module):
 
 class shallownet(nn.Module):
     def __init__(self, out_dim, C, T):
-        super(shallownet, self).__init__()
-        
+        super().__init__()
         self.net = nn.Sequential(
             nn.Conv2d(1, 40, (1, 25), (1, 1)),
             nn.Conv2d(40, 40, (C, 1), (1, 1)),
@@ -114,13 +113,16 @@ class shallownet(nn.Module):
             nn.AvgPool2d((1, 51), (1, 5)),
             nn.Dropout(0.5),
         )
-        self.out = nn.Linear(1040*(T//200), out_dim)
-    
-    def forward(self, x):               #input:(batch,1,C,T)
+        # run dummy input to infer size
+        dummy = torch.zeros(1, 1, C, T)
+        with torch.no_grad():
+            n_features = self.net(dummy).view(1, -1).size(1)
+        self.out = nn.Linear(n_features, out_dim)
+
+    def forward(self, x):
         x = self.net(x)
         x = x.view(x.size(0), -1)
-        x = self.out(x)
-        return x
+        return self.out(x)
     
 class deepnet(nn.Module):
     def __init__(self, out_dim, C, T):
