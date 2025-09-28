@@ -286,7 +286,7 @@ for subname in sub_list:
         
         print("acc : =", accu)
 
-        loaded_model = torch.load(saved_model_path)
+        loaded_model = torch.load(saved_model_path, weights_only=False)
         loaded_model.to(run_device)
 
         block_top_1 = []
