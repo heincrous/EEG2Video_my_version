@@ -4,7 +4,7 @@
 import os, torch, joblib
 import numpy as np
 from einops import rearrange
-from sklearn.preprocessing import StandardScaler
+# from sklearn.preprocessing import StandardScaler
 from train_semantic_predictor import SemanticPredictor, FEATURE_PATHS
 
 
