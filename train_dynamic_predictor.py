@@ -52,13 +52,16 @@ DYNPRED_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/dynamic_checkpo
 # ==========================================
 def make_encoder(ft, return_logits=False):
     if ft == "segments":
-        base = models.glfnet(out_dim=2, emb_dim=emb_dim_segments, C=C, T=200)
+        base = models.glfnet(out_dim=2 if return_logits else emb_dim_segments,
+                             emb_dim=emb_dim_segments, C=C, T=200)
         return base if return_logits else (base, emb_dim_segments)
     elif ft == "DE":
-        base = models.glfnet_mlp(out_dim=2, emb_dim=emb_dim_DE, input_dim=C*T)
+        base = models.glfnet_mlp(out_dim=2 if return_logits else emb_dim_DE,
+                                 emb_dim=emb_dim_DE, input_dim=C*T)
         return base if return_logits else (base, emb_dim_DE)
     elif ft == "PSD":
-        base = models.glfnet_mlp(out_dim=2, emb_dim=emb_dim_PSD, input_dim=C*T)
+        base = models.glfnet_mlp(out_dim=2 if return_logits else emb_dim_PSD,
+                                 emb_dim=emb_dim_PSD, input_dim=C*T)
         return base if return_logits else (base, emb_dim_PSD)
     else:
         raise ValueError(f"Unknown feature type {ft}")
