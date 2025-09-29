@@ -17,7 +17,7 @@ import joblib
 # ==========================================
 batch_size    = 32
 num_epochs    = 50
-lr            = 0.0005
+lr            = 5e-4
 run_device    = "cuda"
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
