@@ -6,6 +6,7 @@ import os
 import numpy as np
 import torch
 from einops import rearrange
+from sklearn.preprocessing import StandardScaler
 from train_seq2seq import MyTransformer, EEG_DIR, SEQ2SEQ_CKPT_DIR, run_device
 
 
@@ -48,14 +49,14 @@ print("Class subset:", class_subset)
 # ==========================================
 # 2. Load scaler
 # ==========================================
-scaler_file = f"scaler_{subject_tag}"
-if class_subset is not None:
-    scaler_file += "_subset" + "-".join(str(c) for c in class_subset)
-scaler_file += ".pkl"
+# scaler_file = f"scaler_{subject_tag}"
+# if class_subset is not None:
+#     scaler_file += "_subset" + "-".join(str(c) for c in class_subset)
+# scaler_file += ".pkl"
 
-scaler_path = os.path.join(SEQ2SEQ_CKPT_DIR, scaler_file)
-scaler = joblib.load(scaler_path)
-print("Loaded scaler:", scaler_file)
+# scaler_path = os.path.join(SEQ2SEQ_CKPT_DIR, scaler_file)
+# scaler = joblib.load(scaler_path)
+# print("Loaded scaler:", scaler_file)
 
 
 # ==========================================
@@ -77,8 +78,15 @@ test_idx = np.arange(6 * samples_per_block, 7 * samples_per_block)
 
 EEG_test = EEG[test_idx]
 
-# scale with saved scaler
+# # scale with saved scaler
+# b, w, c, l = EEG_test.shape
+# EEG_test_2d = EEG_test.reshape(b, -1)
+# EEG_test_scaled = scaler.transform(EEG_test_2d).reshape(b, w, c, l)
+# EEG_test = torch.from_numpy(EEG_test_scaled).float().to(run_device)
+
+# === Scale test set inline ===
 b, w, c, l = EEG_test.shape
+scaler = StandardScaler().fit(EEG_test.reshape(b, -1))
 EEG_test_2d = EEG_test.reshape(b, -1)
 EEG_test_scaled = scaler.transform(EEG_test_2d).reshape(b, w, c, l)
 EEG_test = torch.from_numpy(EEG_test_scaled).float().to(run_device)
