@@ -12,7 +12,7 @@ import models
 # Config
 # ==========================================
 batch_size    = 256
-num_epochs    = 200
+num_epochs    = 400
 lr            = 1e-5
 run_device    = "cuda"
 
