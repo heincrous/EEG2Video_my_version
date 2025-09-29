@@ -12,8 +12,8 @@ import models
 # Config
 # ==========================================
 batch_size    = 256
-num_epochs    = 200
-lr            = 1e-3
+num_epochs    = 400
+lr            = 5e-4
 run_device    = "cuda"
 
 # EEG DE and PSD dimensions
