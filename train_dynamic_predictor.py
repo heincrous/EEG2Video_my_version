@@ -13,7 +13,7 @@ import models
 # ==========================================
 batch_size    = 256
 num_epochs    = 200
-lr            = 5e-4
+lr            = 1e-6
 run_device    = "cuda"
 
 # EEG DE and PSD dimensions
