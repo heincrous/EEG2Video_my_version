@@ -118,3 +118,5 @@ base_name = ckpt_file.replace(".pt","")
 out_path  = os.path.join(OUTPUT_DIR, f"latents_{base_name}.npy")
 np.save(out_path, all_latents)
 print("Saved latents to:", out_path)
+print("Shape:", all_latents.shape)
+
