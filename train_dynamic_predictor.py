@@ -17,14 +17,16 @@ lr            = 1e-3
 run_device    = "cuda"
 
 # EEG DE and PSD dimensions
-C, T = 62, 5
+C = 62 
+T = 5
+
 emb_dim_segments = 512
 emb_dim_windows  = 512 # cannot be used in fusion with other features
 emb_dim_DE       = 256
 emb_dim_PSD      = 256
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
-WEIGHT_DECAY   = 0
+WEIGHT_DECAY   = 0.5
 
 # scheduler: "cosine" or "constant"
 SCHEDULER_TYPE = "cosine"
