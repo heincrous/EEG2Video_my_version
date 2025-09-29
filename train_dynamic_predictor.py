@@ -23,7 +23,7 @@ emb_dim_DE       = 64
 emb_dim_PSD      = 64
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
-WEIGHT_DECAY   = 0
+WEIGHT_DECAY   = 0.1
 
 # scheduler: "cosine" or "constant"
 SCHEDULER_TYPE = "cosine"
@@ -243,8 +243,12 @@ if __name__ == "__main__":
 
         if CLASS_SUBSET is not None:
             mask = np.isin(labels_all, CLASS_SUBSET)
-            for ft in features: features[ft] = features[ft][mask]
-            y_cls, labels_all = y_cls[mask], labels_all[mask]
+            features = {ft: features[ft][mask] for ft in features}
+            y_cls_sub    = y_cls[mask]
+            labels_sub   = labels_all[mask]
+        else:
+            y_cls_sub    = y_cls
+            labels_sub   = labels_all
 
         samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5 * 2
         train_idx = np.arange(0, 5*samples_per_block)
@@ -262,19 +266,19 @@ if __name__ == "__main__":
             modelnet = FusionNet(encoders, emb_dims)
 
             train_iter = Get_Dataloader({ft: features[ft][train_idx] for ft in FEATURE_TYPES},
-                                        y_cls[train_idx], True, batch_size, multi=True)
+                                        y_cls_sub[train_idx], True, batch_size, multi=True)
             val_iter   = Get_Dataloader({ft: features[ft][val_idx] for ft in FEATURE_TYPES},
-                                        y_cls[val_idx], False, batch_size, multi=True)
+                                        y_cls_sub[val_idx], False, batch_size, multi=True)
             test_iter  = Get_Dataloader({ft: features[ft][test_idx] for ft in FEATURE_TYPES},
-                                        y_cls[test_idx], False, batch_size, multi=True)
+                                        y_cls_sub[test_idx], False, batch_size, multi=True)
         else:
             # single feature: encoder already outputs logits
             ft = FEATURE_TYPES[0]
             modelnet = make_encoder(ft, return_logits=True)
 
-            train_iter = Get_Dataloader(features[ft][train_idx], y_cls[train_idx], True, batch_size)
-            val_iter   = Get_Dataloader(features[ft][val_idx],   y_cls[val_idx],   False, batch_size)
-            test_iter  = Get_Dataloader(features[ft][test_idx],  y_cls[test_idx],  False, batch_size)
+            train_iter = Get_Dataloader(features[ft][train_idx], y_cls_sub[train_idx], True, batch_size)
+            val_iter   = Get_Dataloader(features[ft][val_idx],   y_cls_sub[val_idx],   False, batch_size)
+            test_iter  = Get_Dataloader(features[ft][test_idx],  y_cls_sub[test_idx],  False, batch_size)
 
         modelnet = train(modelnet, train_iter, val_iter, test_iter,
                          num_epochs, lr, run_device,
