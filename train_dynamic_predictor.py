@@ -12,7 +12,7 @@ import models
 # Config
 # ==========================================
 batch_size    = 256
-num_epochs    = 1000
+num_epochs    = 200
 lr            = 1e-6
 run_device    = "cuda"
 
@@ -29,7 +29,7 @@ WEIGHT_DECAY   = 0.0001
 SCHEDULER_TYPE = "cosine"
 
 # choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["DE"]
+FEATURE_TYPES    = ["DE", "PSD", "segments"]
 
 # default is subject 1 only; set to True to use all subjects in folder
 USE_ALL_SUBJECTS = False
