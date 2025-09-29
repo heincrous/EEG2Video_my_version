@@ -5,7 +5,7 @@ import os, torch, joblib
 import numpy as np
 from einops import rearrange
 # from sklearn.preprocessing import StandardScaler
-from train_semantic_predictor import SemanticPredictor, FEATURE_PATHS
+from train_semantic_predictor import SemanticPredictor, FEATURE_PATHS, run_device
 
 
 # ==========================================
@@ -15,7 +15,7 @@ SEMANTIC_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_check
 OUTPUT_DIR        = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-device = "cuda"
+run_device = run_device
 
 
 # ==========================================
@@ -31,14 +31,21 @@ ckpt_file = ckpts[choice]
 ckpt_path = os.path.join(SEMANTIC_CKPT_DIR, ckpt_file)
 
 print("Loading checkpoint:", ckpt_path)
-ckpt = torch.load(ckpt_path, map_location=device)
+ckpt = torch.load(ckpt_path, map_location=run_device)
 state_dict = ckpt["state_dict"]
 
 # deduce subject + features from filename
 parts = ckpt_file.replace(".pt","").split("_")
-# e.g. semantic_predictor_DE_sub1_subset1-10-12-...
-feature_types = parts[2:-1] if "subset" in parts[-1] else parts[2:]
-subject_tag   = parts[1] if parts[1].startswith("sub") else None
+
+# subject tag
+subject_tag = next((p for p in parts if p.startswith("sub")), None)
+
+# feature types = everything between "semantic_predictor" and the subject tag
+if subject_tag:
+    subj_idx = parts.index(subject_tag)
+    feature_types = parts[2:subj_idx]
+else:
+    feature_types = parts[2:-1] if "subset" in parts[-1] else parts[2:]
 
 # class subset (if any)
 if "subset" in ckpt_file:
@@ -93,7 +100,7 @@ X_test = np.concatenate(features_test, axis=1)
 # 4. Build model
 # ==========================================
 input_dim = X_test.shape[1]
-model = SemanticPredictor(input_dim).to(device)
+model = SemanticPredictor(input_dim).to(run_device)
 model.load_state_dict(state_dict, strict=False)
 model.eval()
 
@@ -102,7 +109,7 @@ model.eval()
 # 5. Run inference
 # ==========================================
 with torch.no_grad():
-    eeg_tensor = torch.tensor(X_test, dtype=torch.float32).to(device)
+    eeg_tensor = torch.tensor(X_test, dtype=torch.float32).to(run_device)
     preds = model(eeg_tensor).cpu().numpy()
 
 # reshape to (N,77,768)
@@ -113,7 +120,7 @@ preds = preds.reshape(-1, 77, 768)
 # 6. Save outputs
 # ==========================================
 base_name = ckpt_file.replace(".pt","")
-out_path  = os.path.join(OUTPUT_DIR, f"semantic_embeddings_{base_name}.npy")
+out_path  = os.path.join(OUTPUT_DIR, f"embeddings_{base_name}.npy")
 np.save(out_path, preds)
 print("Saved semantic embeddings to:", out_path)
 print("Shape:", preds.shape)
