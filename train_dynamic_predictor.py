@@ -39,7 +39,7 @@ subject_name     = "sub1.npy"
 CLASS_SUBSET     = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
 
 # loss type: "mse", "cosine", "mse+cosine", "contrastive", "crossentropy"
-LOSS_TYPE        = "contrastive"
+LOSS_TYPE        = "crossentropy"
 
 USE_VAR_REG = False
 VAR_LAMBDA  = 0.01
