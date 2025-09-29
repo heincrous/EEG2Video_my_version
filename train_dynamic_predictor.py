@@ -12,8 +12,8 @@ import models
 # Config
 # ==========================================
 batch_size    = 256
-num_epochs    = 400
-lr            = 1e-6
+num_epochs    = 200
+lr            = 1e-3
 run_device    = "cuda"
 
 # EEG DE and PSD dimensions
@@ -29,7 +29,7 @@ WEIGHT_DECAY   = 0
 SCHEDULER_TYPE = "cosine"
 
 # choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["DE", "PSD", "segments"]
+FEATURE_TYPES    = ["DE"]
 
 # default is subject 1 only; set to True to use all subjects in folder
 USE_ALL_SUBJECTS = False
