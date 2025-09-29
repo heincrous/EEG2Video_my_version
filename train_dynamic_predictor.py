@@ -26,7 +26,7 @@ emb_dim_PSD      = 64
 WEIGHT_DECAY   = 0
 
 # scheduler: "cosine" or "constant"
-SCHEDULER_TYPE = "cosine"
+SCHEDULER_TYPE = "constant"
 
 # choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
 FEATURE_TYPES    = ["DE"]
