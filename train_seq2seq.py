@@ -1,7 +1,8 @@
 # ==========================================
 # Seq2Seq Training
 # ==========================================
-import os, math, joblib
+import os, math 
+# import joblib
 import numpy as np
 import torch
 import torch.nn as nn
@@ -191,16 +192,28 @@ def train_subject(subname):
     EEG_train, EEG_val, EEG_test = EEG[train_idx], EEG[val_idx], EEG[test_idx]
     VID_train, VID_val, VID_test = VIDEO[train_idx], VIDEO[val_idx], VIDEO[test_idx]
 
-    # === Scaling (flatten -> fit on train -> apply to all sets) ===
-    b, w, c, l = EEG_train.shape
-    scaler = StandardScaler().fit(EEG_train.reshape(b, -1))
+    # # === Scaling (flatten -> fit on train -> apply to all sets) ===
+    # b, w, c, l = EEG_train.shape
+    # scaler = StandardScaler().fit(EEG_train.reshape(b, -1))
 
-    def scale(arr):
-        arr2d = arr.reshape(arr.shape[0], -1)
+    # def scale(arr):
+    #     arr2d = arr.reshape(arr.shape[0], -1)
+    #     arr_scaled = scaler.transform(arr2d)
+    #     return torch.from_numpy(arr_scaled).reshape(arr.shape[0], w, c, l)
+
+    # EEG_train, EEG_val, EEG_test = map(scale, [EEG_train, EEG_val, EEG_test])
+
+    # === Scaling: fit separate scalers for train/val/test ===
+    def fit_and_scale(arr):
+        b, w, c, l = arr.shape
+        scaler = StandardScaler().fit(arr.reshape(b, -1))
+        arr2d = arr.reshape(b, -1)
         arr_scaled = scaler.transform(arr2d)
-        return torch.from_numpy(arr_scaled).reshape(arr.shape[0], w, c, l)
+        return torch.from_numpy(arr_scaled).reshape(b, w, c, l)
 
-    EEG_train, EEG_val, EEG_test = map(scale, [EEG_train, EEG_val, EEG_test])
+    EEG_train = fit_and_scale(EEG_train)
+    EEG_val   = fit_and_scale(EEG_val)
+    EEG_test  = fit_and_scale(EEG_test)
 
     train_loader = DataLoader(EEGVideoDataset(EEG_train, VID_train), batch_size=batch_size, shuffle=True)
     val_loader   = DataLoader(EEGVideoDataset(EEG_val,   VID_val),   batch_size=batch_size, shuffle=False)
@@ -255,11 +268,11 @@ def train_subject(subname):
         subset_tag = "" if CLASS_SUBSET is None else "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
         base_name = subname.replace(".npy","") + subset_tag
         ckpt_name = f"seq2seq_{base_name}.pt"
-        scaler_name = f"scaler_{base_name}.pkl"
+        # scaler_name = f"scaler_{base_name}.pkl"
         torch.save({"state_dict": best_state}, os.path.join(SEQ2SEQ_CKPT_DIR, ckpt_name))
-        joblib.dump(scaler, os.path.join(SEQ2SEQ_CKPT_DIR, scaler_name))
+        # joblib.dump(scaler, os.path.join(SEQ2SEQ_CKPT_DIR, scaler_name))
         print(f"Saved checkpoint: {ckpt_name}")
-        print(f"Saved scaler: {scaler_name}")
+        # print(f"Saved scaler: {scaler_name}")
 
 
 # ==========================================
