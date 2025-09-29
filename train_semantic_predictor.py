@@ -42,6 +42,8 @@ LOSS_TYPE        = "mse"
 USE_VAR_REG = False
 VAR_LAMBDA  = 0.01
 
+P = 0.5 # dropout prob
+
 FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
     "DE":       "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s",
@@ -56,13 +58,13 @@ SEMANTIC_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_check
 # Semantic MLP
 # ==========================================
 class SemanticMLP(nn.Module):
-    def __init__(self, input_dim):
+    def __init__(self, input_dim, p=P):
         super().__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(input_dim, 10000), nn.ReLU(),
-            nn.Linear(10000, 10000), nn.ReLU(),
-            nn.Linear(10000, 10000), nn.ReLU(),
-            nn.Linear(10000, 10000), nn.ReLU(),
+            nn.Linear(input_dim, 10000), nn.ReLU(), nn.Dropout(p),
+            nn.Linear(10000, 10000), nn.ReLU(), nn.Dropout(p),
+            nn.Linear(10000, 10000), nn.ReLU(), nn.Dropout(p),
+            nn.Linear(10000, 10000), nn.ReLU(), nn.Dropout(p),
             nn.Linear(10000, 77*768)
         )
     def forward(self, x):
