@@ -30,7 +30,7 @@ WEIGHT_DECAY   = 0
 SCHEDULER_TYPE = "cosine"
 
 # choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["DE", "segments"]
+FEATURE_TYPES    = ["DE"]
 
 USE_ALL_SUBJECTS = False
 subject_name     = "sub1.npy"
