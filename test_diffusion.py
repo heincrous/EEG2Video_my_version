@@ -7,12 +7,8 @@ from einops import rearrange
 from diffusers import AutoencoderKL, DDIMScheduler
 from transformers import CLIPTokenizer, CLIPTextModel
 
-repo_root = "/content/EEG2Video_my_version"
-sys.path.append(os.path.join(repo_root, "pipelines"))
-from pipeline_tuneavideo import TuneAVideoPipeline
-
-sys.path.append(os.path.join(repo_root, "core_files"))
-from unet import UNet3DConditionModel
+from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
+from core.unet import UNet3DConditionModel
 
 # === DIRECTORIES ===
 PRETRAINED_MODEL_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
