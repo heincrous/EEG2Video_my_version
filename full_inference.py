@@ -5,7 +5,6 @@
 import os, gc, torch, numpy as np, imageio
 from einops import rearrange
 from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
-from core.unet import UNet3DConditionModel
 
 # ==========================================
 # Paths
@@ -38,15 +37,17 @@ subject_tag = next((p for p in sem_file.replace(".npy","").split("_") if p.start
 if "subset" in sem_file:
     subset_str   = sem_file.split("subset")[1].replace(".npy","")
     class_subset = [int(x) for x in subset_str.split("-")]
-    pipeline_tag = f"pipeline_subset{subset_str}"
+    pipeline_path = os.path.join(PIPELINE_DIR, f"pipeline_final_subset{subset_str}")
+    pipeline_tag  = f"pipeline_subset{subset_str}"
 else:
     class_subset = list(range(40))
-    pipeline_tag = "pipeline_full"
+    pipeline_path = os.path.join(PIPELINE_DIR, "pipeline_final")
+    pipeline_tag  = "pipeline_full"
 
 print("Semantic file:", sem_file)
 print("Subject:", subject_tag)
 print("Class subset:", class_subset)
-print("Pipeline tag:", pipeline_tag)
+print("Pipeline path:", pipeline_path)
 
 # ==========================================
 # Select Seq2Seq and DANA latents
@@ -86,12 +87,10 @@ assert eeg_embeds.shape[0] == latents.shape[0] == latents_add_noise.shape[0]
 # ==========================================
 # Load fine-tuned pipeline
 # ==========================================
-pipeline_path = os.path.join(PIPELINE_DIR, pipeline_tag)
-unet = UNet3DConditionModel.from_pretrained(pipeline_path, subfolder="unet", torch_dtype=torch.float16).to(device)
 pipe = TuneAVideoPipeline.from_pretrained(
-    pipeline_path, unet=unet, torch_dtype=torch.float16
+    pipeline_path,
+    torch_dtype=torch.float16
 ).to(device)
-pipe.enable_xformers_memory_efficient_attention()
 pipe.enable_vae_slicing()
 
 # ==========================================
@@ -107,12 +106,12 @@ woSeq2Seq = False
 woDANA    = False
 
 for i in range(len(eeg_embeds)):
-    cls_index   = i // 10
-    clip_index  = (i % 10) // 2
+    cls_index    = i // 10
+    clip_index   = (i % 10) // 2
     sample_index = i % 2
-    class_id    = class_subset[cls_index]
-    block_id    = 7
-    caption     = block7_caps[class_id, clip_index]
+    class_id     = class_subset[cls_index]
+    block_id     = 7
+    caption      = block7_caps[class_id, clip_index]
 
     print(f"[Block {block_id} | Class {class_id} | Clip {clip_index} | Sample {sample_index}] Caption: {caption}")
 
@@ -155,5 +154,3 @@ for i in range(len(eeg_embeds)):
     writer.close()
 
     print("Saved:", save_path)
-    print("Ground truth caption:", caption)
-
