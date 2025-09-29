@@ -9,7 +9,6 @@ from torch.utils import data
 from sklearn.preprocessing import StandardScaler
 from einops import rearrange
 import models
-from core.gt_label import GT_LABEL
 
 
 # ==========================================
@@ -32,10 +31,6 @@ WEIGHT_DECAY     = 0   # 0 to match authors' Adam setup
 FEATURE_TYPES    = ["DE_glf"]
 USE_ALL_SUBJECTS = True
 subject_name     = "sub1.npy"
-
-LOSS_TYPE        = "crossentropy"   # crossentropy | mse | cosine | mse+cosine
-USE_VAR_REG      = False
-VAR_LAMBDA       = 0.01
 
 
 FEATURE_PATHS = {
@@ -128,8 +123,6 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, multi=Fa
     net.to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
     ce_loss   = nn.CrossEntropyLoss()
-    mse_loss  = nn.MSELoss()
-    cos_loss  = nn.CosineEmbeddingLoss()
 
     best_val_acc, best_state = 0.0, None
     for epoch in range(num_epochs):
@@ -142,24 +135,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, multi=Fa
 
             optimizer.zero_grad()
             y_hat = net(X)
-
-            # loss selection
-            if LOSS_TYPE == "crossentropy":
-                loss = ce_loss(y_hat, y)
-            elif LOSS_TYPE == "mse":
-                y_onehot = torch.nn.functional.one_hot(y, num_classes=40).float()
-                loss = mse_loss(y_hat, y_onehot)
-            elif LOSS_TYPE == "cosine":
-                y_onehot = torch.nn.functional.one_hot(y, num_classes=40).float()
-                target = torch.ones(y_hat.size(0), device=device)
-                loss = cos_loss(y_hat, y_onehot, target)
-            elif LOSS_TYPE in ["mse+cosine", "cosine+mse"]:
-                y_onehot = torch.nn.functional.one_hot(y, num_classes=40).float()
-                target = torch.ones(y_hat.size(0), device=device)
-                loss = mse_loss(y_hat, y_onehot) + cos_loss(y_hat, y_onehot, target)
-
-            if USE_VAR_REG:
-                loss -= VAR_LAMBDA * torch.var(y_hat, dim=0).mean()
+            loss = ce_loss(y_hat, y)
 
             loss.backward()
             optimizer.step()
@@ -225,13 +201,10 @@ for subname in sub_list:
             va = val_data[ft].reshape(val_data[ft].shape[0], -1)
             te = test_data[ft].reshape(test_data[ft].shape[0], -1)
 
-            # Fit separate scalers for each split
             scaler_tr = StandardScaler().fit(tr)
             tr_scaled = scaler_tr.transform(tr)
-
             scaler_va = StandardScaler().fit(va)
             va_scaled = scaler_va.transform(va)
-
             scaler_te = StandardScaler().fit(te)
             te_scaled = scaler_te.transform(te)
 
@@ -246,7 +219,6 @@ for subname in sub_list:
 
         multi = len(FEATURE_TYPES) > 1
         if multi:
-            # Fusion mode: encoders → embeddings
             train_iter = Get_Dataloader(train_data, train_label, True, batch_size, multi=True)
             val_iter   = Get_Dataloader(val_data,   val_label,   False, batch_size, multi=True)
             test_iter  = Get_Dataloader(test_data,  test_label,  False, batch_size, multi=True)
@@ -272,7 +244,6 @@ for subname in sub_list:
             modelnet = FusionNet(encoders, emb_dims, num_classes=40)
 
         else:
-            # Single feature: use authors' model directly (out_dim=40)
             ft = FEATURE_TYPES[0]
             train_iter = Get_Dataloader(train_data[ft], train_label, True, batch_size)
             val_iter   = Get_Dataloader(val_data[ft],   val_label,   False, batch_size)
@@ -292,10 +263,8 @@ for subname in sub_list:
                 elif "glf" in ft:       modelnet = models.glfnet(40, emb_dim_segments, C, 200)
                 elif "conformer" in ft: modelnet = models.conformer(out_dim=40)
 
-        # train
         modelnet = train(modelnet, train_iter, val_iter, test_iter, num_epochs, lr, run_device, multi=multi)
 
-        # eval
         block_top1, block_top5 = [], []
         with torch.no_grad():
             for X, y in test_iter:

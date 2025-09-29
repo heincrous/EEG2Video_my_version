@@ -13,14 +13,14 @@ import models
 # ==========================================
 batch_size    = 64
 num_epochs    = 100
-lr            = 0.01
+lr            = 0.0005
 run_device    = "cuda"
 
 # EEG dimensions
 C, T = 62, 5
 emb_dim_segments = 512
-emb_dim_DE       = 256
-emb_dim_PSD      = 256
+emb_dim_DE       = 128
+emb_dim_PSD      = 128
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
 WEIGHT_DECAY   = 0
@@ -29,8 +29,9 @@ WEIGHT_DECAY   = 0
 SCHEDULER_TYPE = "cosine"
 
 # choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["DE"]
+FEATURE_TYPES    = ["DE", "PSD", "segments"]
 
+# default is subject 1 only; set to True to use all subjects in folder
 USE_ALL_SUBJECTS = False
 subject_name     = "sub1.npy"
 
@@ -120,7 +121,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
 
     ce_loss   = nn.CrossEntropyLoss()
 
-    best_val, best_state = 1e12, None
+    best_val_acc, best_state = 0.0, None
     for epoch in range(num_epochs):
         net.train()
         total_loss = 0
@@ -142,8 +143,8 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
             total_loss += loss.item() * y.size(0)
 
         val_loss, val_acc = evaluate(net, val_iter, device)
-        if val_loss < best_val:
-            best_val, best_state = val_loss, net.state_dict()
+        if val_acc > best_val_acc:
+            best_val_acc, best_state = val_acc, net.state_dict()
 
         if epoch % 3 == 0:
             test_loss, test_acc = evaluate(net, test_iter, device)
