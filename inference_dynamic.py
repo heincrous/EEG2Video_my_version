@@ -138,6 +138,7 @@ out_all = torch.cat(out_all, dim=0)
 # 8. Save outputs (based on Seq2Seq latents file)
 # ==========================================
 base_name = lat_file.replace(".npy","")
-out_path  = os.path.join(OUTPUT_DIR, f"{base_name}_addnoise.pt")
-torch.save(out_all, out_path)
+out_path  = os.path.join(OUTPUT_DIR, f"{base_name}_addnoise.npy")
+np.save(out_path, out_all.numpy())
 print("Saved noisy latents to:", out_path, out_all.shape)
+
