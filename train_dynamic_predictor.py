@@ -24,7 +24,7 @@ emb_dim_DE       = 256
 emb_dim_PSD      = 256
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
-WEIGHT_DECAY   = 0.5
+WEIGHT_DECAY   = 0
 
 # scheduler: "cosine" or "constant"
 SCHEDULER_TYPE = "cosine"
