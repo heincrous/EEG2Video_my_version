@@ -19,7 +19,7 @@ run_device    = "cuda"
 # EEG dimensions
 C, T = 62, 5
 emb_dim_segments = 128
-emb_dim_DE       = 32
+emb_dim_DE       = 128
 emb_dim_PSD      = 64
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
