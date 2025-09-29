@@ -18,7 +18,7 @@ run_device    = "cuda"
 
 # EEG dimensions
 C, T = 62, 5
-emb_dim_segments = 128
+emb_dim_segments = 512
 emb_dim_DE       = 64
 emb_dim_PSD      = 64
 
