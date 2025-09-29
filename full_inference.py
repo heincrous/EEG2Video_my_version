@@ -129,8 +129,8 @@ block7_caps = blip_text[6]  # (40,5)
 # ==========================================
 # Inference
 # ==========================================
-woSeq2Seq = False
-woDANA    = False
+woSeq2Seq = True
+woDANA    = True
 
 for i in range(len(eeg_embeds)):
     cls_index    = i // 10
