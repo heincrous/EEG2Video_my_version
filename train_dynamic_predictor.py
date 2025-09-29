@@ -12,8 +12,8 @@ import models
 # Config
 # ==========================================
 batch_size    = 256
-num_epochs    = 400
-lr            = 1e-6
+num_epochs    = 200
+lr            = 1e-5
 run_device    = "cuda"
 
 # EEG DE and PSD dimensions
@@ -23,7 +23,7 @@ emb_dim_DE       = 256
 emb_dim_PSD      = 256
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
-WEIGHT_DECAY   = 0.1
+WEIGHT_DECAY   = 0.5
 
 # scheduler: "cosine" or "constant"
 SCHEDULER_TYPE = "cosine"
@@ -107,14 +107,13 @@ def Get_Dataloader(features, labels, istrain, batch_size, multi=False):
 
 
 # ==========================================
-# Evaluation (window + clip level: mean + confidence weighted)
+# Evaluation (window + clip level)
 # ==========================================
 def evaluate(net, data_iter, device, clip_level=True):
     net.eval()
     ce_loss = nn.CrossEntropyLoss(reduction="sum")
     total_loss, count, correct = 0, 0, 0
-    clip_count = 0
-    clip_correct_mean, clip_correct_weighted = 0, 0
+    clip_correct, clip_count = 0, 0
 
     all_logits, all_labels = [], []
     with torch.no_grad():
@@ -141,29 +140,17 @@ def evaluate(net, data_iter, device, clip_level=True):
 
     if clip_level:
         num_clips = all_logits.shape[0] // 2
-        logits_clips = all_logits.view(num_clips, 2, -1)
+        logits_clips = all_logits.view(num_clips, 2, -1).mean(dim=1)
         labels_clips = all_labels.view(num_clips, 2)[:, 0]
-
-        # mean logits
-        mean_logits = logits_clips.mean(dim=1)
-        pred_mean   = torch.argmax(mean_logits, dim=-1)
-        clip_correct_mean = (pred_mean == labels_clips).sum().item()
-
-        # confidence-weighted
-        probs = torch.softmax(logits_clips, dim=-1)           # (num_clips,2,2)
-        conf  = probs.max(dim=-1).values                      # (num_clips,2)
-        weighted_probs = (probs * conf.unsqueeze(-1)).sum(dim=1) / conf.sum(dim=1, keepdim=True)
-        pred_weighted  = torch.argmax(weighted_probs, dim=-1)
-        clip_correct_weighted = (pred_weighted == labels_clips).sum().item()
-
-        clip_count = num_clips
+        pred_clips   = torch.argmax(logits_clips, dim=-1)
+        clip_correct = (pred_clips == labels_clips).sum().item()
+        clip_count   = num_clips
 
     window_loss = total_loss / count
     window_acc  = correct / count
     if clip_level:
-        clip_acc_mean     = clip_correct_mean / clip_count
-        clip_acc_weighted = clip_correct_weighted / clip_count
-        return window_loss, window_acc, clip_acc_mean, clip_acc_weighted
+        clip_acc = clip_correct / clip_count
+        return window_loss, window_acc, clip_acc
     else:
         return window_loss, window_acc
 
@@ -206,19 +193,15 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
                 scheduler.step()
             total_loss += loss.item() * y.size(0)
 
-        # unpack 4 values
-        val_loss, val_acc, val_clip_mean, val_clip_weighted = evaluate(net, val_iter, device, clip_level=True)
-        # track best on weighted clip accuracy
-        if val_clip_weighted > best_val_clip_acc:
-            best_val_clip_acc, best_state = val_clip_weighted, net.state_dict()
+        val_loss, val_acc, val_clip_acc = evaluate(net, val_iter, device, clip_level=True)
+        if val_clip_acc > best_val_clip_acc:
+            best_val_clip_acc, best_state = val_clip_acc, net.state_dict()
 
         if epoch % 3 == 0:
-            test_loss, test_acc, test_clip_mean, test_clip_weighted = evaluate(net, test_iter, device, clip_level=True)
-            print(f"[{epoch+1}] "
-                  f"val_loss={val_loss:.4f}, val_acc={val_acc:.3f}, "
-                  f"val_clip_mean={val_clip_mean:.3f}, val_clip_weighted={val_clip_weighted:.3f}, "
-                  f"test_loss={test_loss:.4f}, test_acc={test_acc:.3f}, "
-                  f"test_clip_mean={test_clip_mean:.3f}, test_clip_weighted={test_clip_weighted:.3f}")
+            test_loss, test_acc, test_clip_acc = evaluate(net, test_iter, device, clip_level=True)
+            print(f"[{epoch+1}] train_loss={total_loss/len(train_iter.dataset):.4f}, "
+                  f"val_loss={val_loss:.4f}, val_acc={val_acc:.3f}, val_clip_acc={val_clip_acc:.3f}, "
+                  f"test_loss={test_loss:.4f}, test_acc={test_acc:.3f}, test_clip_acc={test_clip_acc:.3f}")
 
     if best_state:
         net.load_state_dict(best_state)
@@ -226,7 +209,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
         subset_tag = ""
         model_name = f"dynpredictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.pt"
         torch.save({"state_dict": net.state_dict()},
-                   os.path.join(DYNPRED_CKPT_DIR, model_name))
+                os.path.join(DYNPRED_CKPT_DIR, model_name))
         print(f"Saved checkpoint: {model_name}")
 
         for ft, sc in scalers.items():
