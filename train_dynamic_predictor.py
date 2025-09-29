@@ -222,6 +222,28 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
 # ==========================================
 # Helpers
 # ==========================================
+# def prepare_features_with_scaler(subname, feature_types, train_idx, val_idx, test_idx):
+#     feats, scalers = {}, {}
+#     for ft in feature_types:
+#         path = os.path.join(FEATURE_PATHS[ft], subname)
+#         arr = np.load(path)
+
+#         if ft in ["DE","PSD"]:
+#             arr = arr.reshape(-1, C, T)
+#             flat = arr.reshape(arr.shape[0], -1)
+#             scaler = StandardScaler().fit(flat[train_idx])
+#             arr = scaler.transform(flat).reshape(-1, C, T)
+
+#         elif ft == "segments":
+#             arr = rearrange(arr, "a b c d (w t) -> (a b c w) d t", w=2, t=200)
+#             flat = arr.reshape(arr.shape[0], -1)
+#             scaler = StandardScaler().fit(flat[train_idx])
+#             arr = scaler.transform(flat).reshape(-1, 1, C, 200)
+
+#         scalers[ft] = scaler
+#         feats[ft] = arr
+#     return feats, scalers
+
 def prepare_features_with_scaler(subname, feature_types, train_idx, val_idx, test_idx):
     feats, scalers = {}, {}
     for ft in feature_types:
@@ -231,13 +253,13 @@ def prepare_features_with_scaler(subname, feature_types, train_idx, val_idx, tes
         if ft in ["DE","PSD"]:
             arr = arr.reshape(-1, C, T)
             flat = arr.reshape(arr.shape[0], -1)
-            scaler = StandardScaler().fit(flat[train_idx])
+            scaler = StandardScaler().fit(flat)   # fit on all data
             arr = scaler.transform(flat).reshape(-1, C, T)
 
         elif ft == "segments":
             arr = rearrange(arr, "a b c d (w t) -> (a b c w) d t", w=2, t=200)
             flat = arr.reshape(arr.shape[0], -1)
-            scaler = StandardScaler().fit(flat[train_idx])
+            scaler = StandardScaler().fit(flat)   # fit on all data
             arr = scaler.transform(flat).reshape(-1, 1, C, 200)
 
         scalers[ft] = scaler
