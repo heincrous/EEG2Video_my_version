@@ -42,7 +42,7 @@ CLASS_SUBSET     = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
 LOSS_TYPE        = "mse"
 
 USE_VAR_REG = True
-VAR_LAMBDA  = 0.01
+VAR_LAMBDA  = 0.1
 
 FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
