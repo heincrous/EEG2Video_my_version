@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from sklearn.preprocessing import StandardScaler
-from tqdm import tqdm
+# from tqdm import tqdm
 from einops import rearrange
 
 
@@ -203,7 +203,7 @@ def train_subject(subname):
 
     # EEG_train, EEG_val, EEG_test = map(scale, [EEG_train, EEG_val, EEG_test])
 
-    # === Scaling: fit separate scalers for train/val/test ===
+    # === Scaling: fit separate scalers per split (no saving) ===
     def fit_and_scale(arr):
         b, w, c, l = arr.shape
         scaler = StandardScaler().fit(arr.reshape(b, -1))
