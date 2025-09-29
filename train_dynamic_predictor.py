@@ -1,5 +1,5 @@
 # ==========================================
-# EEG → Dynamic Predictor (crossentropy only)
+# EEG → Dynamic Predictor (crossentropy only, clip-level eval added)
 # ==========================================
 import os, numpy as np, torch, joblib
 from torch import nn
@@ -58,7 +58,6 @@ def make_encoder(ft, return_logits=False, use_dropout=True, p=0.5):
         base = models.glfnet_mlp(out_dim=2 if return_logits else emb_dim,
                                  emb_dim=emb_dim, input_dim=C*T)
         if not return_logits and use_dropout:
-            # Wrap base with dropout after its forward
             base = nn.Sequential(base, nn.Dropout(p))
         return base if return_logits else (base, emb_dim)
 
@@ -74,7 +73,7 @@ class FusionNet(nn.Module):
         super().__init__()
         self.encoders = nn.ModuleDict(encoders)
         total_dim     = sum(emb_dims.values())
-        self.classifier = nn.Linear(total_dim, 2)  # 2 logits
+        self.classifier = nn.Linear(total_dim, 2)
     def forward(self, inputs):
         feats = []
         for name, enc in self.encoders.items():
@@ -106,14 +105,62 @@ def Get_Dataloader(features, labels, istrain, batch_size, multi=False):
 
 
 # ==========================================
+# Evaluation (window + clip level)
+# ==========================================
+def evaluate(net, data_iter, device, clip_level=True):
+    net.eval()
+    ce_loss = nn.CrossEntropyLoss(reduction="sum")
+    total_loss, count, correct = 0, 0, 0
+    clip_correct, clip_count = 0, 0
+
+    all_logits, all_labels = [], []
+    with torch.no_grad():
+        for X, y in data_iter:
+            if isinstance(X, dict):
+                X = {ft: X[ft].to(device) for ft in X}
+            else:
+                X = X.to(device)
+            y = y.to(device)
+
+            y_hat = net(X)  # (batch,2)
+            total_loss += ce_loss(y_hat, y).item()
+
+            # window-level
+            pred_cls = torch.argmax(y_hat, dim=-1)
+            correct += (pred_cls.cpu() == y.cpu()).sum().item()
+            count += y.size(0)
+
+            all_logits.append(y_hat.cpu())
+            all_labels.append(y.cpu())
+
+    all_logits = torch.cat(all_logits, dim=0)
+    all_labels = torch.cat(all_labels, dim=0)
+
+    if clip_level:
+        num_clips = all_logits.shape[0] // 2
+        logits_clips = all_logits.view(num_clips, 2, -1).mean(dim=1)
+        labels_clips = all_labels.view(num_clips, 2)[:, 0]
+        pred_clips   = torch.argmax(logits_clips, dim=-1)
+        clip_correct = (pred_clips == labels_clips).sum().item()
+        clip_count   = num_clips
+
+    window_loss = total_loss / count
+    window_acc  = correct / count
+    if clip_level:
+        clip_acc = clip_correct / clip_count
+        return window_loss, window_acc, clip_acc
+    else:
+        return window_loss, window_acc
+
+
+# ==========================================
 # Training loop
 # ==========================================
 def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
           subname="subject", scalers=None):
     net.to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
-    
-    # scheduler (per batch, like authors)
+
     if SCHEDULER_TYPE.lower() == "cosine":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=num_epochs * len(train_iter)
@@ -123,7 +170,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
 
     ce_loss   = nn.CrossEntropyLoss()
 
-    best_val_acc, best_state = 0.0, None
+    best_val_clip_acc, best_state = 0.0, None
     for epoch in range(num_epochs):
         net.train()
         total_loss = 0
@@ -135,7 +182,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
             y = y.to(device)
 
             optimizer.zero_grad()
-            y_hat = net(X)   # (batch,2) logits
+            y_hat = net(X)
             loss  = ce_loss(y_hat, y)
 
             loss.backward()
@@ -144,20 +191,20 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
                 scheduler.step()
             total_loss += loss.item() * y.size(0)
 
-        val_loss, val_acc = evaluate(net, val_iter, device)
-        if val_acc > best_val_acc:
-            best_val_acc, best_state = val_acc, net.state_dict()
+        val_loss, val_acc, val_clip_acc = evaluate(net, val_iter, device, clip_level=True)
+        if val_clip_acc > best_val_clip_acc:
+            best_val_clip_acc, best_state = val_clip_acc, net.state_dict()
 
         if epoch % 3 == 0:
-            test_loss, test_acc = evaluate(net, test_iter, device)
+            test_loss, test_acc, test_clip_acc = evaluate(net, test_iter, device, clip_level=True)
             print(f"[{epoch+1}] train_loss={total_loss/len(train_iter.dataset):.4f}, "
-                  f"val_loss={val_loss:.4f}, val_acc={val_acc:.3f}, "
-                  f"test_loss={test_loss:.4f}, test_acc={test_acc:.3f}")
+                  f"val_loss={val_loss:.4f}, val_acc={val_acc:.3f}, val_clip_acc={val_clip_acc:.3f}, "
+                  f"test_loss={test_loss:.4f}, test_acc={test_acc:.3f}, test_clip_acc={test_clip_acc:.3f}")
 
     if best_state:
         net.load_state_dict(best_state)
         os.makedirs(DYNPRED_CKPT_DIR, exist_ok=True)
-        subset_tag = ""  # always empty: dynamic predictor ignores CLASS_SUBSET
+        subset_tag = ""
         model_name = f"dynpredictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.pt"
         torch.save({"state_dict": net.state_dict()},
                 os.path.join(DYNPRED_CKPT_DIR, model_name))
@@ -168,28 +215,6 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
             joblib.dump(sc, os.path.join(DYNPRED_CKPT_DIR, scaler_name))
             print(f"Saved scaler: {scaler_name}")
     return net
-
-
-# ==========================================
-# Evaluation
-# ==========================================
-def evaluate(net, data_iter, device):
-    net.eval()
-    ce_loss = nn.CrossEntropyLoss(reduction="sum")
-    total_loss, count, correct = 0, 0, 0
-    with torch.no_grad():
-        for X, y in data_iter:
-            if isinstance(X, dict):
-                X = {ft: X[ft].to(device) for ft in X}
-            else:
-                X = X.to(device)
-            y = y.to(device)
-            y_hat = net(X)   # (batch,2)
-            total_loss += ce_loss(y_hat, y).item()
-            pred_cls = torch.argmax(y_hat, dim=-1)
-            correct += (pred_cls.cpu() == y.cpu()).sum().item()
-            count += y.size(0)
-    return total_loss / count, correct / count
 
 
 # ==========================================
