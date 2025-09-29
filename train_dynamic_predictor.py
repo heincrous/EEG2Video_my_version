@@ -19,11 +19,11 @@ run_device    = "cuda"
 # EEG dimensions
 C, T = 62, 5
 emb_dim_segments = 128
-emb_dim_DE       = 256
+emb_dim_DE       = 64
 emb_dim_PSD      = 64
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
-WEIGHT_DECAY   = 0.5
+WEIGHT_DECAY   = 1
 
 # scheduler: "cosine" or "constant"
 SCHEDULER_TYPE = "cosine"
