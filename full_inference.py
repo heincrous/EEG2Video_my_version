@@ -337,14 +337,19 @@ for i in range(len(eeg_embeds)):
 
     if woSeq2Seq:
         video = pipe(
-            None,
-            eeg_input,
-            negative_eeg=neg_input,
-            latents=None,
-            video_length=6, height=288, width=512,
-            num_inference_steps=100, guidance_scale=12.5
+            model=None,
+            eeg=eeg_input,            # (1,77,768)
+            negative_eeg=neg_input,   # (1,77,768)
+            latents=latents_add_noise[i:i+1] if not woDANA else (
+                latents[i:i+1] if not woSeq2Seq else None
+            ),
+            video_length=6,
+            height=288,
+            width=512,
+            num_inference_steps=100,
+            guidance_scale=12.5,
         ).videos
-        save_dir = os.path.join(SAVE_ROOT, f"{pipeline_tag}_woSeq2Seq")
+        save_dir = os.path.join(SAVE_ROOT, f"{pipeline_tag}_FullModel")
 
     elif woDANA:
         video = pipe(
