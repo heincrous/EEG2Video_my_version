@@ -314,15 +314,23 @@ if __name__ == "__main__":
     labels_all = np.tile(np.arange(40).repeat(5), 7)  # (1400,)
     threshold = np.median(ofs_all)
 
-    ofs_all    = np.repeat(ofs_all, 2, axis=0)     # (2800,1)
-    labels_all = np.repeat(labels_all, 2, axis=0)  # (2800,)
+    # decide repeat factor based on feature type
+    if FEATURE_TYPES[0] == "windows":
+        repeat_factor = 3
+    else:
+        repeat_factor = 2
+
+    ofs_all    = np.repeat(ofs_all, repeat_factor, axis=0)
+    labels_all = np.repeat(labels_all, repeat_factor, axis=0)
+
     y_cls = (ofs_all > threshold).astype(int).flatten()
 
     sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else [subject_name]
     for subname in sub_list:
         print(f"\n=== Training subject {subname} with {FEATURE_TYPES} ===")
 
-        samples_per_block = 40 * 5 * 2
+        # align number of samples per block with repeat_factor
+        samples_per_block = 40 * 5 * repeat_factor
         train_idx = np.arange(0, 5*samples_per_block)
         val_idx   = np.arange(5*samples_per_block, 6*samples_per_block)
         test_idx  = np.arange(6*samples_per_block, 7*samples_per_block)
