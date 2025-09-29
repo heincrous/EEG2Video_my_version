@@ -19,6 +19,7 @@ run_device    = "cuda"
 # EEG DE and PSD dimensions
 C, T = 62, 5
 emb_dim_segments = 512
+emb_dim_windows  = 512 # cannot be used in fusion with other features
 emb_dim_DE       = 256
 emb_dim_PSD      = 256
 
@@ -29,7 +30,7 @@ WEIGHT_DECAY   = 0.5
 SCHEDULER_TYPE = "cosine"
 
 # choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["DE", "PSD", "segments"]
+FEATURE_TYPES    = ["windows"]
 
 # default is subject 1 only; set to True to use all subjects in folder
 USE_ALL_SUBJECTS = False
@@ -41,6 +42,7 @@ FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
     "DE":       "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s",
     "PSD":      "/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s",
+    "windows":  "/content/drive/MyDrive/EEG2Video_data/processed/EEG_windows_200"
 }
 OFS_PATH         = "/content/drive/MyDrive/EEG2Video_data/processed/meta-info/All_video_optical_flow_score_byclass.npy"
 DYNPRED_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/dynamic_checkpoints"
@@ -53,6 +55,11 @@ def make_encoder(ft, return_logits=False, use_dropout=True, p=P):
     if ft == "segments":
         base = models.glfnet(out_dim=2 if return_logits else emb_dim_segments,
                              emb_dim=emb_dim_segments, C=C, T=200)
+        return base if return_logits else (base, emb_dim_segments)
+    
+    elif ft == "windows":
+        base = models.glfnet(out_dim=2 if return_logits else emb_dim_windows,
+                            emb_dim=emb_dim_windows, C=C, T=200)
         return base if return_logits else (base, emb_dim_segments)
 
     elif ft in ["DE", "PSD"]:
@@ -260,6 +267,13 @@ def prepare_features_with_scaler(subname, feature_types, train_idx, val_idx, tes
             arr = rearrange(arr, "a b c d (w t) -> (a b c w) d t", w=2, t=200)
             flat = arr.reshape(arr.shape[0], -1)
             scaler = StandardScaler().fit(flat)   # fit on all data
+            arr = scaler.transform(flat).reshape(-1, 1, C, 200)
+        
+        elif ft == "windows":
+            # shape: (7,40,5,3,62,200) → (N,62,200)
+            arr = rearrange(arr, "a b c w d t -> (a b c w) d t")
+            flat = arr.reshape(arr.shape[0], -1)
+            scaler = StandardScaler().fit(flat)  # or fit(flat[train_idx]) if you want train-only
             arr = scaler.transform(flat).reshape(-1, 1, C, 200)
 
         scalers[ft] = scaler
