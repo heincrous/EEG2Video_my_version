@@ -23,7 +23,7 @@ emb_dim_DE       = 64
 emb_dim_PSD      = 64
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
-WEIGHT_DECAY   = 1
+WEIGHT_DECAY   = 0.0001
 
 # scheduler: "cosine" or "constant"
 SCHEDULER_TYPE = "cosine"
@@ -50,19 +50,21 @@ DYNPRED_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/dynamic_checkpo
 # ==========================================
 # Encoders
 # ==========================================
-def make_encoder(ft, return_logits=False):
+def make_encoder(ft, return_logits=False, use_dropout=True, p=0.5):
     if ft == "segments":
         base = models.glfnet(out_dim=2 if return_logits else emb_dim_segments,
                              emb_dim=emb_dim_segments, C=C, T=200)
         return base if return_logits else (base, emb_dim_segments)
-    elif ft == "DE":
-        base = models.glfnet_mlp(out_dim=2 if return_logits else emb_dim_DE,
-                                 emb_dim=emb_dim_DE, input_dim=C*T)
-        return base if return_logits else (base, emb_dim_DE)
-    elif ft == "PSD":
-        base = models.glfnet_mlp(out_dim=2 if return_logits else emb_dim_PSD,
-                                 emb_dim=emb_dim_PSD, input_dim=C*T)
-        return base if return_logits else (base, emb_dim_PSD)
+
+    elif ft in ["DE", "PSD"]:
+        emb_dim = emb_dim_DE if ft == "DE" else emb_dim_PSD
+        base = models.glfnet_mlp(out_dim=2 if return_logits else emb_dim,
+                                 emb_dim=emb_dim, input_dim=C*T)
+        if not return_logits and use_dropout:
+            # Wrap base with dropout after its forward
+            base = nn.Sequential(base, nn.Dropout(p))
+        return base if return_logits else (base, emb_dim)
+
     else:
         raise ValueError(f"Unknown feature type {ft}")
 
