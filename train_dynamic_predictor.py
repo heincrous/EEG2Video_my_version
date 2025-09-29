@@ -12,8 +12,8 @@ import models
 # Config
 # ==========================================
 batch_size    = 256
-num_epochs    = 400
-lr            = 1e-5
+num_epochs    = 200
+lr            = 1e-6
 run_device    = "cuda"
 
 # EEG DE and PSD dimensions
@@ -23,7 +23,7 @@ emb_dim_DE       = 128
 emb_dim_PSD      = 128
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
-WEIGHT_DECAY   = 0.1
+WEIGHT_DECAY   = 0
 
 # scheduler: "cosine" or "constant"
 SCHEDULER_TYPE = "cosine"
