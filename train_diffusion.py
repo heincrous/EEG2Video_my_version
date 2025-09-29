@@ -68,8 +68,8 @@ class LatentsTextDataset(Dataset):
             raise ValueError(f"Unknown split: {split}")
 
         # build class labels
-        labels_block = np.repeat(np.arange(40), 5*2)      # 400 per block
-        labels_all   = np.tile(labels_block, block_count) # 2400 train or 400 test
+        labels_block = np.repeat(np.arange(40), 5)      # 200 per block
+        labels_all   = np.tile(labels_block, block_count)  # 1200 for train (6×200) or 200 for test
 
         # apply class subset filter
         if class_subset is not None:
