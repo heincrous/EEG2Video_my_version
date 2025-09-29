@@ -1,126 +1,126 @@
 # ==========================================
 # Inference: Dynamic Predictor → DANA latents
 # ==========================================
-import os, joblib
-import numpy as np
-import torch
-import torch.nn.functional as F
+import os, numpy as np, torch
 from einops import rearrange
-from train_dynamic_predictor import make_encoder, FusionNet, FEATURE_PATHS, DYNPRED_CKPT_DIR, run_device
-from inference_seq2seq import OUTPUT_DIR as SEQ2SEQ_OUT
-from core.add_noise import Diffusion  # your DANA implementation
-
+from sklearn.preprocessing import StandardScaler
+from train_dynamic_predictor import make_encoder, DYNPRED_CKPT_DIR, FEATURE_PATHS, run_device
+from core.add_noise import Diffusion
 
 # ==========================================
 # Paths
 # ==========================================
-OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_outputs/dana_latents"
+SEQ2SEQ_OUT   = "/content/drive/MyDrive/EEG2Video_outputs/seq2seq_latents"
+OUTPUT_DIR    = "/content/drive/MyDrive/EEG2Video_outputs/dana_latents"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-
 # ==========================================
-# 1. List checkpoints
+# 1. Select checkpoint
 # ==========================================
 ckpts = [f for f in os.listdir(DYNPRED_CKPT_DIR) if f.endswith(".pt")]
 print("Available dynamic predictor checkpoints:")
 for i, f in enumerate(ckpts):
     print(f"[{i}] {f}")
-
-choice = int(input("Select checkpoint index: "))
+choice    = int(input("Select checkpoint index: "))
 ckpt_file = ckpts[choice]
 ckpt_path = os.path.join(DYNPRED_CKPT_DIR, ckpt_file)
 print("Loading checkpoint:", ckpt_path)
+
 state_dict = torch.load(ckpt_path, map_location=run_device)["state_dict"]
 
-# parse filename: dynpredictor_DE_sub1_subset1-10-12...
-parts = ckpt_file.replace(".pt","").split("_")
-feature_types = parts[1:-1] if "subset" in parts[-1] else parts[1:-0]
-subject_tag   = [p for p in parts if p.startswith("sub")][0]
-
+# deduce subject + subset
+parts       = ckpt_file.replace(".pt","").split("_")
+subject_tag = next((p for p in parts if p.startswith("sub")), None)
 if "subset" in ckpt_file:
-    subset_str = ckpt_file.split("subset")[1].replace(".pt","")
+    subset_str   = ckpt_file.split("subset")[1].replace(".pt","")
     class_subset = [int(x) for x in subset_str.split("-")]
 else:
     class_subset = None
 
 print("Subject:", subject_tag)
-print("Feature types:", feature_types)
 print("Class subset:", class_subset)
 
+# ==========================================
+# 2. Load EEG windows (test block only)
+# ==========================================
+win_path = os.path.join(FEATURE_PATHS["windows"], subject_tag + ".npy")
+windows  = np.load(win_path)  # (7,40,5,3,62,200)
+
+# flatten to (N,62,200)
+windows  = rearrange(windows, "g p d w c t -> (g p d w) c t")
+labels   = np.tile(np.arange(40).repeat(5), 7)
+labels   = np.repeat(labels, 3)  # 3 windows per clip
+
+if class_subset is not None:
+    mask   = np.isin(labels, class_subset)
+    windows, labels = windows[mask], labels[mask]
+
+samples_per_block = (len(class_subset) if class_subset else 40) * 5 * 3
+test_idx = np.arange(6*samples_per_block, 7*samples_per_block)
+
+X_test   = windows[test_idx]
+y_test   = labels[test_idx]
+
+# scale
+scaler   = StandardScaler().fit(X_test.reshape(len(X_test), -1))
+X_test   = scaler.transform(X_test.reshape(len(X_test), -1)).reshape(-1,1,62,200)
+X_test   = torch.tensor(X_test, dtype=torch.float32).to(run_device)
 
 # ==========================================
-# 2. Load Seq2Seq latents
+# 3. Build model
 # ==========================================
-latents_file = f"latents_seq2seq_{subject_tag}"
-if class_subset:
-    latents_file += "_subset" + "-".join(str(c) for c in class_subset)
-latents_file += ".npy"
-
-latents_path = os.path.join(SEQ2SEQ_OUT, latents_file)
-latents = np.load(latents_path)  # (N,6,4,36,64)
-print("Loaded Seq2Seq latents:", latents.shape)
-
-
-# ==========================================
-# 3. Build dynamic predictor
-# ==========================================
-if len(feature_types) > 1:
-    encoders, emb_dims = {}, {}
-    for ft in feature_types:
-        enc, dim = make_encoder(ft, return_logits=False)
-        encoders[ft] = enc
-        emb_dims[ft] = dim
-    model = FusionNet(encoders, emb_dims)
-else:
-    ft = feature_types[0]
-    model = make_encoder(ft, return_logits=True)
-
-model.to(run_device)
+model = make_encoder("windows", return_logits=True).to(run_device)
 model.load_state_dict(state_dict, strict=True)
 model.eval()
 
-
 # ==========================================
-# 4. Run prediction → OPS scores
+# 4. Run inference (logits → clip-level)
 # ==========================================
-# For simplicity assume dynamic predictor outputs logits for test samples
-# Collect probabilities of class=1
-ops_scores = []
 with torch.no_grad():
-    # TODO: load EEG test features for this subject (block 7, scaled with correct scalers)
-    # Example placeholder: X_test = torch.tensor(...).to(run_device)
-    for batch in test_loader:
-        X, _, _ = batch
-        if isinstance(X, dict):
-            X = {ft: X[ft].to(run_device) for ft in X}
-        else:
-            X = X.to(run_device)
-        y_hat = model(X)
-        probs = torch.softmax(y_hat, dim=-1)[:,1]  # OPS scores
-        ops_scores.append(probs.cpu().numpy())
-ops_scores = np.concatenate(ops_scores)
-print("OPS scores:", ops_scores.shape)
+    logits = []
+    for i in range(0, len(X_test), 64):
+        batch = X_test[i:i+64]
+        out   = model(batch)  # (B,2)
+        logits.append(out.cpu())
+logits = torch.cat(logits, dim=0)  # (N,2)
 
+# average 3 windows per clip
+num_clips    = logits.shape[0] // 3
+logits_clip  = logits.view(num_clips, 3, -1).mean(dim=1)
+print("Clip-level logits:", logits_clip.shape)
 
 # ==========================================
-# 5. Apply DANA to Seq2Seq latents
+# 5. Decide dynamic beta per clip
+# ==========================================
+probs    = torch.softmax(logits_clip, dim=-1)[:,1]  # probability of "fast"
+betas    = torch.where(probs > 0.5, 0.3, 0.2)       # example mapping
+
+# ==========================================
+# 6. Load Seq2Seq latents
+# ==========================================
+lat_files = [f for f in os.listdir(SEQ2SEQ_OUT) if subject_tag in f]
+print("Available seq2seq latents:")
+for i, f in enumerate(lat_files):
+    print(f"[{i}] {f}")
+lat_choice  = int(input("Select latents index: "))
+lat_path    = os.path.join(SEQ2SEQ_OUT, lat_files[lat_choice])
+latents     = np.load(lat_path)  # (num_clips, 6,4,36,64)
+latents     = torch.tensor(latents, dtype=torch.float32).to(run_device)
+
+# ==========================================
+# 7. Add noise using DANA
 # ==========================================
 diffusion = Diffusion(time_steps=500)
-noisy_latents = []
-for i in range(latents.shape[0]):
-    dyn_beta = 0.3 if ops_scores[i] >= 0.5 else 0.2
-    lat = torch.from_numpy(latents[i:i+1]).float().to(run_device)
-    out = diffusion.forward(lat, dynamic_beta=dyn_beta)
-    noisy_latents.append(out.cpu().numpy())
-
-noisy_latents = np.concatenate(noisy_latents, axis=0)
-print("Noisy latents:", noisy_latents.shape)
-
+out_all   = []
+for i in range(num_clips):
+    out = diffusion.forward(latents[i:i+1], betas[i].item())
+    out_all.append(out.cpu())
+out_all = torch.cat(out_all, dim=0)
 
 # ==========================================
-# 6. Save outputs
+# 8. Save outputs
 # ==========================================
 base_name = ckpt_file.replace(".pt","")
-out_path  = os.path.join(OUTPUT_DIR, f"latents_add_noise_{base_name}.npy")
-np.save(out_path, noisy_latents)
-print("Saved noisy latents:", out_path)
+out_path  = os.path.join(OUTPUT_DIR, f"dana_{base_name}.pt")
+torch.save(out_all, out_path)
+print("Saved noisy latents to:", out_path, out_all.shape)
