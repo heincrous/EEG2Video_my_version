@@ -82,13 +82,13 @@ negative = eeg_embeds.mean(dim=0, keepdim=True).float().to(device)
 # ==========================================
 # Load latents
 # ==========================================
-latents = np.load(lat_path)   # (clips,6,4,36,64)
-latents = np.repeat(latents, 2, axis=0)  # double → match embeddings
-latents = torch.from_numpy(latents).float().to(device)
+latents = np.load(lat_path)   # (clips,6,4,36,64) = (B,F,C,H,W)
+latents = np.repeat(latents, 2, axis=0)
+latents = torch.from_numpy(latents).float().to(device).permute(0, 2, 1, 3, 4)  # -> (B,C,F,H,W)
 
-latents_add_noise = torch.load(dana_path, map_location="cpu")
-latents_add_noise = np.repeat(latents_add_noise.numpy(), 2, axis=0)
-latents_add_noise = torch.from_numpy(latents_add_noise).float().to(device)
+latents_add_noise = torch.load(dana_path, map_location="cpu").numpy()  # also (B,F,C,H,W)
+latents_add_noise = np.repeat(latents_add_noise, 2, axis=0)
+latents_add_noise = torch.from_numpy(latents_add_noise).float().to(device).permute(0, 2, 1, 3, 4)  # -> (B,C,F,H,W)
 
 assert eeg_embeds.shape[0] == latents.shape[0] == latents_add_noise.shape[0]
 
