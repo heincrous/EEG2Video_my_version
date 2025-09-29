@@ -150,10 +150,10 @@ def evaluate(net, data_iter, device, clip_level=True):
     if clip_level:
         ft = FEATURE_TYPES[0]
         if ft == "windows":
-            # 3 samples per clip, take middle one
+            # 3 samples per clip, average them
             num_clips    = all_logits.shape[0] // 3
-            logits_clips = all_logits.view(num_clips, 3, -1)[:, 1, :]
-            labels_clips = all_labels.view(num_clips, 3)[:, 1]
+            logits_clips = all_logits.view(num_clips, 3, -1).mean(dim=1)
+            labels_clips = all_labels.view(num_clips, 3)[:, 0]
         else:
             # 2 samples per clip, average them
             num_clips    = all_logits.shape[0] // 2
