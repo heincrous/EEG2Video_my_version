@@ -16,12 +16,12 @@ import joblib
 # Config
 # ==========================================
 batch_size    = 32
-num_epochs    = 200
+num_epochs    = 100
 lr            = 1e-5
 run_device    = "cuda"
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
-WEIGHT_DECAY   = 0.01
+WEIGHT_DECAY   = 0
 
 # scheduler: "cosine" or "constant"
 SCHEDULER_TYPE = "cosine"
