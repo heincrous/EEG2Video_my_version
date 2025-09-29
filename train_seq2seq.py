@@ -16,7 +16,7 @@ from einops import rearrange
 # ==========================================
 batch_size       = 32
 num_epochs       = 200
-lr               = 0.0005
+lr               = 5e-4
 run_device       = "cuda"
 
 # scheduler: "cosine" or "constant"
