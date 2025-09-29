@@ -6,8 +6,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from einops import rearrange
-from dynamic_train import make_encoder, FusionNet, FEATURE_PATHS, DYNPRED_CKPT_DIR, run_device
-from train_seq2seq import OUTPUT_DIR as SEQ2SEQ_OUT
+from train_dynamic_predictor import make_encoder, FusionNet, FEATURE_PATHS, DYNPRED_CKPT_DIR, run_device
+from inference_seq2seq import OUTPUT_DIR as SEQ2SEQ_OUT
 from core.add_noise import Diffusion  # your DANA implementation
 
 
