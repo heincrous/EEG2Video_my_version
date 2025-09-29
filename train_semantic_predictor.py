@@ -9,7 +9,7 @@ from torch.utils import data
 from sklearn.preprocessing import StandardScaler
 import torch.nn.functional as F
 from einops import rearrange
-import joblib
+# import joblib
 
 
 # ==========================================
@@ -117,8 +117,9 @@ def contrastive_loss_fn(y_hat, y, margin=1.0):
 # ==========================================
 # Training loop
 # ==========================================
-def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
-          subname="subject", scalers=None):
+# def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
+#           subname="subject", scalers=None):
+def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, subname="subject"):
     net.to(device)
 
     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
@@ -198,10 +199,10 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
         torch.save({"state_dict": net.state_dict()},
                 os.path.join(SEMANTIC_CKPT_DIR, model_name))
 
-        for ft, sc in scalers.items():
-            scaler_name = f"scaler_{ft}_{subname.replace('.npy','')}{subset_tag}.pkl"
-            joblib.dump(sc, os.path.join(SEMANTIC_CKPT_DIR, scaler_name))
-            print(f"Saved scaler: {scaler_name}")
+        # for ft, sc in scalers.items():
+        #     scaler_name = f"scaler_{ft}_{subname.replace('.npy','')}{subset_tag}.pkl"
+        #     joblib.dump(sc, os.path.join(SEMANTIC_CKPT_DIR, scaler_name))
+        #     print(f"Saved scaler: {scaler_name}")
         
         print(f"Saved checkpoint: {model_name}")
     return net
@@ -247,8 +248,24 @@ def evaluate(net, data_iter, device):
 # ==========================================
 # Helpers
 # ==========================================
+# def load_subject_data(subname, feature_types):
+#     feats, scalers = [], {}
+#     for ft in feature_types:
+#         path = os.path.join(FEATURE_PATHS[ft], subname)
+#         arr = np.load(path)
+#         if ft in ["DE","PSD"]:
+#             arr = arr.reshape(-1, 62*5)
+#         elif ft == "segments":
+#             arr = rearrange(arr, "a b c d (w t) -> (a b c w) (d t)", w=2, t=200)
+
+#         scaler = StandardScaler().fit(arr)
+#         arr = scaler.transform(arr)
+#         scalers[ft] = scaler
+#         feats.append(arr)
+#     return np.concatenate(feats, axis=1), scalers
+
 def load_subject_data(subname, feature_types):
-    feats, scalers = [], {}
+    feats = []
     for ft in feature_types:
         path = os.path.join(FEATURE_PATHS[ft], subname)
         arr = np.load(path)
@@ -256,12 +273,8 @@ def load_subject_data(subname, feature_types):
             arr = arr.reshape(-1, 62*5)
         elif ft == "segments":
             arr = rearrange(arr, "a b c d (w t) -> (a b c w) (d t)", w=2, t=200)
-
-        scaler = StandardScaler().fit(arr)
-        arr = scaler.transform(arr)
-        scalers[ft] = scaler
         feats.append(arr)
-    return np.concatenate(feats, axis=1), scalers
+    return np.concatenate(feats, axis=1)
 
 
 # ==========================================
@@ -280,24 +293,55 @@ if __name__ == "__main__":
     for subname in sub_list:
         print(f"\n=== Training subject {subname} with {FEATURE_TYPES} ===")
 
-        features, scalers = load_subject_data(subname, FEATURE_TYPES)
+        # features, scalers = load_subject_data(subname, FEATURE_TYPES)
 
-        # length before masking
+        # # length before masking
+        # samples_per_block = 40 * 5 * 2
+        # valid_len = samples_per_block * 7
+        # features = features[:valid_len]
+        # Y = clip_embeddings[:valid_len]
+        # L = labels_all[:valid_len]
+
+        # # apply class subset mask BEFORE block split
+        # if CLASS_SUBSET is not None:
+        #     mask = np.isin(L, CLASS_SUBSET)
+        #     features, Y, L = features[mask], Y[mask], L[mask]
+
+        # # recompute per-block size after masking
+        # samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5 * 2
+
+        # # block-based split (always 5 train, 1 val, 1 test)
+        # train_idx = np.arange(0, 5*samples_per_block)
+        # val_idx   = np.arange(5*samples_per_block, 6*samples_per_block)
+        # test_idx  = np.arange(6*samples_per_block, 7*samples_per_block)
+
+        # X_train, X_val, X_test = features[train_idx], features[val_idx], features[test_idx]
+        # Y_train, Y_val, Y_test = Y[train_idx], Y[val_idx], Y[test_idx]
+        # L_train, L_val, L_test = L[train_idx], L[val_idx], L[test_idx]
+
+        # train_iter = Get_Dataloader(X_train, Y_train, L_train, True,  batch_size)
+        # val_iter   = Get_Dataloader(X_val,   Y_val,   L_val,   False, batch_size)
+        # test_iter  = Get_Dataloader(X_test,  Y_test,  L_test,  False, batch_size)
+
+        # input_dim = features.shape[1]
+        # modelnet = SemanticPredictor(input_dim)
+        # modelnet = train(modelnet, train_iter, val_iter, test_iter,
+        #                 num_epochs, lr, run_device, subname=subname, scalers=scalers)
+
+        features = load_subject_data(subname, FEATURE_TYPES)
+
         samples_per_block = 40 * 5 * 2
         valid_len = samples_per_block * 7
         features = features[:valid_len]
         Y = clip_embeddings[:valid_len]
         L = labels_all[:valid_len]
 
-        # apply class subset mask BEFORE block split
         if CLASS_SUBSET is not None:
             mask = np.isin(L, CLASS_SUBSET)
             features, Y, L = features[mask], Y[mask], L[mask]
 
-        # recompute per-block size after masking
         samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5 * 2
 
-        # block-based split (always 5 train, 1 val, 1 test)
         train_idx = np.arange(0, 5*samples_per_block)
         val_idx   = np.arange(5*samples_per_block, 6*samples_per_block)
         test_idx  = np.arange(6*samples_per_block, 7*samples_per_block)
@@ -306,6 +350,16 @@ if __name__ == "__main__":
         Y_train, Y_val, Y_test = Y[train_idx], Y[val_idx], Y[test_idx]
         L_train, L_val, L_test = L[train_idx], L[val_idx], L[test_idx]
 
+        # --- Fit separate scalers ---
+        scaler_train = StandardScaler().fit(X_train)
+        X_train = scaler_train.transform(X_train)
+
+        scaler_val = StandardScaler().fit(X_val)
+        X_val = scaler_val.transform(X_val)
+
+        scaler_test = StandardScaler().fit(X_test)
+        X_test = scaler_test.transform(X_test)
+
         train_iter = Get_Dataloader(X_train, Y_train, L_train, True,  batch_size)
         val_iter   = Get_Dataloader(X_val,   Y_val,   L_val,   False, batch_size)
         test_iter  = Get_Dataloader(X_test,  Y_test,  L_test,  False, batch_size)
@@ -313,4 +367,5 @@ if __name__ == "__main__":
         input_dim = features.shape[1]
         modelnet = SemanticPredictor(input_dim)
         modelnet = train(modelnet, train_iter, val_iter, test_iter,
-                        num_epochs, lr, run_device, subname=subname, scalers=scalers)
+                        num_epochs, lr, run_device, subname=subname)
+

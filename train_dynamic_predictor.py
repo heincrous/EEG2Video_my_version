@@ -1,7 +1,7 @@
 # ==========================================
 # EEG → Dynamic Predictor (crossentropy only, clip-level eval added)
 # ==========================================
-import os, numpy as np, torch, joblib
+import os, numpy as np, torch
 from torch import nn
 from torch.utils import data
 from sklearn.preprocessing import StandardScaler
@@ -12,7 +12,7 @@ import models
 # Config
 # ==========================================
 batch_size    = 256
-num_epochs    = 600
+num_epochs    = 500
 lr            = 5e-4
 run_device    = "cuda"
 
@@ -62,7 +62,7 @@ def make_encoder(ft, return_logits=False, use_dropout=True, p=P):
     elif ft == "windows":
         base = models.glfnet(out_dim=2 if return_logits else emb_dim_windows,
                             emb_dim=emb_dim_windows, C=C, T=200)
-        return base if return_logits else (base, emb_dim_segments)
+        return base if return_logits else (base, emb_dim_windows)
 
     elif ft in ["DE", "PSD"]:
         emb_dim = emb_dim_DE if ft == "DE" else emb_dim_PSD
@@ -176,8 +176,7 @@ def evaluate(net, data_iter, device, clip_level=True):
 # ==========================================
 # Training loop
 # ==========================================
-def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
-          subname="subject", scalers=None):
+def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, subname="subject"):
     net.to(device)
     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
 
@@ -189,8 +188,6 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
         scheduler = None
 
     ce_loss = nn.CrossEntropyLoss()
-
-    best_val_clip_acc, best_state = 0.0, None
 
     # 🔹 store validation metrics
     val_acc_list, val_clip_acc_list = [], []
@@ -221,9 +218,6 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
         val_acc_list.append(val_acc)
         val_clip_acc_list.append(val_clip_acc)
 
-        if val_clip_acc > best_val_clip_acc:
-            best_val_clip_acc, best_state = val_clip_acc, net.state_dict()
-
         if epoch % 3 == 0:
             test_loss, test_acc, test_clip_acc = evaluate(net, test_iter, device, clip_level=True)
             print(f"[{epoch+1}] train_loss={total_loss/len(train_iter.dataset):.4f}, "
@@ -235,49 +229,21 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
     print(f"Mean val_acc:      {np.mean(val_acc_list):.3f}")
     print(f"Mean val_clip_acc: {np.mean(val_clip_acc_list):.3f}")
 
-    if best_state:
-        net.load_state_dict(best_state)
-        os.makedirs(DYNPRED_CKPT_DIR, exist_ok=True)
-        subset_tag = ""
-        model_name = f"dynpredictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.pt"
-        torch.save({"state_dict": net.state_dict()},
-                   os.path.join(DYNPRED_CKPT_DIR, model_name))
-        print(f"Saved checkpoint: {model_name}")
+    # after training loop finishes
+    os.makedirs(DYNPRED_CKPT_DIR, exist_ok=True)
+    subset_tag = ""
+    model_name = f"dynpredictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.pt"
+    torch.save({"state_dict": net.state_dict()},
+            os.path.join(DYNPRED_CKPT_DIR, model_name))
+    print(f"Saved checkpoint: {model_name}")
 
-        for ft, sc in scalers.items():
-            scaler_name = f"scaler_{ft}_{subname.replace('.npy','')}{subset_tag}.pkl"
-            joblib.dump(sc, os.path.join(DYNPRED_CKPT_DIR, scaler_name))
-            print(f"Saved scaler: {scaler_name}")
-    return net
 
 
 # ==========================================
 # Helpers
 # ==========================================
-# def prepare_features_with_scaler(subname, feature_types, train_idx, val_idx, test_idx):
-#     feats, scalers = {}, {}
-#     for ft in feature_types:
-#         path = os.path.join(FEATURE_PATHS[ft], subname)
-#         arr = np.load(path)
-
-#         if ft in ["DE","PSD"]:
-#             arr = arr.reshape(-1, C, T)
-#             flat = arr.reshape(arr.shape[0], -1)
-#             scaler = StandardScaler().fit(flat[train_idx])
-#             arr = scaler.transform(flat).reshape(-1, C, T)
-
-#         elif ft == "segments":
-#             arr = rearrange(arr, "a b c d (w t) -> (a b c w) d t", w=2, t=200)
-#             flat = arr.reshape(arr.shape[0], -1)
-#             scaler = StandardScaler().fit(flat[train_idx])
-#             arr = scaler.transform(flat).reshape(-1, 1, C, 200)
-
-#         scalers[ft] = scaler
-#         feats[ft] = arr
-#     return feats, scalers
-
 def prepare_features_with_scaler(subname, feature_types, train_idx, val_idx, test_idx):
-    feats, scalers = {}, {}
+    feats = {}
     for ft in feature_types:
         path = os.path.join(FEATURE_PATHS[ft], subname)
         arr = np.load(path)
@@ -298,12 +264,11 @@ def prepare_features_with_scaler(subname, feature_types, train_idx, val_idx, tes
             # shape: (7,40,5,3,62,200) → (N,62,200)
             arr = rearrange(arr, "a b c w d t -> (a b c w) d t")
             flat = arr.reshape(arr.shape[0], -1)
-            scaler = StandardScaler().fit(flat)  # or fit(flat[train_idx]) if you want train-only
+            scaler = StandardScaler().fit(flat)  # fit on all data
             arr = scaler.transform(flat).reshape(-1, 1, C, 200)
 
-        scalers[ft] = scaler
         feats[ft] = arr
-    return feats, scalers
+    return feats
 
 
 # ==========================================
@@ -335,7 +300,7 @@ if __name__ == "__main__":
         val_idx   = np.arange(5*samples_per_block, 6*samples_per_block)
         test_idx  = np.arange(6*samples_per_block, 7*samples_per_block)
 
-        features, scalers = prepare_features_with_scaler(subname, FEATURE_TYPES, train_idx, val_idx, test_idx)
+        features = prepare_features_with_scaler(subname, FEATURE_TYPES, train_idx, val_idx, test_idx)
 
         y_cls_sub    = y_cls
         labels_sub   = labels_all
@@ -364,5 +329,5 @@ if __name__ == "__main__":
             test_iter  = Get_Dataloader(features[ft][test_idx],  y_cls_sub[test_idx],  False, batch_size)
 
         modelnet = train(modelnet, train_iter, val_iter, test_iter,
-                         num_epochs, lr, run_device,
-                         subname=subname, scalers=scalers)
+                 num_epochs, lr, run_device, subname=subname)
+
