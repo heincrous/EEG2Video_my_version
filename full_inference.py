@@ -75,19 +75,19 @@ dana_path   = os.path.join(DANA_DIR, dana_files[dana_choice])
 # Load semantic embeddings
 # ==========================================
 eeg_embeds = np.load(sem_path)  # (N,77,768)
-eeg_embeds = torch.from_numpy(eeg_embeds).to(device).half()
-negative = eeg_embeds.mean(dim=0, keepdim=True).to(device).half()
+eeg_embeds = torch.from_numpy(eeg_embeds).to(device, dtype=torch.float32)
+negative   = eeg_embeds.mean(dim=0, keepdim=True)
 
 # ==========================================
 # Load latents
 # ==========================================
 latents = np.load(lat_path)   # (B,F,C,H,W)
 latents = np.repeat(latents, 2, axis=0)
-latents = torch.from_numpy(latents).to(device).permute(0,2,1,3,4).half()
+latents = torch.from_numpy(latents).to(device, dtype=torch.float32).permute(0,2,1,3,4)
 
 latents_add_noise = torch.load(dana_path, map_location="cpu")  # already a tensor
 latents_add_noise = latents_add_noise.repeat(2, 1, 1, 1, 1)   # repeat along batch dim
-latents_add_noise = latents_add_noise.to(device).permute(0,2,1,3,4).half()
+latents_add_noise = latents_add_noise.to(device, dtype=torch.float32).permute(0,2,1,3,4)
 
 assert eeg_embeds.shape[0] == latents.shape[0] == latents_add_noise.shape[0]
 
@@ -97,26 +97,23 @@ assert eeg_embeds.shape[0] == latents.shape[0] == latents_add_noise.shape[0]
 # ==========================================
 PRETRAINED_MODEL_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 
-# backbone components from SD v1-4
-vae       = AutoencoderKL.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="vae").to(device, dtype=torch.float16)
+vae       = AutoencoderKL.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="vae").to(device, dtype=torch.float32)
 scheduler = DDIMScheduler.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="scheduler")
 tokenizer = CLIPTokenizer.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="tokenizer")
 
-# finetuned UNet from your pipeline folder
 unet = UNet3DConditionModel.from_pretrained(
     pipeline_path,
     subfolder="unet",
-    torch_dtype=torch.float16
+    torch_dtype=torch.float32
 ).to(device)
 
-# assemble pipeline
 pipe = TuneAVideoPipeline.from_pretrained(
     PRETRAINED_MODEL_PATH,
     vae=vae,
     unet=unet,
     scheduler=scheduler,
     tokenizer=tokenizer,
-    torch_dtype=torch.float16,
+    torch_dtype=torch.float32
 ).to(device)
 
 pipe.enable_vae_slicing()
@@ -145,24 +142,41 @@ for i in range(len(eeg_embeds)):
 
     print(f"[Block {block_id} | Class {class_id} | Clip {clip_index} | Sample {sample_index}] Caption: {caption}")
 
-    # enforce float16 every loop
-    eeg_input = eeg_embeds[i:i+1].to(device).half()
-    neg_input = negative.to(device).half()
+    # enforce float32 every loop
+    eeg_input = eeg_embeds[i:i+1].to(device, dtype=torch.float32)
+    neg_input = negative.to(device, dtype=torch.float32)
 
     if woSeq2Seq:
-        video = pipe(None, eeg_input, negative_eeg=neg_input,
-                    latents=None, video_length=6, height=288, width=512,
-                    num_inference_steps=100, guidance_scale=12.5).videos
+        video = pipe(
+            None,
+            eeg_input,
+            negative_eeg=neg_input,
+            latents=None,
+            video_length=6, height=288, width=512,
+            num_inference_steps=100, guidance_scale=12.5
+        ).videos
         save_dir = os.path.join(SAVE_ROOT, f"{pipeline_tag}_woSeq2Seq")
+
     elif woDANA:
-        video = pipe(None, eeg_input, negative_eeg=neg_input,
-                    latents=latents[i:i+1].half(), video_length=6, height=288, width=512,
-                    num_inference_steps=100, guidance_scale=12.5).videos
+        video = pipe(
+            None,
+            eeg_input,
+            negative_eeg=neg_input,
+            latents=latents[i:i+1].to(dtype=torch.float32),
+            video_length=6, height=288, width=512,
+            num_inference_steps=100, guidance_scale=12.5
+        ).videos
         save_dir = os.path.join(SAVE_ROOT, f"{pipeline_tag}_woDANA")
+
     else:
-        video = pipe(None, eeg_input, negative_eeg=neg_input,
-                    latents=latents_add_noise[i:i+1].half(), video_length=6, height=288, width=512,
-                    num_inference_steps=100, guidance_scale=12.5).videos
+        video = pipe(
+            None,
+            eeg_input,
+            negative_eeg=neg_input,
+            latents=latents_add_noise[i:i+1].to(dtype=torch.float32),
+            video_length=6, height=288, width=512,
+            num_inference_steps=100, guidance_scale=12.5
+        ).videos
         save_dir = os.path.join(SAVE_ROOT, f"{pipeline_tag}_FullModel")
 
     os.makedirs(save_dir, exist_ok=True)
@@ -172,7 +186,7 @@ for i in range(len(eeg_embeds)):
 
     # safeguard: enforce 3-channel RGB
     if frames.shape[-1] > 3:
-        frames = frames[...,:3]
+        frames = frames[..., :3]
     elif frames.shape[-1] == 1:
         frames = np.repeat(frames, 3, axis=-1)
 
