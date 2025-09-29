@@ -15,7 +15,7 @@ OUTPUT_DIR    = "/content/drive/MyDrive/EEG2Video_outputs/dana_latents"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ==========================================
-# 1. Select checkpoint
+# 1. Select dynamic predictor checkpoint
 # ==========================================
 ckpts = [f for f in os.listdir(DYNPRED_CKPT_DIR) if f.endswith(".pt")]
 print("Available dynamic predictor checkpoints:")
@@ -28,46 +28,36 @@ print("Loading checkpoint:", ckpt_path)
 
 state_dict = torch.load(ckpt_path, map_location=run_device)["state_dict"]
 
-# deduce subject + subset
+# deduce subject from checkpoint filename
 parts       = ckpt_file.replace(".pt","").split("_")
 subject_tag = next((p for p in parts if p.startswith("sub")), None)
-if "subset" in ckpt_file:
-    subset_str   = ckpt_file.split("subset")[1].replace(".pt","")
-    class_subset = [int(x) for x in subset_str.split("-")]
-else:
-    class_subset = None
-
 print("Subject:", subject_tag)
-print("Class subset:", class_subset)
 
 # ==========================================
-# 2. Load EEG windows (test block only)
+# 2. Load EEG windows (block 7, all classes)
 # ==========================================
 win_path = os.path.join(FEATURE_PATHS["windows"], subject_tag + ".npy")
 windows  = np.load(win_path)  # (7,40,5,3,62,200)
 
 # flatten to (N,62,200)
 windows  = rearrange(windows, "g p d w c t -> (g p d w) c t")
-labels   = np.tile(np.arange(40).repeat(5), 7)
-labels   = np.repeat(labels, 3)  # 3 windows per clip
+labels   = np.tile(np.arange(40).repeat(5), 7)   # (1400,)
+labels   = np.repeat(labels, 3)                  # (4200,) → 3 windows per clip
 
-if class_subset is not None:
-    mask   = np.isin(labels, class_subset)
-    windows, labels = windows[mask], labels[mask]
-
-samples_per_block = (len(class_subset) if class_subset else 40) * 5 * 3
+# select block 7 indices
+samples_per_block = 40 * 5 * 3
 test_idx = np.arange(6*samples_per_block, 7*samples_per_block)
 
 X_test   = windows[test_idx]
 y_test   = labels[test_idx]
 
-# scale
+# scale test set
 scaler   = StandardScaler().fit(X_test.reshape(len(X_test), -1))
 X_test   = scaler.transform(X_test.reshape(len(X_test), -1)).reshape(-1,1,62,200)
 X_test   = torch.tensor(X_test, dtype=torch.float32).to(run_device)
 
 # ==========================================
-# 3. Build model
+# 3. Build and load dynamic predictor
 # ==========================================
 model = make_encoder("windows", return_logits=True).to(run_device)
 model.load_state_dict(state_dict, strict=True)
@@ -86,41 +76,68 @@ logits = torch.cat(logits, dim=0)  # (N,2)
 
 # average 3 windows per clip
 num_clips    = logits.shape[0] // 3
-logits_clip  = logits.view(num_clips, 3, -1).mean(dim=1)
+logits_clip  = logits.view(num_clips, 3, -1).mean(dim=1)  # (200,2)
+labels_clip  = y_test[::3]  # one label per clip (200,)
+
 print("Clip-level logits:", logits_clip.shape)
 
 # ==========================================
-# 5. Decide dynamic beta per clip
-# ==========================================
-probs    = torch.softmax(logits_clip, dim=-1)[:,1]  # probability of "fast"
-betas    = torch.where(probs > 0.5, 0.3, 0.2)       # example mapping
-
-# ==========================================
-# 6. Load Seq2Seq latents
+# 5. Load Seq2Seq latents + deduce subset
 # ==========================================
 lat_files = [f for f in os.listdir(SEQ2SEQ_OUT) if subject_tag in f]
 print("Available seq2seq latents:")
 for i, f in enumerate(lat_files):
     print(f"[{i}] {f}")
 lat_choice  = int(input("Select latents index: "))
-lat_path    = os.path.join(SEQ2SEQ_OUT, lat_files[lat_choice])
-latents     = np.load(lat_path)  # (num_clips, 6,4,36,64)
+lat_file    = lat_files[lat_choice]
+lat_path    = os.path.join(SEQ2SEQ_OUT, lat_file)
+latents     = np.load(lat_path)  # (num_subset_clips, 6,4,36,64)
 latents     = torch.tensor(latents, dtype=torch.float32).to(run_device)
+
+# deduce class_subset from seq2seq latents filename
+if "subset" in lat_file:
+    subset_str   = lat_file.split("subset")[1].replace(".npy","")
+    class_subset = [int(x) for x in subset_str.split("-")]
+else:
+    class_subset = list(range(40))
+
+print("Seq2Seq latents file:", lat_file)
+print("Class subset (from latents):", class_subset)
+
+# ==========================================
+# 6. Filter dynamic predictor outputs to subset
+# ==========================================
+mask = np.isin(labels_clip, class_subset)
+logits_clip = logits_clip[mask]
+labels_clip = labels_clip[mask]
+
+# sanity check: subset size = classes × 5 clips
+expected_clips = len(class_subset) * 5
+assert logits_clip.shape[0] == expected_clips, \
+    f"Mismatch: {logits_clip.shape[0]} clips vs expected {expected_clips}"
+
+# decide betas
+probs = torch.softmax(logits_clip, dim=-1)[:,1]  # probability of "fast"
+betas = torch.where(probs > 0.5, 0.3, 0.2)
+
+# check alignment
+assert latents.shape[0] == betas.shape[0], \
+    f"Mismatch: {latents.shape[0]} latents vs {betas.shape[0]} betas"
 
 # ==========================================
 # 7. Add noise using DANA
 # ==========================================
 diffusion = Diffusion(time_steps=500)
 out_all   = []
-for i in range(num_clips):
+for i in range(latents.shape[0]):
     out = diffusion.forward(latents[i:i+1], betas[i].item())
     out_all.append(out.cpu())
 out_all = torch.cat(out_all, dim=0)
 
 # ==========================================
-# 8. Save outputs
+# 8. Save outputs (based on Seq2Seq latents file)
 # ==========================================
-base_name = ckpt_file.replace(".pt","")
-out_path  = os.path.join(OUTPUT_DIR, f"dana_{base_name}.pt")
+base_name = lat_file.replace(".npy","")
+out_path  = os.path.join(OUTPUT_DIR, f"{base_name}_addnoise.pt")
 torch.save(out_all, out_path)
 print("Saved noisy latents to:", out_path, out_all.shape)
