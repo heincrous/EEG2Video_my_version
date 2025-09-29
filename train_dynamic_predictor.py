@@ -13,7 +13,7 @@ import models
 # ==========================================
 batch_size    = 256
 num_epochs    = 200
-lr            = 1e-4
+lr            = 1e-5
 run_device    = "cuda"
 
 # EEG dimensions
@@ -23,7 +23,7 @@ emb_dim_DE       = 64
 emb_dim_PSD      = 64
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
-WEIGHT_DECAY   = 0.0001
+WEIGHT_DECAY   = 0.1
 
 # scheduler: "cosine" or "constant"
 SCHEDULER_TYPE = "cosine"
