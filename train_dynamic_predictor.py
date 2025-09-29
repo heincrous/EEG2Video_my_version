@@ -35,6 +35,8 @@ FEATURE_TYPES    = ["DE", "PSD", "segments"]
 USE_ALL_SUBJECTS = False
 subject_name     = "sub1.npy"
 
+P = 0.5 # dropout prob
+
 FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
     "DE":       "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s",
@@ -47,7 +49,7 @@ DYNPRED_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/dynamic_checkpo
 # ==========================================
 # Encoders
 # ==========================================
-def make_encoder(ft, return_logits=False, use_dropout=True, p=0.5):
+def make_encoder(ft, return_logits=False, use_dropout=True, p=P):
     if ft == "segments":
         base = models.glfnet(out_dim=2 if return_logits else emb_dim_segments,
                              emb_dim=emb_dim_segments, C=C, T=200)
@@ -104,9 +106,6 @@ def Get_Dataloader(features, labels, istrain, batch_size, multi=False):
         return data.DataLoader(data.TensorDataset(feats, lbls), batch_size, shuffle=istrain)
 
 
-# ==========================================
-# Evaluation (window + clip level)
-# ==========================================
 # ==========================================
 # Evaluation (window + clip level: mean + confidence weighted)
 # ==========================================
@@ -207,19 +206,19 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
                 scheduler.step()
             total_loss += loss.item() * y.size(0)
 
-        val_loss, val_acc, val_clip_acc = evaluate(net, val_iter, device, clip_level=True)
-        if val_clip_acc > best_val_clip_acc:
-            best_val_clip_acc, best_state = val_clip_acc, net.state_dict()
+        # unpack 4 values
+        val_loss, val_acc, val_clip_mean, val_clip_weighted = evaluate(net, val_iter, device, clip_level=True)
+        # track best on weighted clip accuracy
+        if val_clip_weighted > best_val_clip_acc:
+            best_val_clip_acc, best_state = val_clip_weighted, net.state_dict()
 
         if epoch % 3 == 0:
-            val_loss, val_acc, val_clip_mean, val_clip_weighted = evaluate(net, val_iter, device, clip_level=True)
             test_loss, test_acc, test_clip_mean, test_clip_weighted = evaluate(net, test_iter, device, clip_level=True)
-
             print(f"[{epoch+1}] "
-                f"val_loss={val_loss:.4f}, val_acc={val_acc:.3f}, "
-                f"val_clip_mean={val_clip_mean:.3f}, val_clip_weighted={val_clip_weighted:.3f}, "
-                f"test_loss={test_loss:.4f}, test_acc={test_acc:.3f}, "
-                f"test_clip_mean={test_clip_mean:.3f}, test_clip_weighted={test_clip_weighted:.3f}")
+                  f"val_loss={val_loss:.4f}, val_acc={val_acc:.3f}, "
+                  f"val_clip_mean={val_clip_mean:.3f}, val_clip_weighted={val_clip_weighted:.3f}, "
+                  f"test_loss={test_loss:.4f}, test_acc={test_acc:.3f}, "
+                  f"test_clip_mean={test_clip_mean:.3f}, test_clip_weighted={test_clip_weighted:.3f}")
 
     if best_state:
         net.load_state_dict(best_state)
@@ -227,7 +226,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
         subset_tag = ""
         model_name = f"dynpredictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.pt"
         torch.save({"state_dict": net.state_dict()},
-                os.path.join(DYNPRED_CKPT_DIR, model_name))
+                   os.path.join(DYNPRED_CKPT_DIR, model_name))
         print(f"Saved checkpoint: {model_name}")
 
         for ft, sc in scalers.items():
