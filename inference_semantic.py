@@ -1,10 +1,11 @@
 # ==========================================
 # Inference: EEG → BLIP semantic embeddings
 # ==========================================
-import os, torch, joblib
+import os, torch 
+# import joblib
 import numpy as np
 from einops import rearrange
-# from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler
 from train_semantic_predictor import SemanticPredictor, FEATURE_PATHS, run_device
 
 
@@ -60,15 +61,15 @@ print("Class subset:", class_subset)
 # ==========================================
 # 2. Load scalers
 # ==========================================
-scalers = {}
-for ft in feature_types:
-    scaler_file = f"scaler_{ft}_{subject_tag}"
-    if class_subset is not None:
-        scaler_file += "_subset" + "-".join(str(c) for c in class_subset)
-    scaler_file += ".pkl"
-    scaler_path = os.path.join(SEMANTIC_CKPT_DIR, scaler_file)
-    scalers[ft] = joblib.load(scaler_path)
-    print("Loaded scaler:", scaler_file)
+# scalers = {}
+# for ft in feature_types:
+#     scaler_file = f"scaler_{ft}_{subject_tag}"
+#     if class_subset is not None:
+#         scaler_file += "_subset" + "-".join(str(c) for c in class_subset)
+#     scaler_file += ".pkl"
+#     scaler_path = os.path.join(SEMANTIC_CKPT_DIR, scaler_file)
+#     scalers[ft] = joblib.load(scaler_path)
+#     print("Loaded scaler:", scaler_file)
 
 
 # ==========================================
@@ -86,10 +87,20 @@ def load_features(subname, ft):
 samples_per_block = (len(class_subset) if class_subset else 40) * 5 * 2
 test_idx = np.arange(6 * samples_per_block, 7 * samples_per_block)
 
+# features_test = []
+# for ft in feature_types:
+#     arr = load_features(subject_tag + ".npy", ft)
+#     arr = scalers[ft].transform(arr[test_idx].reshape(len(test_idx), -1))
+#     features_test.append(arr)
+# X_test = np.concatenate(features_test, axis=1)
+
 features_test = []
 for ft in feature_types:
     arr = load_features(subject_tag + ".npy", ft)
-    arr = scalers[ft].transform(arr[test_idx].reshape(len(test_idx), -1))
+    arr = arr[test_idx]  # take only test block
+    flat = arr.reshape(len(test_idx), -1)
+    scaler = StandardScaler().fit(flat)  # fit on test block itself
+    arr = scaler.transform(flat)
     features_test.append(arr)
 X_test = np.concatenate(features_test, axis=1)
 
