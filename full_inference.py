@@ -5,6 +5,10 @@
 import os, gc, torch, numpy as np, imageio
 from einops import rearrange
 from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
+from diffusers import AutoencoderKL, DDIMScheduler
+from transformers import CLIPTokenizer
+from core.unet import UNet3DConditionModel
+
 
 # ==========================================
 # Paths
@@ -20,6 +24,7 @@ os.makedirs(SAVE_ROOT, exist_ok=True)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 gc.collect(); torch.cuda.empty_cache()
+
 
 # ==========================================
 # Select semantic embeddings file
@@ -49,6 +54,7 @@ print("Subject:", subject_tag)
 print("Class subset:", class_subset)
 print("Pipeline path:", pipeline_path)
 
+
 # ==========================================
 # Select Seq2Seq and DANA latents
 # ==========================================
@@ -64,12 +70,14 @@ for i,f in enumerate(dana_files): print(f"[{i}] {f}")
 dana_choice = int(input("Select DANA latents index: "))
 dana_path   = os.path.join(DANA_DIR, dana_files[dana_choice])
 
+
 # ==========================================
 # Load semantic embeddings
 # ==========================================
 eeg_embeds = np.load(sem_path)  # (N,77,768) → 2 per clip
 eeg_embeds = torch.from_numpy(eeg_embeds).float().to(device)
 negative = eeg_embeds.mean(dim=0, keepdim=True).float().to(device)
+
 
 # ==========================================
 # Load latents
@@ -84,20 +92,43 @@ latents_add_noise = torch.from_numpy(latents_add_noise).float().to(device)
 
 assert eeg_embeds.shape[0] == latents.shape[0] == latents_add_noise.shape[0]
 
+
 # ==========================================
-# Load fine-tuned pipeline
+# Load pipeline (pretrained backbone + finetuned UNet)
 # ==========================================
-pipe = TuneAVideoPipeline.from_pretrained(
+PRETRAINED_MODEL_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
+
+# backbone components from SD v1-4
+vae       = AutoencoderKL.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="vae").to(device, dtype=torch.float16)
+scheduler = DDIMScheduler.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="scheduler")
+tokenizer = CLIPTokenizer.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="tokenizer")
+
+# finetuned UNet from your pipeline folder
+unet = UNet3DConditionModel.from_pretrained(
     pipeline_path,
+    subfolder="unet",
     torch_dtype=torch.float16
 ).to(device)
+
+# assemble pipeline
+pipe = TuneAVideoPipeline.from_pretrained(
+    PRETRAINED_MODEL_PATH,
+    vae=vae,
+    unet=unet,
+    scheduler=scheduler,
+    tokenizer=tokenizer,
+    torch_dtype=torch.float16,
+).to(device)
+
 pipe.enable_vae_slicing()
+
 
 # ==========================================
 # Captions
 # ==========================================
 blip_text = np.load(BLIP_TEXT, allow_pickle=True)  # (7,40,5)
 block7_caps = blip_text[6]  # (40,5)
+
 
 # ==========================================
 # Inference
