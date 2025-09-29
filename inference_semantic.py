@@ -15,8 +15,6 @@ SEMANTIC_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_check
 OUTPUT_DIR        = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-run_device = run_device
-
 
 # ==========================================
 # 1. List checkpoints

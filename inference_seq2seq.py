@@ -5,7 +5,7 @@ import os, joblib
 import numpy as np
 import torch
 from einops import rearrange
-from seq2seq_train import MyTransformer, EEG_DIR, SEQ2SEQ_CKPT_DIR, run_device
+from train_seq2seq import MyTransformer, EEG_DIR, SEQ2SEQ_CKPT_DIR, run_device
 
 
 # ==========================================
@@ -31,9 +31,8 @@ print("Loading checkpoint:", ckpt_path)
 state_dict = torch.load(ckpt_path, map_location=run_device)["state_dict"]
 
 # deduce subject + subset from filename
-# e.g. seq2seq_sub1_subset1-10-12-16.pt
 parts = ckpt_file.replace(".pt","").split("_")
-subject_tag = parts[1]  # "sub1" etc.
+subject_tag = next((p for p in parts if p.startswith("sub")), None)
 
 if "subset" in ckpt_file:
     subset_str = ckpt_file.split("subset")[1].replace(".pt","")
@@ -63,7 +62,6 @@ print("Loaded scaler:", scaler_file)
 # ==========================================
 eeg_path = os.path.join(EEG_DIR, subject_tag + ".npy")
 eegdata  = np.load(eeg_path)  # (7,40,5,7,62,100)
-
 EEG = rearrange(eegdata, "g p d w c l -> (g p d) w c l")
 
 labels_block = np.repeat(np.arange(40), 5)
@@ -82,7 +80,6 @@ EEG_test = EEG[test_idx]
 b, w, c, l = EEG_test.shape
 EEG_test_2d = EEG_test.reshape(b, -1)
 EEG_test_scaled = scaler.transform(EEG_test_2d).reshape(b, w, c, l)
-
 EEG_test = torch.from_numpy(EEG_test_scaled).float().to(run_device)
 
 
@@ -99,13 +96,10 @@ model.eval()
 # ==========================================
 all_latents = []
 with torch.no_grad():
-    for i in range(0, len(EEG_test), 16):  # batch size for inference
+    for i in range(0, len(EEG_test), 16):  # batch size
         eeg_batch = EEG_test[i:i+16]
         b = eeg_batch.shape[0]
-
-        # dummy padded video input (needed for autoregressive decoding)
         padded_video = torch.zeros((b, 1, 4, 36, 64), device=run_device)
-
         latents = model(eeg_batch, padded_video)  # (B,7,4,36,64)
         latents = latents[:, 1:, :, :, :]         # drop dummy first frame
         all_latents.append(latents.cpu().numpy())
