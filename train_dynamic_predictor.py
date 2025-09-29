@@ -231,8 +231,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, subname=
 
     # after training loop finishes
     os.makedirs(DYNPRED_CKPT_DIR, exist_ok=True)
-    subset_tag = ""
-    model_name = f"dynpredictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.pt"
+    model_name = f"dynpredictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}.pt"
     torch.save({"state_dict": net.state_dict()},
             os.path.join(DYNPRED_CKPT_DIR, model_name))
     print(f"Saved checkpoint: {model_name}")
@@ -242,30 +241,27 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, subname=
 # ==========================================
 # Helpers
 # ==========================================
-def prepare_features_with_scaler(subname, feature_types, train_idx, val_idx, test_idx):
+def prepare_features_with_scaler(subname, feature_types, *_):
     feats = {}
     for ft in feature_types:
         path = os.path.join(FEATURE_PATHS[ft], subname)
         arr = np.load(path)
 
-        if ft in ["DE","PSD"]:
+        if ft in ["DE", "PSD"]:
             arr = arr.reshape(-1, C, T)
             flat = arr.reshape(arr.shape[0], -1)
-            scaler = StandardScaler().fit(flat)   # fit on all data
-            arr = scaler.transform(flat).reshape(-1, C, T)
+            arr = StandardScaler().fit_transform(flat).reshape(-1, C, T)
 
         elif ft == "segments":
             arr = rearrange(arr, "a b c d (w t) -> (a b c w) d t", w=2, t=200)
             flat = arr.reshape(arr.shape[0], -1)
-            scaler = StandardScaler().fit(flat)   # fit on all data
-            arr = scaler.transform(flat).reshape(-1, 1, C, 200)
-        
+            arr = StandardScaler().fit_transform(flat).reshape(-1, 1, C, 200)
+
         elif ft == "windows":
             # shape: (7,40,5,3,62,200) → (N,62,200)
             arr = rearrange(arr, "a b c w d t -> (a b c w) d t")
             flat = arr.reshape(arr.shape[0], -1)
-            scaler = StandardScaler().fit(flat)  # fit on all data
-            arr = scaler.transform(flat).reshape(-1, 1, C, 200)
+            arr = StandardScaler().fit_transform(flat).reshape(-1, 1, C, 200)
 
         feats[ft] = arr
     return feats
