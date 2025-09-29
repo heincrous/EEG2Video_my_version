@@ -13,14 +13,14 @@ import models
 # ==========================================
 batch_size    = 32
 num_epochs    = 100
-lr            = 0.0005
+lr            = 0.001
 run_device    = "cuda"
 
 # EEG dimensions
 C, T = 62, 5
-emb_dim_segments = 512
-emb_dim_DE       = 256
-emb_dim_PSD      = 256
+emb_dim_segments = 128
+emb_dim_DE       = 64
+emb_dim_PSD      = 64
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
 WEIGHT_DECAY   = 0
