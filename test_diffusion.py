@@ -12,7 +12,7 @@ from core.unet import UNet3DConditionModel
 
 # === DIRECTORIES ===
 PRETRAINED_MODEL_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
-FINETUNED_PIPELINE    = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final"
+FINETUNED_PIPELINE    = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final_subset1-10-12-16-19-23-25-31-34-39"
 BLIP_TEXT             = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
 SAVE_PATH             = "/content/drive/MyDrive/EEG2Video_outputs/test_diffusion_caption.mp4"
 
