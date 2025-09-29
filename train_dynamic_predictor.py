@@ -30,7 +30,7 @@ WEIGHT_DECAY   = 0
 SCHEDULER_TYPE = "cosine"
 
 # choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["DE"]
+FEATURE_TYPES    = ["DE", "PSD"]
 
 USE_ALL_SUBJECTS = False
 subject_name     = "sub1.npy"
@@ -41,8 +41,8 @@ CLASS_SUBSET     = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
 # loss type: "mse", "cosine", "mse+cosine", "contrastive", "crossentropy"
 LOSS_TYPE        = "mse"
 
-USE_VAR_REG = True
-VAR_LAMBDA  = 0.1
+USE_VAR_REG = False
+VAR_LAMBDA  = 0.01
 
 FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
