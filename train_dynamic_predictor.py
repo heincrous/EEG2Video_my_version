@@ -148,9 +148,18 @@ def evaluate(net, data_iter, device, clip_level=True):
     all_labels = torch.cat(all_labels, dim=0)
 
     if clip_level:
-        num_clips = all_logits.shape[0] // 2
-        logits_clips = all_logits.view(num_clips, 2, -1).mean(dim=1)
-        labels_clips = all_labels.view(num_clips, 2)[:, 0]
+        ft = FEATURE_TYPES[0]
+        if ft == "windows":
+            # 3 samples per clip, take middle one
+            num_clips    = all_logits.shape[0] // 3
+            logits_clips = all_logits.view(num_clips, 3, -1)[:, 1, :]
+            labels_clips = all_labels.view(num_clips, 3)[:, 1]
+        else:
+            # 2 samples per clip, average them
+            num_clips    = all_logits.shape[0] // 2
+            logits_clips = all_logits.view(num_clips, 2, -1).mean(dim=1)
+            labels_clips = all_labels.view(num_clips, 2)[:, 0]
+
         pred_clips   = torch.argmax(logits_clips, dim=-1)
         clip_correct = (pred_clips == labels_clips).sum().item()
         clip_count   = num_clips
