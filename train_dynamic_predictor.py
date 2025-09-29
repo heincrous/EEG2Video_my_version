@@ -22,8 +22,8 @@ T = 5
 
 emb_dim_segments = 512
 emb_dim_windows  = 512 # cannot be used in fusion with other features
-emb_dim_DE       = 256
-emb_dim_PSD      = 256
+emb_dim_DE       = 128
+emb_dim_PSD      = 128
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
 WEIGHT_DECAY   = 0.5
