@@ -96,12 +96,15 @@ model.eval()
 # ==========================================
 all_latents = []
 with torch.no_grad():
-    for i in range(0, len(EEG_test), 16):  # batch size
+    for i in range(0, len(EEG_test), 16):
         eeg_batch = EEG_test[i:i+16]
         b = eeg_batch.shape[0]
-        padded_video = torch.zeros((b, 1, 4, 36, 64), device=run_device)
+
+        # FIX: use 7 dummy frames instead of 1
+        padded_video = torch.zeros((b, 7, 4, 36, 64), device=run_device)
+
         latents = model(eeg_batch, padded_video)  # (B,7,4,36,64)
-        latents = latents[:, 1:, :, :, :]         # drop dummy first frame
+        latents = latents[:, 1:, :, :, :]         # drop dummy frame
         all_latents.append(latents.cpu().numpy())
 
 all_latents = np.concatenate(all_latents, axis=0)
