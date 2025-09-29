@@ -45,7 +45,7 @@ VAR_LAMBDA  = 0.01
 P = 0.5 # dropout prob
 
 # checkpoint metric: "val_mse", "val_cos", "val_fisher"
-CHECKPOINT_METRIC = "val_mse"
+CHECKPOINT_METRIC = "val_cos"
 
 FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
