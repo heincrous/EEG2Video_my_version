@@ -145,20 +145,24 @@ for i in range(len(eeg_embeds)):
 
     print(f"[Block {block_id} | Class {class_id} | Clip {clip_index} | Sample {sample_index}] Caption: {caption}")
 
+    # enforce float16 every loop
+    eeg_input = eeg_embeds[i:i+1].to(device).half()
+    neg_input = negative.to(device).half()
+
     if woSeq2Seq:
-        video = pipe(None, eeg_embeds[i:i+1], negative_eeg=negative,
-                     latents=None, video_length=6, height=288, width=512,
-                     num_inference_steps=100, guidance_scale=12.5).videos
+        video = pipe(None, eeg_input, negative_eeg=neg_input,
+                    latents=None, video_length=6, height=288, width=512,
+                    num_inference_steps=100, guidance_scale=12.5).videos
         save_dir = os.path.join(SAVE_ROOT, f"{pipeline_tag}_woSeq2Seq")
     elif woDANA:
-        video = pipe(None, eeg_embeds[i:i+1], negative_eeg=negative,
-                     latents=latents[i:i+1], video_length=6, height=288, width=512,
-                     num_inference_steps=100, guidance_scale=12.5).videos
+        video = pipe(None, eeg_input, negative_eeg=neg_input,
+                    latents=latents[i:i+1].half(), video_length=6, height=288, width=512,
+                    num_inference_steps=100, guidance_scale=12.5).videos
         save_dir = os.path.join(SAVE_ROOT, f"{pipeline_tag}_woDANA")
     else:
-        video = pipe(None, eeg_embeds[i:i+1], negative_eeg=negative,
-                     latents=latents_add_noise[i:i+1], video_length=6, height=288, width=512,
-                     num_inference_steps=100, guidance_scale=12.5).videos
+        video = pipe(None, eeg_input, negative_eeg=neg_input,
+                    latents=latents_add_noise[i:i+1].half(), video_length=6, height=288, width=512,
+                    num_inference_steps=100, guidance_scale=12.5).videos
         save_dir = os.path.join(SAVE_ROOT, f"{pipeline_tag}_FullModel")
 
     os.makedirs(save_dir, exist_ok=True)
