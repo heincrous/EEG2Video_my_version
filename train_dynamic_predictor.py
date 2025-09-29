@@ -256,9 +256,11 @@ def load_subject_data(subname, feature_types):
             arr = scaler.transform(flat).reshape(-1, C, T)    # scale, then restore 3D
 
         elif ft == "segments":
-            arr = rearrange(arr, "a b c d (w t) -> (a b c w) (d t)", w=2, t=200)
-            scaler = StandardScaler().fit(arr)
-            arr = scaler.transform(arr)
+            # expect (blocks, classes, trials, C, 200)
+            arr = rearrange(arr, "a b c d t -> (a b c) d t")      # (N, 62, 200)
+            flat = arr.reshape(arr.shape[0], -1)                  # (N, 12400)
+            scaler = StandardScaler().fit(flat)
+            arr = scaler.transform(flat).reshape(-1, 1, C, 200)   # (N, 1, 62, 200)
 
         scalers[ft] = scaler
         feats[ft] = arr
