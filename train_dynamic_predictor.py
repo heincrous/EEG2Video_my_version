@@ -57,23 +57,20 @@ DYNPRED_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/dynamic_checkpo
 # Encoders
 # ==========================================
 def make_encoder(ft, return_logits=False):
-    """Build encoder. If return_logits=True, attach classifier head."""
     if ft == "segments":
-        base = models.glfnet(out_dim=emb_dim_segments, emb_dim=emb_dim_segments, C=C, T=200)
-        emb_dim = emb_dim_segments
+        base = models.glfnet(out_dim=2 if return_logits else emb_dim_segments,
+                             emb_dim=emb_dim_segments, C=C, T=200)
+        return base if return_logits else (base, emb_dim_segments)
     elif ft == "DE":
-        base = models.glfnet_mlp(out_dim=emb_dim_DE, emb_dim=emb_dim_DE, input_dim=C*T)
-        emb_dim = emb_dim_DE
+        base = models.glfnet_mlp(out_dim=2 if return_logits else emb_dim_DE,
+                                 emb_dim=emb_dim_DE, input_dim=C*T)
+        return base if return_logits else (base, emb_dim_DE)
     elif ft == "PSD":
-        base = models.glfnet_mlp(out_dim=emb_dim_PSD, emb_dim=emb_dim_PSD, input_dim=C*T)
-        emb_dim = emb_dim_PSD
+        base = models.glfnet_mlp(out_dim=2 if return_logits else emb_dim_PSD,
+                                 emb_dim=emb_dim_PSD, input_dim=C*T)
+        return base if return_logits else (base, emb_dim_PSD)
     else:
         raise ValueError(f"Unknown feature type {ft}")
-
-    if return_logits:
-        return nn.Sequential(base, nn.Linear(emb_dim, 2))  # encoder + classifier
-    else:
-        return base, emb_dim  # just embeddings
 
 
 # ==========================================
@@ -250,7 +247,7 @@ def load_subject_data(subname, feature_types):
     for ft in feature_types:
         path = os.path.join(FEATURE_PATHS[ft], subname)
         arr = np.load(path)
-        if ft in ["DE","PSD"]: arr = arr.reshape(-1, C*T)
+        if ft in ["DE","PSD"]: arr = arr.reshape(-1, C, T)   # not -1, C*T
         elif ft == "segments": arr = rearrange(arr, "a b c d (w t) -> (a b c w) (d t)", w=2, t=200)
         scaler = StandardScaler().fit(arr)
         arr = scaler.transform(arr)
