@@ -14,7 +14,7 @@ import models
 # ==========================================
 batch_size    = 64
 num_epochs    = 100
-lr            = 0.001
+lr            = 0.01
 run_device    = "cuda"
 
 # EEG dimensions
