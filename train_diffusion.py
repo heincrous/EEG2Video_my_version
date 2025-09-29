@@ -47,17 +47,29 @@ os.makedirs(SAVE_ROOT, exist_ok=True)
 # Dataset
 # ==========================================
 class LatentsTextDataset(Dataset):
-    def __init__(self, latents_path, text_path, tokenizer, class_subset=None):
+    def __init__(self, latents_path, text_path, tokenizer, class_subset=None, split="train"):
         latents = np.load(latents_path, allow_pickle=True)  # (7,40,5,6,4,36,64)
         texts   = np.load(text_path, allow_pickle=True)     # (7,40,5)
 
-        # flatten to trial-level
-        latents = latents.reshape(-1, 6, 4, 36, 64)  # (2800, 6, 4, 36, 64)
-        texts   = texts.reshape(-1)                  # (2800,)
+        # reshape
+        latents = latents.reshape(7, 40, 5, 6, 4, 36, 64)
+        texts   = texts.reshape(7, 40, 5)
+
+        # split by block
+        if split == "train":
+            latents = latents[:6].reshape(-1, 6, 4, 36, 64)  # blocks 0–5
+            texts   = texts[:6].reshape(-1)
+            block_count = 6
+        elif split == "test":
+            latents = latents[6:].reshape(-1, 6, 4, 36, 64)  # block 6 only
+            texts   = texts[6:].reshape(-1)
+            block_count = 1
+        else:
+            raise ValueError(f"Unknown split: {split}")
 
         # build class labels
-        labels_block = np.repeat(np.arange(40), 5*2)  # 400 per block
-        labels_all   = np.tile(labels_block, 7)       # 2800 total
+        labels_block = np.repeat(np.arange(40), 5*2)      # 400 per block
+        labels_all   = np.tile(labels_block, block_count) # 2400 train or 400 test
 
         # apply class subset filter
         if class_subset is not None:
@@ -70,7 +82,7 @@ class LatentsTextDataset(Dataset):
         self.tokenizer = tokenizer
 
         print(f"Dataset prepared: {self.latents.shape[0]} clips "
-              f"(subset={class_subset})")
+              f"(split={split}, subset={class_subset})")
 
     def __len__(self): 
         return len(self.latents)
@@ -115,17 +127,26 @@ def main():
 
     optimizer = torch.optim.AdamW(unet.parameters(), lr=learning_rate)
 
-    # dataset
+    # datasets
     latents_path = os.path.join(DATA_ROOT, "Video_latents/Video_latents.npy")
     text_path    = os.path.join(DATA_ROOT, "BLIP_text/BLIP_text.npy")
-    dataset      = LatentsTextDataset(latents_path, text_path, tokenizer,
-                                      class_subset=CLASS_SUBSET)
-    print(f"Loaded {len(dataset)} samples")
+    train_dataset = LatentsTextDataset(latents_path, text_path, tokenizer,
+                                       class_subset=CLASS_SUBSET, split="train")
+    test_dataset  = LatentsTextDataset(latents_path, text_path, tokenizer,
+                                       class_subset=CLASS_SUBSET, split="test")
+    print(f"Loaded {len(train_dataset)} train and {len(test_dataset)} test samples")
 
     train_dataloader = DataLoader(
-        dataset,
+        train_dataset,
         batch_size=train_batch_size,
         shuffle=True,
+        num_workers=os.cpu_count(),
+        pin_memory=True,
+    )
+    test_dataloader = DataLoader(
+        test_dataset,
+        batch_size=train_batch_size,
+        shuffle=False,
         num_workers=os.cpu_count(),
         pin_memory=True,
     )

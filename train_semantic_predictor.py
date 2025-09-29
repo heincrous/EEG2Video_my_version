@@ -44,6 +44,9 @@ VAR_LAMBDA  = 0.01
 
 P = 0.5 # dropout prob
 
+# checkpoint metric: "val_mse", "val_cos", "val_fisher"
+CHECKPOINT_METRIC = "val_mse"
+
 FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
     "DE":       "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s",
@@ -131,7 +134,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
     mse_loss  = nn.MSELoss()
     cos_loss  = nn.CosineEmbeddingLoss()
 
-    best_val, best_state = 1e12, None
+    best_score, best_state = None, None
     for epoch in range(num_epochs):
         net.train()
         total_loss = 0
@@ -163,15 +166,25 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
 
             total_loss += loss.item() * y.size(0)
 
-        val_mse = evaluate_mse(net, val_iter, device)
-        if val_mse < best_val:
-            best_val, best_state = val_mse, net.state_dict()
+        val_mse, val_cos, val_fisher = evaluate(net, val_iter, device)
+
+        if CHECKPOINT_METRIC == "val_mse":
+            current_score = -val_mse   # lower is better
+        elif CHECKPOINT_METRIC == "val_cos":
+            current_score = val_cos    # higher is better
+        elif CHECKPOINT_METRIC == "val_fisher":
+            current_score = val_fisher # higher is better
+        else:
+            raise ValueError(f"Unknown CHECKPOINT_METRIC {CHECKPOINT_METRIC}")
+
+        if best_score is None or current_score > best_score:
+            best_score, best_state = current_score, net.state_dict()
 
         if epoch % 3 == 0:
             test_mse, test_cos, fisher_score = evaluate(net, test_iter, device)
             print(f"[{epoch+1}] train_loss={total_loss/len(train_iter.dataset):.4f}, "
-                  f"val_mse={val_mse:.4f}, test_mse={test_mse:.4f}, "
-                  f"test_cos={test_cos:.4f}, fisher_score={fisher_score:.4f}")
+                  f"val_mse={val_mse:.4f}, val_cos={val_cos:.4f}, val_fisher={val_fisher:.4f}, "
+                  f"test_mse={test_mse:.4f}, test_cos={test_cos:.4f}, fisher_score={fisher_score:.4f}")
 
     if best_state:
         net.load_state_dict(best_state)
@@ -197,19 +210,6 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
 # ==========================================
 # Evaluation
 # ==========================================
-def evaluate_mse(net, data_iter, device):
-    net.eval()
-    mse_loss = nn.MSELoss(reduction="sum")
-    total, count, dim = 0, 0, None
-    with torch.no_grad():
-        for X, y, _ in data_iter:
-            X, y = X.to(device), y.to(device)
-            y_hat = net(X)
-            total += mse_loss(y_hat, y).item()
-            count += y.size(0)
-            dim = y.size(1)
-    return total / (count * dim)
-
 def evaluate(net, data_iter, device):
     net.eval()
     cos = nn.CosineSimilarity(dim=-1)
