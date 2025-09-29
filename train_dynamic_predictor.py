@@ -177,9 +177,13 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
     else:
         scheduler = None
 
-    ce_loss   = nn.CrossEntropyLoss()
+    ce_loss = nn.CrossEntropyLoss()
 
     best_val_clip_acc, best_state = 0.0, None
+
+    # 🔹 store validation metrics
+    val_acc_list, val_clip_acc_list = [], []
+
     for epoch in range(num_epochs):
         net.train()
         total_loss = 0
@@ -201,6 +205,11 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
             total_loss += loss.item() * y.size(0)
 
         val_loss, val_acc, val_clip_acc = evaluate(net, val_iter, device, clip_level=True)
+
+        # 🔹 save validation metrics for later averaging
+        val_acc_list.append(val_acc)
+        val_clip_acc_list.append(val_clip_acc)
+
         if val_clip_acc > best_val_clip_acc:
             best_val_clip_acc, best_state = val_clip_acc, net.state_dict()
 
@@ -210,13 +219,18 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
                   f"val_loss={val_loss:.4f}, val_acc={val_acc:.3f}, val_clip_acc={val_clip_acc:.3f}, "
                   f"test_loss={test_loss:.4f}, test_acc={test_acc:.3f}, test_clip_acc={test_clip_acc:.3f}")
 
+    # 🔹 print mean metrics at the very end
+    print(f"\n=== Final Validation Summary for {subname} ===")
+    print(f"Mean val_acc:      {np.mean(val_acc_list):.3f}")
+    print(f"Mean val_clip_acc: {np.mean(val_clip_acc_list):.3f}")
+
     if best_state:
         net.load_state_dict(best_state)
         os.makedirs(DYNPRED_CKPT_DIR, exist_ok=True)
         subset_tag = ""
         model_name = f"dynpredictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.pt"
         torch.save({"state_dict": net.state_dict()},
-                os.path.join(DYNPRED_CKPT_DIR, model_name))
+                   os.path.join(DYNPRED_CKPT_DIR, model_name))
         print(f"Saved checkpoint: {model_name}")
 
         for ft, sc in scalers.items():
