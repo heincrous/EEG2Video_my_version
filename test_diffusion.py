@@ -31,6 +31,8 @@ unet = UNet3DConditionModel.from_pretrained(
     torch_dtype=torch.float32
 ).to(device)
 
+os.makedirs("/content/EEG2Video_my_version/core_files", exist_ok=True)
+
 pipe = TuneAVideoPipeline.from_pretrained(
     PRETRAINED_MODEL_PATH,
     vae=vae,
