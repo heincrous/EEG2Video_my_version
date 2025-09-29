@@ -247,10 +247,19 @@ def load_subject_data(subname, feature_types):
     for ft in feature_types:
         path = os.path.join(FEATURE_PATHS[ft], subname)
         arr = np.load(path)
-        if ft in ["DE","PSD"]: arr = arr.reshape(-1, C, T)   # not -1, C*T
-        elif ft == "segments": arr = rearrange(arr, "a b c d (w t) -> (a b c w) (d t)", w=2, t=200)
-        scaler = StandardScaler().fit(arr)
-        arr = scaler.transform(arr)
+
+        if ft in ["DE","PSD"]:
+            # keep (N, C, T) for the model
+            arr = arr.reshape(-1, C, T)
+            flat = arr.reshape(arr.shape[0], -1)              # (N, C*T)
+            scaler = StandardScaler().fit(flat)               # fit on 2D
+            arr = scaler.transform(flat).reshape(-1, C, T)    # scale, then restore 3D
+
+        elif ft == "segments":
+            arr = rearrange(arr, "a b c d (w t) -> (a b c w) (d t)", w=2, t=200)
+            scaler = StandardScaler().fit(arr)
+            arr = scaler.transform(arr)
+
         scalers[ft] = scaler
         feats[ft] = arr
     return feats, scalers
