@@ -30,7 +30,7 @@ WEIGHT_DECAY   = 0
 SCHEDULER_TYPE = "cosine"
 
 # choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["segments"]
+FEATURE_TYPES    = ["DE"]
 
 USE_ALL_SUBJECTS = False
 subject_name     = "sub1.npy"
@@ -39,7 +39,7 @@ subject_name     = "sub1.npy"
 CLASS_SUBSET     = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
 
 # loss type: "mse", "cosine", "mse+cosine", "contrastive", "crossentropy"
-LOSS_TYPE        = "mse"
+LOSS_TYPE        = "contrastive"
 
 USE_VAR_REG = False
 VAR_LAMBDA  = 0.01
