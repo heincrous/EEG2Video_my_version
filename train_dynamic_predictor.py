@@ -11,16 +11,16 @@ import models
 # ==========================================
 # Config
 # ==========================================
-batch_size    = 32
-num_epochs    = 1000
-lr            = 1e-7
+batch_size    = 256
+num_epochs    = 200
+lr            = 1e-6
 run_device    = "cuda"
 
 # EEG DE and PSD dimensions
 C, T = 62, 5
 emb_dim_segments = 512
-emb_dim_DE       = 64
-emb_dim_PSD      = 64
+emb_dim_DE       = 128
+emb_dim_PSD      = 128
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
 WEIGHT_DECAY   = 0
@@ -29,7 +29,7 @@ WEIGHT_DECAY   = 0
 SCHEDULER_TYPE = "cosine"
 
 # choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["DE"]
+FEATURE_TYPES    = ["DE", "PSD", "segments"]
 
 # default is subject 1 only; set to True to use all subjects in folder
 USE_ALL_SUBJECTS = False
