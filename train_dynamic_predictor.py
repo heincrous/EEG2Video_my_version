@@ -26,10 +26,10 @@ emb_dim_PSD      = 64
 WEIGHT_DECAY   = 0
 
 # scheduler: "cosine" or "constant"
-SCHEDULER_TYPE = "constant"
+SCHEDULER_TYPE = "cosine"
 
 # choose: ["segments"], ["DE"], ["PSD"], ["segments","DE"], ["DE","PSD"], ["segments","DE","PSD"]
-FEATURE_TYPES    = ["DE"]
+FEATURE_TYPES    = ["DE", "PSD", "segments"]
 
 # default is subject 1 only; set to True to use all subjects in folder
 USE_ALL_SUBJECTS = False
