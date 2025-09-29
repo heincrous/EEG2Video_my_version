@@ -35,9 +35,6 @@ FEATURE_TYPES    = ["DE", "PSD", "segments"]
 USE_ALL_SUBJECTS = False
 subject_name     = "sub1.npy"
 
-# restrict to certain classes (0–39); set to None for all
-CLASS_SUBSET     = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
-
 FEATURE_PATHS = {
     "segments": "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
     "DE":       "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s",
@@ -160,7 +157,7 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
     if best_state:
         net.load_state_dict(best_state)
         os.makedirs(DYNPRED_CKPT_DIR, exist_ok=True)
-        subset_tag = "" if CLASS_SUBSET is None else "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
+        subset_tag = ""  # always empty: dynamic predictor ignores CLASS_SUBSET
         model_name = f"dynpredictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.pt"
         torch.save({"state_dict": net.state_dict()},
                 os.path.join(DYNPRED_CKPT_DIR, model_name))
@@ -198,25 +195,23 @@ def evaluate(net, data_iter, device):
 # ==========================================
 # Helpers
 # ==========================================
-def load_subject_data(subname, feature_types):
+def prepare_features_with_scaler(subname, feature_types, train_idx, val_idx, test_idx):
     feats, scalers = {}, {}
     for ft in feature_types:
         path = os.path.join(FEATURE_PATHS[ft], subname)
         arr = np.load(path)
 
         if ft in ["DE","PSD"]:
-            # keep (N, C, T) for the model
             arr = arr.reshape(-1, C, T)
-            flat = arr.reshape(arr.shape[0], -1)              # (N, C*T)
-            scaler = StandardScaler().fit(flat)               # fit on 2D
-            arr = scaler.transform(flat).reshape(-1, C, T)    # scale, then restore 3D
+            flat = arr.reshape(arr.shape[0], -1)
+            scaler = StandardScaler().fit(flat[train_idx])
+            arr = scaler.transform(flat).reshape(-1, C, T)
 
         elif ft == "segments":
-            # expect (blocks, classes, trials, C, 400)
-            arr = rearrange(arr, "a b c d (w t) -> (a b c w) d t", w=2, t=200)  # (N*2, 62, 200)
-            flat = arr.reshape(arr.shape[0], -1)                                 # (N*2, 12400)
-            scaler = StandardScaler().fit(flat)
-            arr = scaler.transform(flat).reshape(-1, 1, C, 200)                  # (N*2, 1, 62, 200)
+            arr = rearrange(arr, "a b c d (w t) -> (a b c w) d t", w=2, t=200)
+            flat = arr.reshape(arr.shape[0], -1)
+            scaler = StandardScaler().fit(flat[train_idx])
+            arr = scaler.transform(flat).reshape(-1, 1, C, 200)
 
         scalers[ft] = scaler
         feats[ft] = arr
@@ -231,34 +226,25 @@ if __name__ == "__main__":
     labels_all = np.tile(np.arange(40).repeat(5), 7)  # (1400,)
     threshold = np.median(ofs_all)
 
-    # Duplicate to match 2 EEG windows per clip → 2800 samples
     ofs_all    = np.repeat(ofs_all, 2, axis=0)     # (2800,1)
     labels_all = np.repeat(labels_all, 2, axis=0)  # (2800,)
-
-    # Binarize OFS into 0/1 class labels
     y_cls = (ofs_all > threshold).astype(int).flatten()
 
     sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else [subject_name]
     for subname in sub_list:
         print(f"\n=== Training subject {subname} with {FEATURE_TYPES} ===")
-        features, scalers = load_subject_data(subname, FEATURE_TYPES)
 
-        if CLASS_SUBSET is not None:
-            mask = np.isin(labels_all, CLASS_SUBSET)
-            features = {ft: features[ft][mask] for ft in features}
-            y_cls_sub    = y_cls[mask]
-            labels_sub   = labels_all[mask]
-        else:
-            y_cls_sub    = y_cls
-            labels_sub   = labels_all
-
-        samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5 * 2
+        samples_per_block = 40 * 5 * 2
         train_idx = np.arange(0, 5*samples_per_block)
         val_idx   = np.arange(5*samples_per_block, 6*samples_per_block)
         test_idx  = np.arange(6*samples_per_block, 7*samples_per_block)
 
+        features, scalers = prepare_features_with_scaler(subname, FEATURE_TYPES, train_idx, val_idx, test_idx)
+
+        y_cls_sub    = y_cls
+        labels_sub   = labels_all
+
         if len(FEATURE_TYPES) > 1:
-            # multi-feature fusion: encoders output embeddings only
             encoders = {}
             emb_dims = {}
             for ft in FEATURE_TYPES:
@@ -274,7 +260,6 @@ if __name__ == "__main__":
             test_iter  = Get_Dataloader({ft: features[ft][test_idx] for ft in FEATURE_TYPES},
                                         y_cls_sub[test_idx], False, batch_size, multi=True)
         else:
-            # single feature: encoder already outputs logits
             ft = FEATURE_TYPES[0]
             modelnet = make_encoder(ft, return_logits=True)
 
