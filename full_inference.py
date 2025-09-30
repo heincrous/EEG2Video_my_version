@@ -32,17 +32,20 @@ blip_text = np.load(BLIP_TEXT_PATH, allow_pickle=True)  # shape (7,40,5)
 caption = blip_text[6, 1, 0]   # block 7, class 1, clip 0
 
 # === Load pipeline ===
-vae = AutoencoderKL.from_pretrained(PRETRAINED_SD_PATH, subfolder="vae").to(device, dtype=torch.float32)
-scheduler = DDIMScheduler.from_pretrained(PRETRAINED_SD_PATH, subfolder="scheduler")
-unet = UNet3DConditionModel.from_pretrained_2d(PRETRAINED_SD_PATH, subfolder="unet").to(device, dtype=torch.float32)
-
-pipe = TuneAVideoPipeline.from_pretrained(
+# Load finetuned UNet only
+unet = UNet3DConditionModel.from_pretrained(
     FINETUNED_SD_PATH,
-    vae=vae,
-    unet=unet,
-    scheduler=scheduler,
-    torch_dtype=torch.float32,
+    subfolder="unet",
+    torch_dtype=torch.float32
 ).to(device)
+
+# Build pipeline from HuggingFace SD backbone + custom UNet
+pipe = TuneAVideoPipeline.from_pretrained(
+    PRETRAINED_SD_PATH,
+    unet=unet,
+    torch_dtype=torch.float32
+).to(device)
+
 pipe.enable_vae_slicing()
 
 def run_inference():

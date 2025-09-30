@@ -156,7 +156,7 @@ class TuneAVideoPipeline(DiffusionPipeline):
         if do_classifier_guidance:
             # --- NEW CODE: create negative.npy if it doesn’t exist ---
             import os
-            negative_path = os.path.join(os.path.dirname(__file__), '..', 'core_files', 'negative.npy')
+            negative_path = os.path.join(os.path.dirname(__file__), '..', 'core', 'negative.npy')
             negative_path = os.path.abspath(negative_path)
             if not os.path.exists(negative_path):
                 dummy = np.zeros((1, 77, 768), dtype=np.float32)
