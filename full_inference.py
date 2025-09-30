@@ -164,11 +164,11 @@ pipe.enable_vae_slicing()
 def run_inference():
     sem_path = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/embeddings_semantic_predictor_DE_sub1_subset1-10-12-16-19-23-25-31-34-39.npy"
 
-    sem_preds = np.load(sem_path)   # shape (50, 6, 4, 6, 36, 64) or similar
-    first_emb = sem_preds.reshape(-1, 77, 768)[0]  # flatten to (N,77,768) then take [0]
+    sem_preds = np.load(sem_path)   # shape (100, 77, 768)
+    first_emb = sem_preds[0]        # (77, 768)
 
     # add batch dimension for pipeline use
-    semantic_pred = torch.tensor(first_emb, dtype=torch.float32).unsqueeze(0).to(device)
+    semantic_pred = torch.tensor(first_emb, dtype=torch.float32).unsqueeze(0).to(device)  # (1,77,768)
 
     # for negative prompt
     negative = semantic_pred.mean(dim=0, keepdim=True).float().to(device)
