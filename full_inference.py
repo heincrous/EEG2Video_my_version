@@ -1,6 +1,6 @@
 # ==========================================
 # Full Inference (EEG → Video via semantic predictor + diffusion)
-# Subject + Feature combo specified manually
+# Generate videos for ALL embeddings in .npy file
 # ==========================================
 import os, gc, torch, numpy as np
 from diffusers import AutoencoderKL, DDIMScheduler
@@ -27,19 +27,16 @@ device = "cuda"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 gc.collect(); torch.cuda.empty_cache()
 
-# === Load caption (ground truth for reference) ===
+# === Load caption array (optional reference) ===
 blip_text = np.load(BLIP_TEXT_PATH, allow_pickle=True)  # shape (7,40,5)
-caption = blip_text[6, 1, 0]   # block 7, class 1, clip 0
 
 # === Load pipeline ===
-# Load finetuned UNet only
 unet = UNet3DConditionModel.from_pretrained(
     FINETUNED_SD_PATH,
     subfolder="unet",
     torch_dtype=torch.float32
 ).to(device)
 
-# Build pipeline from HuggingFace SD backbone + custom UNet
 pipe = TuneAVideoPipeline.from_pretrained(
     PRETRAINED_SD_PATH,
     unet=unet,
@@ -50,36 +47,32 @@ pipe.enable_vae_slicing()
 
 def run_inference():
     # === Load semantic embeddings ===
-    sem_preds = np.load(SEM_PATH)   # shape (100,77,768)
-    first_emb = sem_preds[0]        # one embedding
+    sem_preds = np.load(SEM_PATH)   # shape (N,77,768)
     avg_emb   = sem_preds.mean(axis=0)  # average across all for negative
+    negative  = torch.tensor(avg_emb, dtype=torch.float32).unsqueeze(0).to(device)   # (1,77,768)
 
-    semantic_pred = torch.tensor(first_emb, dtype=torch.float32).unsqueeze(0).to(device)  # (1,77,768)
-    negative      = torch.tensor(avg_emb, dtype=torch.float32).unsqueeze(0).to(device)   # (1,77,768)
-
-    # === Run pipeline ===
     video_length, fps = 6, 3  # 2 seconds
-    video = pipe(
-        model=None,
-        eeg=semantic_pred,
-        negative_eeg=negative,
-        latents=None,
-        video_length=video_length,
-        height=288,
-        width=512,
-        num_inference_steps=100,
-        guidance_scale=12.5,
-    ).videos
 
-    # === Save as GIF (same as theirs) ===
-    out_path = os.path.join(OUTPUT_DIR, "test.gif")
-    save_videos_grid(video, out_path, fps=fps)
-    print("Saved inference video:", out_path)
-    print("Ground truth caption:", caption)
+    for i, emb in enumerate(sem_preds):
+        semantic_pred = torch.tensor(emb, dtype=torch.float32).unsqueeze(0).to(device)  # (1,77,768)
 
-    # === Save caption alongside ===
-    with open(os.path.join(OUTPUT_DIR, "test.txt"), "w") as f:
-        f.write(caption + "\n")
+        # === Run pipeline ===
+        video = pipe(
+            model=None,
+            eeg=semantic_pred,
+            negative_eeg=negative,
+            latents=None,
+            video_length=video_length,
+            height=288,
+            width=512,
+            num_inference_steps=100,
+            guidance_scale=12.5,
+        ).videos
+
+        # === Save video ===
+        out_path = os.path.join(OUTPUT_DIR, f"sample_{i}.gif")
+        save_videos_grid(video, out_path, fps=fps)
+        print(f"Saved: {out_path}")
 
 run_inference()
 
