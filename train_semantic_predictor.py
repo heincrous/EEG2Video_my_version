@@ -16,8 +16,8 @@ from einops import rearrange
 # Config
 # ==========================================
 batch_size    = 32
-num_epochs    = 100
-lr            = 1e-5
+num_epochs    = 200
+lr            = 5e-4
 run_device    = "cuda"
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
@@ -42,7 +42,7 @@ LOSS_TYPE        = "mse"
 USE_VAR_REG = False
 VAR_LAMBDA  = 0.01
 
-P = 0.5 # dropout prob
+P = 0 # dropout prob
 
 # checkpoint metric: "val_mse", "val_cos", "val_fisher"
 CHECKPOINT_METRIC = "val_cos"
@@ -117,12 +117,103 @@ def contrastive_loss_fn(y_hat, y, margin=1.0):
 # ==========================================
 # Training loop
 # ==========================================
-# def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
-#           subname="subject", scalers=None):
-def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, subname="subject"):
+# # def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device,
+# #           subname="subject", scalers=None):
+# def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, subname="subject"):
+#     net.to(device)
+
+#     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
+
+#     # scheduler (step per batch, like authors)
+#     if SCHEDULER_TYPE.lower() == "cosine":
+#         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+#             optimizer, T_max=num_epochs * len(train_iter)
+#         )
+#     else:
+#         scheduler = None
+
+#     mse_loss  = nn.MSELoss()
+#     cos_loss  = nn.CosineEmbeddingLoss()
+
+#     best_score, best_state = None, None
+#     for epoch in range(num_epochs):
+#         net.train()
+#         total_loss = 0
+#         for X, y, _ in train_iter:
+#             X, y = X.to(device), y.to(device)
+#             optimizer.zero_grad()
+#             y_hat = net(X)
+
+#             if LOSS_TYPE == "mse":
+#                 loss = mse_loss(y_hat, y)
+#             elif LOSS_TYPE == "cosine":
+#                 target = torch.ones(y_hat.size(0), device=device)
+#                 loss = cos_loss(y_hat, y, target)
+#             elif LOSS_TYPE in ["mse+cosine", "cosine+mse"]:
+#                 target = torch.ones(y_hat.size(0), device=device)
+#                 loss = mse_loss(y_hat, y) + cos_loss(y_hat, y, target)
+#             elif LOSS_TYPE == "contrastive":
+#                 loss = contrastive_loss_fn(y_hat, y)
+#             else:
+#                 raise ValueError(f"Unknown LOSS_TYPE {LOSS_TYPE}")
+
+#             if USE_VAR_REG:
+#                 loss -= VAR_LAMBDA * torch.var(y_hat, dim=0).mean()
+
+#             loss.backward()
+#             optimizer.step()
+#             if scheduler:
+#                 scheduler.step()   # step once per batch
+
+#             total_loss += loss.item() * y.size(0)
+
+#         val_mse, val_cos, val_fisher = evaluate(net, val_iter, device)
+
+#         if CHECKPOINT_METRIC == "val_mse":
+#             current_score = -val_mse   # lower is better
+#         elif CHECKPOINT_METRIC == "val_cos":
+#             current_score = val_cos    # higher is better
+#         elif CHECKPOINT_METRIC == "val_fisher":
+#             current_score = val_fisher # higher is better
+#         else:
+#             raise ValueError(f"Unknown CHECKPOINT_METRIC {CHECKPOINT_METRIC}")
+
+#         if best_score is None or current_score > best_score:
+#             best_score, best_state = current_score, net.state_dict()
+
+#         if epoch % 3 == 0:
+#             test_mse, test_cos, fisher_score = evaluate(net, test_iter, device)
+#             print(f"[{epoch+1}] train_loss={total_loss/len(train_iter.dataset):.4f}, "
+#                   f"val_mse={val_mse:.4f}, val_cos={val_cos:.4f}, val_fisher={val_fisher:.4f}, "
+#                   f"test_mse={test_mse:.4f}, test_cos={test_cos:.4f}, fisher_score={fisher_score:.4f}")
+
+#     if best_state:
+#         net.load_state_dict(best_state)
+#         os.makedirs(SEMANTIC_CKPT_DIR, exist_ok=True)
+
+#         subset_tag = ""
+#         if CLASS_SUBSET is not None:
+#             subset_tag = "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
+
+#         model_name = f"semantic_predictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.pt"
+#         torch.save({"state_dict": net.state_dict()},
+#                 os.path.join(SEMANTIC_CKPT_DIR, model_name))
+
+#         # for ft, sc in scalers.items():
+#         #     scaler_name = f"scaler_{ft}_{subname.replace('.npy','')}{subset_tag}.pkl"
+#         #     joblib.dump(sc, os.path.join(SEMANTIC_CKPT_DIR, scaler_name))
+#         #     print(f"Saved scaler: {scaler_name}")
+        
+#         print(f"Saved checkpoint: {model_name}")
+#     return net
+
+# ==========================================
+# Training loop (no validation, authors' style)
+# ==========================================
+def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject"):
     net.to(device)
 
-    optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
 
     # scheduler (step per batch, like authors)
     if SCHEDULER_TYPE.lower() == "cosine":
@@ -132,10 +223,9 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, subname=
     else:
         scheduler = None
 
-    mse_loss  = nn.MSELoss()
-    cos_loss  = nn.CosineEmbeddingLoss()
+    mse_loss = nn.MSELoss()
+    cos_loss = nn.CosineEmbeddingLoss()
 
-    best_score, best_state = None, None
     for epoch in range(num_epochs):
         net.train()
         total_loss = 0
@@ -163,48 +253,27 @@ def train(net, train_iter, val_iter, test_iter, num_epochs, lr, device, subname=
             loss.backward()
             optimizer.step()
             if scheduler:
-                scheduler.step()   # step once per batch
+                scheduler.step()
 
             total_loss += loss.item() * y.size(0)
 
-        val_mse, val_cos, val_fisher = evaluate(net, val_iter, device)
-
-        if CHECKPOINT_METRIC == "val_mse":
-            current_score = -val_mse   # lower is better
-        elif CHECKPOINT_METRIC == "val_cos":
-            current_score = val_cos    # higher is better
-        elif CHECKPOINT_METRIC == "val_fisher":
-            current_score = val_fisher # higher is better
-        else:
-            raise ValueError(f"Unknown CHECKPOINT_METRIC {CHECKPOINT_METRIC}")
-
-        if best_score is None or current_score > best_score:
-            best_score, best_state = current_score, net.state_dict()
-
-        if epoch % 3 == 0:
-            test_mse, test_cos, fisher_score = evaluate(net, test_iter, device)
+        # === Evaluate on test set every 5 epochs + final ===
+        if (epoch + 1) % 5 == 0 or epoch == num_epochs - 1:
+            test_mse, test_cos, test_fish = evaluate(net, test_iter, device)
             print(f"[{epoch+1}] train_loss={total_loss/len(train_iter.dataset):.4f}, "
-                  f"val_mse={val_mse:.4f}, val_cos={val_cos:.4f}, val_fisher={val_fisher:.4f}, "
-                  f"test_mse={test_mse:.4f}, test_cos={test_cos:.4f}, fisher_score={fisher_score:.4f}")
+                  f"test_mse={test_mse:.4f}, test_cos={test_cos:.4f}, test_fisher={test_fish:.4f}")
 
-    if best_state:
-        net.load_state_dict(best_state)
-        os.makedirs(SEMANTIC_CKPT_DIR, exist_ok=True)
+    # === Save checkpoint at the very end (authors' style) ===
+    os.makedirs(SEMANTIC_CKPT_DIR, exist_ok=True)
+    subset_tag = ""
+    if CLASS_SUBSET is not None:
+        subset_tag = "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
 
-        subset_tag = ""
-        if CLASS_SUBSET is not None:
-            subset_tag = "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
+    model_name = f"semantic_predictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.pt"
+    torch.save({"state_dict": net.state_dict()},
+               os.path.join(SEMANTIC_CKPT_DIR, model_name))
+    print(f"\n✅ Saved final checkpoint: {model_name}")
 
-        model_name = f"semantic_predictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.pt"
-        torch.save({"state_dict": net.state_dict()},
-                os.path.join(SEMANTIC_CKPT_DIR, model_name))
-
-        # for ft, sc in scalers.items():
-        #     scaler_name = f"scaler_{ft}_{subname.replace('.npy','')}{subset_tag}.pkl"
-        #     joblib.dump(sc, os.path.join(SEMANTIC_CKPT_DIR, scaler_name))
-        #     print(f"Saved scaler: {scaler_name}")
-        
-        print(f"Saved checkpoint: {model_name}")
     return net
 
 
@@ -264,108 +333,198 @@ def evaluate(net, data_iter, device):
 #         feats.append(arr)
 #     return np.concatenate(feats, axis=1), scalers
 
+# def load_subject_data(subname, feature_types):
+#     feats = []
+#     for ft in feature_types:
+#         path = os.path.join(FEATURE_PATHS[ft], subname)
+#         arr = np.load(path)
+#         if ft in ["DE","PSD"]:
+#             arr = arr.reshape(-1, 62*5)
+#         elif ft == "segments":
+#             arr = rearrange(arr, "a b c d (w t) -> (a b c w) (d t)", w=2, t=200)
+#         feats.append(arr)
+#     return np.concatenate(feats, axis=1)
+
 def load_subject_data(subname, feature_types):
     feats = []
     for ft in feature_types:
         path = os.path.join(FEATURE_PATHS[ft], subname)
-        arr = np.load(path)
-        if ft in ["DE","PSD"]:
-            arr = arr.reshape(-1, 62*5)
+        arr = np.load(path)  # e.g. (7,40,5,2,62,5) for DE/PSD, (7,40,5,62,400) for segments
+
+        if ft in ["DE", "PSD"]:
+            # Average across the 2 duplicates → (7,40,5,62,5)
+            arr = arr.mean(axis=3)
+
+            # Flatten last two dims (62*5=310) → (7,40,5,310)
+            arr = arr.reshape(7, 40, 5, -1)
+
+            # Collapse to (N,310)
+            arr = arr.reshape(-1, arr.shape[-1])
+
         elif ft == "segments":
+            # Rearrange windows like authors
             arr = rearrange(arr, "a b c d (w t) -> (a b c w) (d t)", w=2, t=200)
+
         feats.append(arr)
+
     return np.concatenate(feats, axis=1)
 
+
+# # ==========================================
+# # Main
+# # ==========================================
+# # if __name__ == "__main__":
+# #     clip_embeddings = np.load(CLIP_EMB_PATH)                 # [7,40,5,77,768]
+# #     clip_embeddings = clip_embeddings.reshape(-1, 77*768)    # [1400, 77*768]
+# #     clip_embeddings = np.repeat(clip_embeddings, 2, axis=0)  # [2800, 77*768]
+
+# #     labels_block = np.repeat(np.arange(40), 5*2)  # per block labels
+# #     labels_all   = np.tile(labels_block, 7)
+
+# if __name__ == "__main__":
+#     clip_embeddings = np.load(CLIP_EMB_PATH)                 # (7,40,5,77,768)
+#     clip_embeddings = clip_embeddings.reshape(-1, 77*768)    # (1400, 77*768) – no repeat
+
+#     labels_block = np.repeat(np.arange(40), 5)  # 40 classes × 5 clips
+#     labels_all   = np.tile(labels_block, 7)     # repeat for 7 blocks
+
+#     sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else [subject_name]
+
+#     for subname in sub_list:
+#         print(f"\n=== Training subject {subname} with {FEATURE_TYPES} ===")
+
+#         # features, scalers = load_subject_data(subname, FEATURE_TYPES)
+
+#         # # length before masking
+#         # samples_per_block = 40 * 5 * 2
+#         # valid_len = samples_per_block * 7
+#         # features = features[:valid_len]
+#         # Y = clip_embeddings[:valid_len]
+#         # L = labels_all[:valid_len]
+
+#         # # apply class subset mask BEFORE block split
+#         # if CLASS_SUBSET is not None:
+#         #     mask = np.isin(L, CLASS_SUBSET)
+#         #     features, Y, L = features[mask], Y[mask], L[mask]
+
+#         # # recompute per-block size after masking
+#         # samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5 * 2
+
+#         # # block-based split (always 5 train, 1 val, 1 test)
+#         # train_idx = np.arange(0, 5*samples_per_block)
+#         # val_idx   = np.arange(5*samples_per_block, 6*samples_per_block)
+#         # test_idx  = np.arange(6*samples_per_block, 7*samples_per_block)
+
+#         # X_train, X_val, X_test = features[train_idx], features[val_idx], features[test_idx]
+#         # Y_train, Y_val, Y_test = Y[train_idx], Y[val_idx], Y[test_idx]
+#         # L_train, L_val, L_test = L[train_idx], L[val_idx], L[test_idx]
+
+#         # train_iter = Get_Dataloader(X_train, Y_train, L_train, True,  batch_size)
+#         # val_iter   = Get_Dataloader(X_val,   Y_val,   L_val,   False, batch_size)
+#         # test_iter  = Get_Dataloader(X_test,  Y_test,  L_test,  False, batch_size)
+
+#         # input_dim = features.shape[1]
+#         # modelnet = SemanticPredictor(input_dim)
+#         # modelnet = train(modelnet, train_iter, val_iter, test_iter,
+#         #                 num_epochs, lr, run_device, subname=subname, scalers=scalers)
+
+#         features = load_subject_data(subname, FEATURE_TYPES)
+
+#         samples_per_block = 40 * 5 * 2
+#         valid_len = samples_per_block * 7
+#         features = features[:valid_len]
+#         Y = clip_embeddings[:valid_len]
+#         L = labels_all[:valid_len]
+
+#         if CLASS_SUBSET is not None:
+#             mask = np.isin(L, CLASS_SUBSET)
+#             features, Y, L = features[mask], Y[mask], L[mask]
+
+#         samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5 * 2
+
+#         train_idx = np.arange(0, 5*samples_per_block)
+#         val_idx   = np.arange(5*samples_per_block, 6*samples_per_block)
+#         test_idx  = np.arange(6*samples_per_block, 7*samples_per_block)
+
+#         X_train, X_val, X_test = features[train_idx], features[val_idx], features[test_idx]
+#         Y_train, Y_val, Y_test = Y[train_idx], Y[val_idx], Y[test_idx]
+#         L_train, L_val, L_test = L[train_idx], L[val_idx], L[test_idx]
+
+#         # --- Fit separate scalers ---
+#         scaler_train = StandardScaler().fit(X_train)
+#         X_train = scaler_train.transform(X_train)
+
+#         scaler_val = StandardScaler().fit(X_val)
+#         X_val = scaler_val.transform(X_val)
+
+#         scaler_test = StandardScaler().fit(X_test)
+#         X_test = scaler_test.transform(X_test)
+
+#         train_iter = Get_Dataloader(X_train, Y_train, L_train, True,  batch_size)
+#         val_iter   = Get_Dataloader(X_val,   Y_val,   L_val,   False, batch_size)
+#         test_iter  = Get_Dataloader(X_test,  Y_test,  L_test,  False, batch_size)
+
+#         input_dim = features.shape[1]
+#         modelnet = SemanticPredictor(input_dim)
+#         modelnet = train(modelnet, train_iter, val_iter, test_iter,
+#                         num_epochs, lr, run_device, subname=subname)
 
 # ==========================================
 # Main
 # ==========================================
 if __name__ == "__main__":
+    # === Load CLIP embeddings ===
     clip_embeddings = np.load(CLIP_EMB_PATH)                 # [7,40,5,77,768]
     clip_embeddings = clip_embeddings.reshape(-1, 77*768)    # [1400, 77*768]
     clip_embeddings = np.repeat(clip_embeddings, 2, axis=0)  # [2800, 77*768]
 
+    # === Labels for all blocks ===
     labels_block = np.repeat(np.arange(40), 5*2)  # per block labels
-    labels_all   = np.tile(labels_block, 7)
+    labels_all   = np.tile(labels_block, 7)       # repeat across 7 blocks
 
+    # === Select subject(s) ===
     sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else [subject_name]
 
     for subname in sub_list:
         print(f"\n=== Training subject {subname} with {FEATURE_TYPES} ===")
 
-        # features, scalers = load_subject_data(subname, FEATURE_TYPES)
-
-        # # length before masking
-        # samples_per_block = 40 * 5 * 2
-        # valid_len = samples_per_block * 7
-        # features = features[:valid_len]
-        # Y = clip_embeddings[:valid_len]
-        # L = labels_all[:valid_len]
-
-        # # apply class subset mask BEFORE block split
-        # if CLASS_SUBSET is not None:
-        #     mask = np.isin(L, CLASS_SUBSET)
-        #     features, Y, L = features[mask], Y[mask], L[mask]
-
-        # # recompute per-block size after masking
-        # samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5 * 2
-
-        # # block-based split (always 5 train, 1 val, 1 test)
-        # train_idx = np.arange(0, 5*samples_per_block)
-        # val_idx   = np.arange(5*samples_per_block, 6*samples_per_block)
-        # test_idx  = np.arange(6*samples_per_block, 7*samples_per_block)
-
-        # X_train, X_val, X_test = features[train_idx], features[val_idx], features[test_idx]
-        # Y_train, Y_val, Y_test = Y[train_idx], Y[val_idx], Y[test_idx]
-        # L_train, L_val, L_test = L[train_idx], L[val_idx], L[test_idx]
-
-        # train_iter = Get_Dataloader(X_train, Y_train, L_train, True,  batch_size)
-        # val_iter   = Get_Dataloader(X_val,   Y_val,   L_val,   False, batch_size)
-        # test_iter  = Get_Dataloader(X_test,  Y_test,  L_test,  False, batch_size)
-
-        # input_dim = features.shape[1]
-        # modelnet = SemanticPredictor(input_dim)
-        # modelnet = train(modelnet, train_iter, val_iter, test_iter,
-        #                 num_epochs, lr, run_device, subname=subname, scalers=scalers)
-
+        # === Load EEG features ===
         features = load_subject_data(subname, FEATURE_TYPES)
 
+        # Ensure features and targets have the same length
         samples_per_block = 40 * 5 * 2
         valid_len = samples_per_block * 7
         features = features[:valid_len]
         Y = clip_embeddings[:valid_len]
         L = labels_all[:valid_len]
 
+        # === Apply subset filter if needed ===
         if CLASS_SUBSET is not None:
             mask = np.isin(L, CLASS_SUBSET)
             features, Y, L = features[mask], Y[mask], L[mask]
 
+        # === Recompute samples per block after masking ===
         samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5 * 2
 
-        train_idx = np.arange(0, 5*samples_per_block)
-        val_idx   = np.arange(5*samples_per_block, 6*samples_per_block)
-        test_idx  = np.arange(6*samples_per_block, 7*samples_per_block)
+        # === Train/test split: blocks 0–5 train, block 6 test ===
+        train_idx = np.arange(0, 6 * samples_per_block)
+        test_idx  = np.arange(6 * samples_per_block, 7 * samples_per_block)
 
-        X_train, X_val, X_test = features[train_idx], features[val_idx], features[test_idx]
-        Y_train, Y_val, Y_test = Y[train_idx], Y[val_idx], Y[test_idx]
-        L_train, L_val, L_test = L[train_idx], L[val_idx], L[test_idx]
+        X_train, X_test = features[train_idx], features[test_idx]
+        Y_train, Y_test = Y[train_idx], Y[test_idx]
+        L_train, L_test = L[train_idx], L[test_idx]
 
-        # --- Fit separate scalers ---
-        scaler_train = StandardScaler().fit(X_train)
-        X_train = scaler_train.transform(X_train)
+        # === Normalize (fit only on training set) ===
+        scaler = StandardScaler().fit(X_train)
+        X_train = scaler.transform(X_train)
+        X_test  = scaler.transform(X_test)
 
-        scaler_val = StandardScaler().fit(X_val)
-        X_val = scaler_val.transform(X_val)
-
-        scaler_test = StandardScaler().fit(X_test)
-        X_test = scaler_test.transform(X_test)
-
+        # === Build loaders ===
         train_iter = Get_Dataloader(X_train, Y_train, L_train, True,  batch_size)
-        val_iter   = Get_Dataloader(X_val,   Y_val,   L_val,   False, batch_size)
         test_iter  = Get_Dataloader(X_test,  Y_test,  L_test,  False, batch_size)
 
+        # === Init + train model ===
         input_dim = features.shape[1]
         modelnet = SemanticPredictor(input_dim)
-        modelnet = train(modelnet, train_iter, val_iter, test_iter,
-                        num_epochs, lr, run_device, subname=subname)
-
+        modelnet = train(modelnet, train_iter, test_iter,
+                         num_epochs, lr, run_device, subname=subname)
