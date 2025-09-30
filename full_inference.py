@@ -19,7 +19,7 @@ FEATURE_TYPES = ["DE"]        # e.g. ["DE"], ["segments"], ["DE","PSD"]
 
 # CHECKPOINT_DIR     = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
-FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final"
+FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final_subset1-10-12-16-19-23-25-31-34-39"
 OUTPUT_DIR         = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference"
 BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
