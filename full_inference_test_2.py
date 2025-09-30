@@ -1,8 +1,9 @@
 # ==========================================
-# Full Inference (EEG → Video, using CLIP_embeddings.npy)
+# Full Inference (EEG → Video, using CLIP_embeddings.npy + "" negative trick)
 # ==========================================
 import os, gc, torch, numpy as np
 from diffusers import AutoencoderKL, DDIMScheduler
+from transformers import CLIPTokenizer, CLIPTextModel
 from core.unet import UNet3DConditionModel
 from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 from core.util import save_videos_grid  # helper they use
@@ -37,8 +38,14 @@ embeds = np.stack(embeds, axis=0)  # (10,5,77,768)
 # Choose one example, e.g. class 1 (index 0), trial 0
 clip_embeddings = torch.tensor(embeds[0,0], dtype=torch.float32).unsqueeze(0).to(device)  # (1,77,768)
 
-# Negative = mean over all 10×5 = 50 embeddings in block 6 subset
-neg_embeddings = torch.tensor(embeds.reshape(-1,77,768).mean(axis=0), dtype=torch.float32).unsqueeze(0).to(device)  # (1,77,768)
+# === Build "" negative embedding with pretrained CLIP text encoder ===
+tokenizer   = CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer")
+text_encoder = CLIPTextModel.from_pretrained(PRETRAINED_SD_PATH, subfolder="text_encoder").to(device)
+
+neg_inputs = tokenizer("", padding="max_length", max_length=77, return_tensors="pt")
+neg_ids    = neg_inputs.input_ids.to(device)
+with torch.no_grad():
+    neg_embeddings = text_encoder(neg_ids)[0]   # (1,77,768)
 
 print("Positive emb shape:", clip_embeddings.shape)
 print("Negative emb shape:", neg_embeddings.shape)
@@ -61,8 +68,8 @@ def run_inference():
     video_length, fps = 6, 3
     video = pipe(
         model=None,
-        eeg=clip_embeddings,         # now CLIP_embeddings.npy
-        negative_eeg=neg_embeddings, # unconditional = mean of subset test block
+        eeg=clip_embeddings,         # from CLIP_embeddings.npy
+        negative_eeg=neg_embeddings, # unconditional = "" embedding
         latents=None,
         video_length=video_length,
         height=288,
