@@ -147,7 +147,7 @@ clip_emb = clip_embs_all[test_block, class_id, trial]  # (77,768)
 caption  = blip_text[test_block, class_id, trial]
 print("Using caption (reference):", caption)
 
-clip_embeddings = torch.tensor(clip_emb).unsqueeze(0).to(device)  # keep native dtype
+clip_embeddings = torch.tensor(clip_emb, dtype=torch.float16).unsqueeze(0).to(device)  # (1,77,768)
 
 # === Build empty-string negative embedding (unconditional) ===
 tokenizer    = CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer")
@@ -157,7 +157,6 @@ with torch.no_grad():
     empty_ids    = empty_inputs.input_ids.to(device)
     empty_emb    = text_encoder(empty_ids)[0]  # (1,77,768)
 empty_emb = empty_emb.to(torch.float16).to(device)
-# empty_emb = empty_emb.to(device)  # no manual cast
 
 # === Load pipeline ===
 pipe = TuneAVideoPipeline(
