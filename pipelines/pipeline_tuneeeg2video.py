@@ -147,7 +147,9 @@ class TuneAVideoPipeline(DiffusionPipeline):
     def _encode_eeg(self, model, eeg, device, num_videos_per_eeg, do_classifier_guidance, negative_eeg):
         eeg_embeddings = eeg
         eeg_embeddings  = torch.reshape(eeg_embeddings, [eeg_embeddings.shape[0], 77,  768])
-        eeg_embeddings = eeg_embeddings.cuda().to(dtype=torch.float16)
+        unet_dtype = next(self.unet.parameters()).dtype
+        eeg_embeddings = eeg_embeddings.to(device=device, dtype=unet_dtype)
+
 
         bs_embed, seq_len, _ = eeg_embeddings.shape
         eeg_embeddings = eeg_embeddings.repeat(1, num_videos_per_eeg, 1)
@@ -269,17 +271,8 @@ class TuneAVideoPipeline(DiffusionPipeline):
         timesteps = self.scheduler.timesteps
 
         num_channels_latents = self.unet.in_channels
-        # latents = self.prepare_latents(
-        #     batch_size * num_videos_per_eeg,
-        #     num_channels_latents,
-        #     video_length,
-        #     height,
-        #     width,
-        #     torch.float32,
-        #     device,
-        #     generator,
-        #     latents,
-        # )
+
+        unet_dtype = next(self.unet.parameters()).dtype
 
         latents = self.prepare_latents(
             batch_size * num_videos_per_eeg,
@@ -287,13 +280,13 @@ class TuneAVideoPipeline(DiffusionPipeline):
             video_length,
             height,
             width,
-            eeg_embeddings.dtype,   # 👈 match embeddings / UNet
+            unet_dtype,   # 👈 always match UNet dtype
             device,
             generator,
             latents,
         )
 
-        latents_dtype = latents.dtype
+        latents_dtype = unet_dtype
 
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
@@ -302,7 +295,7 @@ class TuneAVideoPipeline(DiffusionPipeline):
             for i, t in enumerate(timesteps):
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
-                noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=eeg_embeddings).sample.to(dtype=latents_dtype)
+                noise_pred = self.unet(latent_model_input.to(dtype=unet_dtype), t, encoder_hidden_states=eeg_embeddings).sample
 
                 if do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
