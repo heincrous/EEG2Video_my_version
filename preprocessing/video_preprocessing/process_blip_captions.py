@@ -92,7 +92,7 @@ for block_id in range(7):
         ).to(device)
 
         with torch.no_grad():
-            emb = encoder(**tokens)[0].cpu().numpy()  # [B,77,768]
+            emb = encoder(tokens["input_ids"])[0].cpu().numpy()
 
         for j, caption in enumerate(batch_caps):
             flat_idx   = start + j
