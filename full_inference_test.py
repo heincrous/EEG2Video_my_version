@@ -73,7 +73,7 @@ def run_inference():
     video = pipe(
         model=None,
         eeg=clip_embeddings, # BLIP→CLIP embedding for chosen caption
-        negative_eeg=neg_embeddings, # mean subset embedding
+        negative_eeg=None, # mean subset embedding
         latents=None,
         video_length=video_length,
         height=288,
