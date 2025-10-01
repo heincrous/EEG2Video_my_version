@@ -75,15 +75,36 @@ print("Class subset:", class_subset)
 # ==========================================
 # 3. Load EEG features (block 7 = test set)
 # ==========================================
+# def load_features(subname, ft):
+#     path = os.path.join(FEATURE_PATHS[ft], subname)
+#     arr = np.load(path)
+#     if ft in ["DE","PSD"]:
+#         arr = arr.reshape(-1, 62*5)
+#     elif ft == "segments":
+#         arr = rearrange(arr, "a b c d (w t) -> (a b c w) (d t)", w=2, t=200)
+#     return arr
+
+# samples_per_block = (len(class_subset) if class_subset else 40) * 5 * 2
+# test_idx = np.arange(6 * samples_per_block, 7 * samples_per_block)
+
 def load_features(subname, ft):
     path = os.path.join(FEATURE_PATHS[ft], subname)
-    arr = np.load(path)
-    if ft in ["DE","PSD"]:
-        arr = arr.reshape(-1, 62*5)
+    arr = np.load(path)  # (7,40,5,2,62,5) for DE/PSD, (7,40,5,62,400) for segments
+
+    if ft in ["DE", "PSD"]:
+        # === Match training preprocessing ===
+        arr = arr.mean(axis=3)              # average over the 2 duplicates → (7,40,5,62,5)
+        arr = arr.reshape(7, 40, 5, -1)     # flatten last two dims → (7,40,5,310)
+        arr = arr.reshape(-1, arr.shape[-1])  # collapse → (1400,310)
+
     elif ft == "segments":
+        # === Authors' rearrange for 2 windows of 200 ===
         arr = rearrange(arr, "a b c d (w t) -> (a b c w) (d t)", w=2, t=200)
+
     return arr
 
+
+# === Test block indices (block 6 only) ===
 samples_per_block = (len(class_subset) if class_subset else 40) * 5 * 2
 test_idx = np.arange(6 * samples_per_block, 7 * samples_per_block)
 
@@ -110,7 +131,8 @@ X_test = np.concatenate(features_test, axis=1)
 # ==========================================
 input_dim = X_test.shape[1]
 model = SemanticPredictor(input_dim).to(run_device)
-model.load_state_dict(state_dict, strict=False)
+# model.load_state_dict(state_dict, strict=False)
+model.load_state_dict(state_dict)
 model.eval()
 
 
