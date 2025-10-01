@@ -1,13 +1,11 @@
 # ==========================================
 # Inference: EEG → BLIP semantic embeddings
 # ==========================================
-import os, torch 
-# import joblib
+import os, torch
 import numpy as np
 from einops import rearrange
 from sklearn.preprocessing import StandardScaler
 from train_semantic_predictor import SemanticPredictor, FEATURE_PATHS, run_device
-
 
 # ==========================================
 # Paths
@@ -15,7 +13,6 @@ from train_semantic_predictor import SemanticPredictor, FEATURE_PATHS, run_devic
 SEMANTIC_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
 OUTPUT_DIR        = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-
 
 # ==========================================
 # 1. List checkpoints
@@ -39,14 +36,14 @@ parts = ckpt_file.replace(".pt","").split("_")
 # subject tag
 subject_tag = next((p for p in parts if p.startswith("sub")), None)
 
-# feature types = everything between "semantic_predictor" and the subject tag
+# feature types
 if subject_tag:
     subj_idx = parts.index(subject_tag)
     feature_types = parts[2:subj_idx]
 else:
     feature_types = parts[2:-1] if "subset" in parts[-1] else parts[2:]
 
-# class subset (if any)
+# class subset
 if "subset" in ckpt_file:
     subset_str = ckpt_file.split("subset")[1].replace(".pt","")
     class_subset = [int(x) for x in subset_str.split("-")]
@@ -57,29 +54,25 @@ print("Feature types:", feature_types)
 print("Subject:", subject_tag)
 print("Class subset:", class_subset)
 
-
 # ==========================================
 # 2. Load EEG features (block 7 = test set)
 # ==========================================
 def load_features(subname, ft):
     path = os.path.join(FEATURE_PATHS[ft], subname)
-    arr = np.load(path)  # (7,40,5,2,62,5) for DE/PSD, (7,40,5,62,400) for segments
+    arr = np.load(path)  # (7,40,5,62,5) for DE/PSD (2s), (7,40,5,62,400) for segments
 
     if ft in ["DE", "PSD"]:
-        # === Match training preprocessing ===
-        arr = arr.mean(axis=3)              # average over the 2 duplicates → (7,40,5,62,5)
-        arr = arr.reshape(7, 40, 5, -1)     # flatten last two dims → (7,40,5,310)
-        arr = arr.reshape(-1, arr.shape[-1])  # collapse → (1400,310)
+        # Already 1 sample per 2s → just flatten
+        arr = arr.reshape(7, 40, 5, -1)       # (7,40,5,310)
+        arr = arr.reshape(-1, arr.shape[-1])  # (1400,310)
 
     elif ft == "segments":
-        # === Authors' rearrange for 2 windows of 200 ===
         arr = rearrange(arr, "a b c d (w t) -> (a b c w) (d t)", w=2, t=200)
 
     return arr
 
-
 # === Test block indices (block 6 only) ===
-samples_per_block = (len(class_subset) if class_subset else 40) * 5 * 2
+samples_per_block = (len(class_subset) if class_subset else 40) * 5
 test_idx = np.arange(6 * samples_per_block, 7 * samples_per_block)
 
 features_test = []
@@ -87,11 +80,14 @@ for ft in feature_types:
     arr = load_features(subject_tag + ".npy", ft)
     arr = arr[test_idx]  # take only test block
     flat = arr.reshape(len(test_idx), -1)
-    scaler = StandardScaler().fit(flat)  # fit on test block itself
-    arr = scaler.transform(flat)
-    features_test.append(arr)
-X_test = np.concatenate(features_test, axis=1)
 
+    # scaling (ideally load training scaler; here we fit on test block)
+    scaler = StandardScaler().fit(flat)
+    arr = scaler.transform(flat)
+
+    features_test.append(arr)
+
+X_test = np.concatenate(features_test, axis=1)
 
 # ==========================================
 # 3. Build model
@@ -100,7 +96,6 @@ input_dim = X_test.shape[1]
 model = SemanticPredictor(input_dim).to(run_device)
 model.load_state_dict(state_dict)
 model.eval()
-
 
 # ==========================================
 # 4. Run inference
@@ -111,7 +106,6 @@ with torch.no_grad():
 
 # reshape to (N,77,768)
 preds = preds.reshape(-1, 77, 768)
-
 
 # ==========================================
 # 5. Save outputs

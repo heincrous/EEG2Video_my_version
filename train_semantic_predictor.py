@@ -323,12 +323,13 @@ from torch.utils import data
 from sklearn.preprocessing import StandardScaler
 import torch.nn.functional as F
 from einops import rearrange
-# import joblib
 
 
 # ==========================================
 # Config
 # ==========================================
+MODE = "train"   # options: "train", "negative"
+
 batch_size    = 32
 num_epochs    = 200
 lr            = 5e-4
@@ -572,17 +573,15 @@ def load_subject_data(subname, feature_types):
 # Main
 # ==========================================
 if __name__ == "__main__":
-    clip_embeddings = np.load(CLIP_EMB_PATH)                 # [7,40,5,77,768]
-    clip_embeddings = clip_embeddings.reshape(-1, 77*768)    # [1400, 77*768]
-
-    labels_block = np.repeat(np.arange(40), 5)  # 200 per block (not doubled)
-    labels_all   = np.tile(labels_block, 7)     # 1400 labels
+    clip_embeddings = np.load(CLIP_EMB_PATH)                 
+    clip_embeddings = clip_embeddings.reshape(-1, 77*768)    
+    labels_block = np.repeat(np.arange(40), 5)  # 200 per block
+    labels_all   = np.tile(labels_block, 7)     # 1400 total
 
     sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else [subject_name]
 
     for subname in sub_list:
-        print(f"\n=== Training subject {subname} with {FEATURE_TYPES} ===")
-
+        print(f"\n=== Processing subject {subname} with {FEATURE_TYPES} (mode={MODE}) ===")
         features = load_subject_data(subname, FEATURE_TYPES)
 
         samples_per_block = 40 * 5
@@ -594,9 +593,7 @@ if __name__ == "__main__":
         if CLASS_SUBSET is not None:
             mask = np.isin(L, CLASS_SUBSET)
             features, Y, L = features[mask], Y[mask], L[mask]
-
-        # block structure: 7 blocks → first 6 train, last 1 test
-        samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5
+            samples_per_block = len(CLASS_SUBSET) * 5
 
         train_idx = np.arange(0, 6*samples_per_block)
         test_idx  = np.arange(6*samples_per_block, 7*samples_per_block)
@@ -605,7 +602,18 @@ if __name__ == "__main__":
         Y_train, Y_test = Y[train_idx], Y[test_idx]
         L_train, L_test = L[train_idx], L[test_idx]
 
-        # scalers
+        if MODE == "negative":
+            # --- Compute and save negative EEG ---
+            negative_eeg = X_test.mean(axis=0)  # (feature_dim,)
+            neg_tag = f"negative_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}"
+            if CLASS_SUBSET is not None:
+                neg_tag += "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
+            neg_path = os.path.join(SEMANTIC_CKPT_DIR, f"{neg_tag}.npy")
+            np.save(neg_path, negative_eeg.astype(np.float32))
+            print(f"Saved negative EEG → {neg_path}, shape {negative_eeg.shape}")
+            continue
+
+        # --- Otherwise: normal training ---
         scaler_train = StandardScaler().fit(X_train)
         X_train = scaler_train.transform(X_train)
         scaler_test = StandardScaler().fit(X_test)
