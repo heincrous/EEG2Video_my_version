@@ -74,8 +74,7 @@ class LatentsTextDataset(Dataset):
         self.labels    = labels_all
         self.tokenizer = tokenizer
 
-        print(f"Dataset prepared: {self.latents.shape[0]} clips "
-              f"(split={split}, subset={class_subset})")
+        print(f"Dataset prepared: {self.latents.shape[0]} clips (subset={class_subset})")
 
     def __len__(self): 
         return len(self.latents)

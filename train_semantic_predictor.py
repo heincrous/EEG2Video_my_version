@@ -431,9 +431,6 @@ def contrastive_loss_fn(y_hat, y, margin=1.0):
 
 
 # ==========================================
-# Training loop
-# ==========================================
-# ==========================================
 # Training loop (no validation)
 # ==========================================
 def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject"):
@@ -577,10 +574,9 @@ def load_subject_data(subname, feature_types):
 if __name__ == "__main__":
     clip_embeddings = np.load(CLIP_EMB_PATH)                 # [7,40,5,77,768]
     clip_embeddings = clip_embeddings.reshape(-1, 77*768)    # [1400, 77*768]
-    clip_embeddings = np.repeat(clip_embeddings, 2, axis=0)  # [2800, 77*768]
 
-    labels_block = np.repeat(np.arange(40), 5*2)  # per block labels
-    labels_all   = np.tile(labels_block, 7)
+    labels_block = np.repeat(np.arange(40), 5)  # 200 per block (not doubled)
+    labels_all   = np.tile(labels_block, 7)     # 1400 labels
 
     sub_list = os.listdir(FEATURE_PATHS[FEATURE_TYPES[0]]) if USE_ALL_SUBJECTS else [subject_name]
 
