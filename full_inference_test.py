@@ -156,8 +156,8 @@ with torch.no_grad():
     empty_inputs = tokenizer([""], padding="max_length", max_length=77, return_tensors="pt")
     empty_ids    = empty_inputs.input_ids.to(device)
     empty_emb    = text_encoder(empty_ids)[0]  # (1,77,768)
-# empty_emb = empty_emb.to(torch.float16).to(device)
-empty_emb = empty_emb.to(device)  # no manual cast
+empty_emb = empty_emb.to(torch.float16).to(device)
+# empty_emb = empty_emb.to(device)  # no manual cast
 
 # === Load pipeline ===
 pipe = TuneAVideoPipeline(
