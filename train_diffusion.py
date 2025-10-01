@@ -24,7 +24,7 @@ from core.unet import UNet3DConditionModel
 # Config
 # ==========================================
 train_batch_size       = 2
-num_epochs             = 10
+num_epochs             = 2
 learning_rate          = 3e-5
 gradient_accumulation  = 1
 gradient_checkpointing = True
@@ -103,6 +103,12 @@ def main():
     )
     if seed is not None:
         set_seed(seed)
+
+    if True:  # enable scaling
+        learning_rate = (
+            learning_rate * gradient_accumulation * train_batch_size * accelerator.num_processes
+        )
+        print(f"Scaled LR = {learning_rate:.2e}")
 
     # load pretrained models
     noise_scheduler = DDPMScheduler.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="scheduler")
