@@ -58,13 +58,13 @@ print("Negative embedding shape:", neg_embeddings.shape)
 unet = UNet3DConditionModel.from_pretrained(
     FINETUNED_SD_PATH,
     subfolder="unet",
-    torch_dtype=torch.float32
+    torch_dtype=torch.float16
 ).to(device)
 
 pipe = TuneAVideoPipeline.from_pretrained(
     PRETRAINED_SD_PATH,
     unet=unet,
-    torch_dtype=torch.float32
+    torch_dtype=torch.float16
 ).to(device)
 pipe.enable_vae_slicing()
 
@@ -72,7 +72,7 @@ def run_inference():
     video_length, fps = 6, 3  # 2 seconds
     video = pipe(
         model=None,
-        eeg=clip_embeddings,         # BLIP→CLIP embedding for chosen caption
+        eeg=clip_embeddings, # BLIP→CLIP embedding for chosen caption
         negative_eeg=None, # mean subset embedding
         latents=None,
         video_length=video_length,
