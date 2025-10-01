@@ -596,7 +596,7 @@ if __name__ == "__main__":
             features, Y, L = features[mask], Y[mask], L[mask]
 
         # block structure: 7 blocks → first 6 train, last 1 test
-        samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5 * 2
+        samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5
 
         train_idx = np.arange(0, 6*samples_per_block)
         test_idx  = np.arange(6*samples_per_block, 7*samples_per_block)
