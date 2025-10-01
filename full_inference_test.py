@@ -88,8 +88,8 @@ def run_inference():
     video_length, fps = 6, 3  # 2 seconds
     video = pipe(
         model=None,
-        eeg=clip_embeddings, # BLIP→CLIP embedding for chosen caption
-        negative_eeg=neg_embeddings, # mean subset embedding
+        eeg=clip_embeddings.to(device).to(torch.float16), # BLIP→CLIP embedding for chosen caption
+        negative_eeg=neg_embeddings.to(device).to(torch.float16), # mean subset embedding
         latents=None,
         video_length=video_length,
         height=288,
