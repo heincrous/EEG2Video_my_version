@@ -58,6 +58,7 @@ if NEG_MODE == "mean":
         dtype=torch.float16
     ).to(device)
     print("Negative embedding mode: MEAN")
+
 elif NEG_MODE == "empty":
     tokenizer = CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer")
     text_encoder = CLIPTextModel.from_pretrained(PRETRAINED_SD_PATH, subfolder="text_encoder").to(device)
@@ -67,8 +68,14 @@ elif NEG_MODE == "empty":
         empty_emb    = text_encoder(empty_ids)[0]  # (1,77,768)
     neg_embeddings = empty_emb.to(torch.float16).to(device)
     print("Negative embedding mode: EMPTY STRING")
+
+elif NEG_MODE == "eeg":
+    neg_np = np.load(NEG_PATH)  # should be shape (1,77,768)
+    neg_embeddings = torch.tensor(neg_np, dtype=torch.float16).to(device)
+    print(f"Negative embedding mode: EEG FILE → {NEG_PATH}")
+
 else:
-    raise ValueError("NEG_MODE must be 'empty' or 'mean'.")
+    raise ValueError("NEG_MODE must be 'empty', 'mean', or 'eeg'.")
 
 # ==========================================
 # Run inference over all semantic embeddings
