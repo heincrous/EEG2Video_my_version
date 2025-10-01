@@ -8,6 +8,12 @@ from sklearn.preprocessing import StandardScaler
 from train_semantic_predictor import SemanticPredictor, FEATURE_PATHS, run_device
 
 # ==========================================
+# Config
+# ==========================================
+MODE = "negative"   # options: "predict", "negative"
+
+
+# ==========================================
 # Paths
 # ==========================================
 SEMANTIC_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
@@ -98,14 +104,38 @@ model.load_state_dict(state_dict)
 model.eval()
 
 # ==========================================
-# 4. Run inference
+# 4. Run inference or negative
 # ==========================================
-with torch.no_grad():
-    eeg_tensor = torch.tensor(X_test, dtype=torch.float32).to(run_device)
-    preds = model(eeg_tensor).cpu().numpy()
+if MODE == "predict":
+    with torch.no_grad():
+        eeg_tensor = torch.tensor(X_test, dtype=torch.float32).to(run_device)
+        preds = model(eeg_tensor).cpu().numpy()
 
-# reshape to (N,77,768)
-preds = preds.reshape(-1, 77, 768)
+    # reshape to (N,77,768)
+    preds = preds.reshape(-1, 77, 768)
+
+    # save
+    base_name = ckpt_file.replace(".pt","")
+    out_path  = os.path.join(OUTPUT_DIR, f"embeddings_{base_name}.npy")
+    np.save(out_path, preds.astype(np.float32))
+    print("Saved semantic embeddings to:", out_path)
+    print("Shape:", preds.shape)
+
+elif MODE == "negative":
+    # Compute mean EEG feature from the test set
+    X_neg = X_test.mean(axis=0, keepdims=True)  # shape (1, feat_dim)
+
+    with torch.no_grad():
+        neg_pred = model(torch.tensor(X_neg, dtype=torch.float32).to(run_device))
+        neg_pred = neg_pred.cpu().numpy().reshape(1, 77, 768)
+
+    # save
+    neg_tag = ckpt_file.replace(".pt", "") + "_negative"
+    out_path = os.path.join(OUTPUT_DIR, f"{neg_tag}.npy")
+    np.save(out_path, neg_pred.astype(np.float32))
+    print("Saved NEGATIVE semantic embedding to:", out_path)
+    print("Shape:", neg_pred.shape)
+    
 
 # ==========================================
 # 5. Save outputs
