@@ -297,6 +297,7 @@ class TuneAVideoPipeline(DiffusionPipeline):
             generator,
             latents,
         )
+        latents = latents.to(device).to(torch.float16)
         latents_dtype = latents.dtype
 
         # Prepare extra step kwargs.
