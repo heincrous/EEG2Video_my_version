@@ -82,7 +82,7 @@ pipe = TuneAVideoPipeline.from_pretrained(
     unet=unet,
     torch_dtype=torch.float16
 ).to(device)
-pipe.enable_vae_slicing()
+# pipe.enable_vae_slicing()
 
 def run_inference():
     fps = 3  # 2 seconds
