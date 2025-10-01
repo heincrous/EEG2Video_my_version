@@ -24,7 +24,7 @@ from core.unet import UNet3DConditionModel
 # Config
 # ==========================================
 train_batch_size       = 2
-num_epochs             = 1
+num_epochs             = 10
 learning_rate          = 3e-5
 gradient_accumulation  = 1
 gradient_checkpointing = True
@@ -111,9 +111,17 @@ def main():
     vae             = AutoencoderKL.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="vae")
     unet            = UNet3DConditionModel.from_pretrained_2d(PRETRAINED_MODEL_PATH, subfolder="unet")
 
+        # === Freeze VAE and text encoder ===
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
-    unet.requires_grad_(True)
+
+    # === Fine-tune only selected UNet attention modules ===
+    unet.requires_grad_(False)  # freeze everything
+    for name, module in unet.named_modules():
+        if name.endswith(("attn1.to_q", "attn2.to_q", "attn_temp")):
+            for params in module.parameters():
+                params.requires_grad = True
+
     if gradient_checkpointing:
         unet.enable_gradient_checkpointing()
 
