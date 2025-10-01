@@ -164,8 +164,9 @@ class TuneAVideoPipeline(DiffusionPipeline):
                 dummy = np.zeros((1, 77, 768), dtype=np.float16)
                 np.save(negative_path, dummy)
 
+            unet_dtype = next(self.unet.parameters()).dtype
             uncond_embeddings = np.load(negative_path)
-            uncond_embeddings = torch.from_numpy(uncond_embeddings).cuda()
+            uncond_embeddings = torch.from_numpy(uncond_embeddings).to(device, dtype=unet_dtype)
             # ----------------------------------------------------------
             eeg_embeddings = torch.cat([uncond_embeddings, eeg_embeddings])
 
