@@ -24,7 +24,7 @@ BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/
 SEM_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/embeddings_semantic_predictor_DE_sub1_subset1-10-12-16-19-23-25-31-34-39.npy"
 NEG_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/semantic_predictor_DE_sub1_subset1-10-12-16-19-23-25-31-34-39_negative.npy"  # from pipeline output
 
-NEG_MODE = "mean"   # choose: "empty" or "mean"
+NEG_MODE = "eeg"   # choose: "empty" or "mean"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
