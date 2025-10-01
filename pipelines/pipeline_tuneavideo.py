@@ -29,7 +29,7 @@ from einops import rearrange
 # === FIX: add repo root to sys.path so core_files is visible ===
 import sys, os
 repo_root = "/content/EEG2Video_my_version"
-sys.path.append(os.path.join(repo_root, "core_files"))
+sys.path.append(os.path.join(repo_root, "core"))
 
 from core.unet import UNet3DConditionModel
 
