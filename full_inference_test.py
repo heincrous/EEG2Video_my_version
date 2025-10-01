@@ -6,7 +6,7 @@ from diffusers import AutoencoderKL, DDIMScheduler
 from transformers import CLIPTokenizer, CLIPTextModel
 
 from core.unet import UNet3DConditionModel
-from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
+from pipelines.my_pipeline import TuneAVideoPipeline
 from core.util import save_videos_grid  # helper they use
 
 # ==========================================
@@ -21,9 +21,10 @@ CLASS_SUBSET       = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]  # your chosen subs
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-device = "cuda"
+# === MEMORY CONFIG ===
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 gc.collect(); torch.cuda.empty_cache()
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # === Load BLIP captions ===
 blip_text = np.load(BLIP_TEXT_PATH, allow_pickle=True)  # shape (7,40,5)
@@ -71,24 +72,22 @@ np.save(os.path.join(save_dir, "negative_empty.npy"), empty_emb.detach().cpu().n
 print("Saved negative_mean.npy and negative_empty.npy to", save_dir)
 
 # === Load pipeline ===
-unet = UNet3DConditionModel.from_pretrained(
-    FINETUNED_SD_PATH,
-    subfolder="unet",
-    torch_dtype=torch.float16
-).to(device)
-
-pipe = TuneAVideoPipeline.from_pretrained(
-    PRETRAINED_SD_PATH,
-    unet=unet,
-    torch_dtype=torch.float16
-).to(device)
-# pipe.enable_vae_slicing()
+pipe = TuneAVideoPipeline(
+    vae=AutoencoderKL.from_pretrained(PRETRAINED_SD_PATH, subfolder="vae", torch_dtype=torch.float16),
+    text_encoder=CLIPTextModel.from_pretrained(PRETRAINED_SD_PATH, subfolder="text_encoder", torch_dtype=torch.float16),
+    tokenizer=CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer"),
+    unet=UNet3DConditionModel.from_pretrained_2d(FINETUNED_SD_PATH, subfolder="unet"),
+    scheduler=DDIMScheduler.from_pretrained(PRETRAINED_SD_PATH, subfolder="scheduler"),
+)
+pipe.unet.to(torch.float16)
+pipe.enable_vae_slicing()
+pipe = pipe.to(device)
 
 def run_inference():
     fps = 3  # 2 seconds
     video = pipe(
-        embeddings=clip_embeddings.to(device).to(torch.float16),   # (1,77,768)
-        negative_embeds=empty_emb.to(device).to(torch.float16),    # unconditional embedding
+        prompt=clip_embeddings.to(device).to(torch.float16),          # precomputed [1,77,768]
+        negative_prompt=empty_emb.to(device).to(torch.float16),       # unconditional [1,77,768]
         video_length=6,
         height=288,
         width=512,
