@@ -164,7 +164,7 @@ class TuneAVideoPipeline(DiffusionPipeline):
         eeg_embeddings = eeg_embeddings.view(bs_embed * num_videos_per_eeg, seq_len, -1)
 
         if do_classifier_guidance:
-            uncond_embeddings = np.load('/content/drive/MyDrive/EEG2Video_checkpoints/negative_mean.npy') # update
+            uncond_embeddings = np.load('/content/drive/MyDrive/EEG2Video_checkpoints/negative_empty.npy') # update
             uncond_embeddings = torch.from_numpy(uncond_embeddings).cuda()
             eeg_embeddings = torch.cat([uncond_embeddings, eeg_embeddings])
             eeg_embeddings = eeg_embeddings.to(device).to(torch.float16) # update
