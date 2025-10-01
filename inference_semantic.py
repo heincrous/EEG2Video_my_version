@@ -10,7 +10,7 @@ from train_semantic_predictor import SemanticPredictor, FEATURE_PATHS, run_devic
 # ==========================================
 # Config
 # ==========================================
-MODE = "negative"   # options: "predict", "negative"
+MODE = "predict"   # options: "predict", "negative"
 
 
 # ==========================================
