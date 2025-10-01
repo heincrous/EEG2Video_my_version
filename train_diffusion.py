@@ -24,7 +24,7 @@ from core.unet import UNet3DConditionModel
 # Config
 # ==========================================
 train_batch_size       = 4
-num_epochs             = 200
+num_epochs             = 50
 learning_rate          = 3e-5
 gradient_accumulation  = 1
 gradient_checkpointing = True
@@ -33,7 +33,7 @@ max_grad_norm          = 1.0
 seed                   = 42
 
 # restrict to certain classes (0–39); set to None for all
-CLASS_SUBSET           = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
+CLASS_SUBSET           = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
 
 # paths
 PRETRAINED_MODEL_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
