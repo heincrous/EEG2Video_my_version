@@ -47,7 +47,7 @@ os.makedirs(SAVE_ROOT, exist_ok=True)
 # Dataset
 # ==========================================
 class LatentsTextDataset(Dataset):
-    def __init__(self, latents_path, text_path, tokenizer, class_subset=None, split="train"):
+    def __init__(self, latents_path, text_path, tokenizer, class_subset=None):
         latents = np.load(latents_path, allow_pickle=True)  # (7,40,5,6,4,36,64)
         texts   = np.load(text_path, allow_pickle=True)     # (7,40,5)
 
@@ -55,17 +55,10 @@ class LatentsTextDataset(Dataset):
         latents = latents.reshape(7, 40, 5, 6, 4, 36, 64)
         texts   = texts.reshape(7, 40, 5)
 
-        # split by block
-        if split == "train":
-            latents = latents[:6].reshape(-1, 6, 4, 36, 64)  # blocks 0–5
-            texts   = texts[:6].reshape(-1)
-            block_count = 6
-        elif split == "test":
-            latents = latents[6:].reshape(-1, 6, 4, 36, 64)  # block 6 only
-            texts   = texts[6:].reshape(-1)
-            block_count = 1
-        else:
-            raise ValueError(f"Unknown split: {split}")
+        # NEW (use all 7 blocks for training)
+        latents = latents.reshape(-1, 6, 4, 36, 64)
+        texts   = texts.reshape(-1)
+        block_count = 7
 
         # build class labels
         labels_block = np.repeat(np.arange(40), 5)      # 200 per block
@@ -131,22 +124,14 @@ def main():
     latents_path = os.path.join(DATA_ROOT, "Video_latents/Video_latents.npy")
     text_path    = os.path.join(DATA_ROOT, "BLIP_text/BLIP_text.npy")
     train_dataset = LatentsTextDataset(latents_path, text_path, tokenizer,
-                                       class_subset=CLASS_SUBSET, split="train")
-    test_dataset  = LatentsTextDataset(latents_path, text_path, tokenizer,
-                                       class_subset=CLASS_SUBSET, split="test")
-    print(f"Loaded {len(train_dataset)} train and {len(test_dataset)} test samples")
+                                       class_subset=CLASS_SUBSET)
+    
+    print(f"Loaded {len(train_dataset)} training samples")
 
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=train_batch_size,
         shuffle=True,
-        num_workers=os.cpu_count(),
-        pin_memory=True,
-    )
-    test_dataloader = DataLoader(
-        test_dataset,
-        batch_size=train_batch_size,
-        shuffle=False,
         num_workers=os.cpu_count(),
         pin_memory=True,
     )
