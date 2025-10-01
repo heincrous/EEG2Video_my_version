@@ -167,6 +167,7 @@ class TuneAVideoPipeline(DiffusionPipeline):
             uncond_embeddings = np.load('/content/drive/MyDrive/EEG2Video_checkpoints/negative_mean.npy') # update
             uncond_embeddings = torch.from_numpy(uncond_embeddings).cuda()
             eeg_embeddings = torch.cat([uncond_embeddings, eeg_embeddings])
+            eeg_embeddings = eeg_embeddings.to(device).to(torch.float16) # update
         return eeg_embeddings
 
     def decode_latents(self, latents):
@@ -297,7 +298,7 @@ class TuneAVideoPipeline(DiffusionPipeline):
             generator,
             latents,
         )
-        latents = latents.to(device).to(torch.float16)
+        latents = latents.to(device).to(torch.float16) # update
         latents_dtype = latents.dtype
 
         # Prepare extra step kwargs.
