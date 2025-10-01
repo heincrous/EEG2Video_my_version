@@ -124,7 +124,7 @@ PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffus
 FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final_subset1-10-12-16-19-23-25-31-34-39"
 OUTPUT_DIR         = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference"
 BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
-CLIP_EMB_PATH      = "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings.npy"   # precomputed CLIP embeddings
+CLIP_EMB_PATH      = "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy"   # precomputed CLIP embeddings
 NEG_PATH           = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_negative.npy"     # optional saved negative
 
 NEG_MODE = "empty"   # choose: "empty", "mean", or "eeg"
