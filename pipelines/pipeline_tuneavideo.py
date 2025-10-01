@@ -236,7 +236,7 @@ class TuneAVideoPipeline(DiffusionPipeline):
 
             # --- NEW CODE: create negative.npy if it doesn't exist ---
             import os
-            negative_path = os.path.join(os.path.dirname(__file__), '..', 'core_files', 'negative.npy')
+            negative_path = os.path.join(os.path.dirname(__file__), '..', 'core', 'negative.npy')
             negative_path = os.path.abspath(negative_path)
             if not os.path.exists(negative_path):
                 np.save(negative_path, uncond_embeddings.detach().cpu().numpy())
