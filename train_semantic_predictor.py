@@ -603,14 +603,32 @@ if __name__ == "__main__":
         L_train, L_test = L[train_idx], L[test_idx]
 
         if MODE == "negative":
-            # --- Compute and save negative EEG ---
+            # --- Compute and save negative EEG + its embedding ---
             negative_eeg = X_test.mean(axis=0)  # (feature_dim,)
-            neg_tag = f"negative_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}"
+            neg_tensor   = torch.tensor(negative_eeg, dtype=torch.float32).unsqueeze(0).to(run_device)
+
+            # load your trained checkpoint
+            ckpt_files = [f for f in os.listdir(SEMANTIC_CKPT_DIR) if f.startswith("semantic_predictor")]
+            if not ckpt_files:
+                raise FileNotFoundError("No semantic predictor checkpoint found!")
+            ckpt = torch.load(os.path.join(SEMANTIC_CKPT_DIR, ckpt_files[0]), map_location=run_device)
+
+            input_dim = features.shape[1]
+            modelnet = SemanticPredictor(input_dim).to(run_device)
+            modelnet.load_state_dict(ckpt["state_dict"])
+            modelnet.eval()
+
+            with torch.no_grad():
+                neg_embedding = modelnet(neg_tensor).cpu().numpy()  # (1,77*768)
+
+            # save both the raw negative EEG and the embedding
+            base_tag = f"negative_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}"
             if CLASS_SUBSET is not None:
-                neg_tag += "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
-            neg_path = os.path.join(SEMANTIC_CKPT_DIR, f"{neg_tag}.npy")
-            np.save(neg_path, negative_eeg.astype(np.float32))
-            print(f"Saved negative EEG → {neg_path}, shape {negative_eeg.shape}")
+                base_tag += "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
+
+            np.save(os.path.join(SEMANTIC_CKPT_DIR, base_tag + "_raw.npy"), negative_eeg.astype(np.float32))
+            np.save(os.path.join(SEMANTIC_CKPT_DIR, base_tag + "_emb.npy"), neg_embedding.astype(np.float32))
+            print(f"Saved negative EEG and embedding → {base_tag}_raw.npy / {base_tag}_emb.npy")
             continue
 
         # --- Otherwise: normal training ---
