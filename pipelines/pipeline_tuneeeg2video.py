@@ -449,6 +449,18 @@ class TuneAVideoPipeline(DiffusionPipeline):
         # scale the initial noise by the std required by the scheduler
         latents = latents * self.scheduler.init_noise_sigma
         return latents
+    
+    def decode_latents(self, latents):
+        video_length = latents.shape[2]
+        latents = 1 / 0.18215 * latents
+        latents = rearrange(latents, "b c f h w -> (b f) c h w")
+        video = self.vae.decode(latents).sample
+        video = rearrange(video, "(b f) c h w -> b c f h w", f=video_length)
+        video = (video / 2 + 0.5).clamp(0, 1)
+        # always cast to float32 for compatibility
+        video = video.cpu().float().numpy()
+        return video
+
 
     @torch.no_grad()
     def __call__(
