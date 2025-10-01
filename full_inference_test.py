@@ -32,9 +32,7 @@ print("Using caption:", caption)
 
 # === Load tokenizer + text encoder ===
 tokenizer    = CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer")
-text_encoder = CLIPTextModel.from_pretrained(
-    PRETRAINED_SD_PATH, subfolder="text_encoder", torch_dtype=torch.float16
-).to(device)
+text_encoder = CLIPTextModel.from_pretrained(PRETRAINED_SD_PATH, subfolder="text_encoder").to(device)
 
 # --- Encode target caption ---
 text_inputs = tokenizer(caption, padding="max_length", max_length=77, return_tensors="pt")
@@ -60,13 +58,13 @@ print("Negative embedding shape:", neg_embeddings.shape)
 unet = UNet3DConditionModel.from_pretrained(
     FINETUNED_SD_PATH,
     subfolder="unet",
-    torch_dtype=torch.float16
+    torch_dtype=torch.float32
 ).to(device)
 
 pipe = TuneAVideoPipeline.from_pretrained(
     PRETRAINED_SD_PATH,
     unet=unet,
-    torch_dtype=torch.float16
+    torch_dtype=torch.float32
 ).to(device)
 pipe.enable_vae_slicing()
 
@@ -75,7 +73,7 @@ def run_inference():
     video = pipe(
         model=None,
         eeg=clip_embeddings,         # BLIP→CLIP embedding for chosen caption
-        negative_eeg=neg_embeddings, # mean subset embedding
+        negative_eeg=None, # mean subset embedding
         latents=None,
         video_length=video_length,
         height=288,
