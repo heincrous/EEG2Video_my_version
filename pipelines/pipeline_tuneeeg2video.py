@@ -403,6 +403,53 @@ class TuneAVideoPipeline(DiffusionPipeline):
 
         return embeddings
 
+    def prepare_latents(
+        self,
+        batch_size,
+        num_channels_latents,
+        video_length,
+        height,
+        width,
+        dtype,
+        device,
+        generator,
+        latents=None
+    ):
+        shape = (
+            batch_size,
+            num_channels_latents,
+            video_length,
+            height // self.vae_scale_factor,
+            width // self.vae_scale_factor,
+        )
+
+        if isinstance(generator, list) and len(generator) != batch_size:
+            raise ValueError(
+                f"You passed {len(generator)} generators, but requested a batch size of {batch_size}. "
+                "Make sure they match."
+            )
+
+        if latents is None:
+            rand_device = "cpu" if device.type == "mps" else device
+
+            if isinstance(generator, list):
+                shape = (1,) + shape[1:]
+                latents = [
+                    torch.randn(shape, generator=generator[i], device=rand_device, dtype=dtype)
+                    for i in range(batch_size)
+                ]
+                latents = torch.cat(latents, dim=0).to(device)
+            else:
+                latents = torch.randn(shape, generator=generator, device=rand_device, dtype=dtype).to(device)
+        else:
+            if latents.shape != shape:
+                raise ValueError(f"Unexpected latents shape, got {latents.shape}, expected {shape}")
+            latents = latents.to(device)
+
+        # scale the initial noise by the std required by the scheduler
+        latents = latents * self.scheduler.init_noise_sigma
+        return latents
+
     @torch.no_grad()
     def __call__(
         self,
