@@ -85,13 +85,11 @@ pipe = TuneAVideoPipeline.from_pretrained(
 pipe.enable_vae_slicing()
 
 def run_inference():
-    video_length, fps = 6, 3  # 2 seconds
+    fps = 3  # 2 seconds
     video = pipe(
-        model=None,
-        eeg=clip_embeddings.to(device).to(torch.float16), # BLIP→CLIP embedding for chosen caption
-        negative_eeg=neg_embeddings.to(device).to(torch.float16), # mean subset embedding
-        latents=None,
-        video_length=video_length,
+        embeddings=clip_embeddings.to(device).to(torch.float16),   # (1,77,768)
+        negative_embeds=empty_emb.to(device).to(torch.float16),    # unconditional embedding
+        video_length=6,
         height=288,
         width=512,
         num_inference_steps=100,
