@@ -328,7 +328,7 @@ from einops import rearrange
 # ==========================================
 # Config
 # ==========================================
-MODE = "train"   # options: "train", "negative"
+MODE = "negative"   # options: "train", "negative"
 
 batch_size    = 32
 num_epochs    = 200
