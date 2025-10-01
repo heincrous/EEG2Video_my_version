@@ -135,13 +135,5 @@ elif MODE == "negative":
     np.save(out_path, neg_pred.astype(np.float32))
     print("Saved NEGATIVE semantic embedding to:", out_path)
     print("Shape:", neg_pred.shape)
-    
 
-# ==========================================
-# 5. Save outputs
-# ==========================================
-base_name = ckpt_file.replace(".pt","")
-out_path  = os.path.join(OUTPUT_DIR, f"embeddings_{base_name}.npy")
-np.save(out_path, preds)
-print("Saved semantic embeddings to:", out_path)
-print("Shape:", preds.shape)
+
