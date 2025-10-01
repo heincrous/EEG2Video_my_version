@@ -59,34 +59,8 @@ print("Class subset:", class_subset)
 
 
 # ==========================================
-# 2. Load scalers
+# 2. Load EEG features (block 7 = test set)
 # ==========================================
-# scalers = {}
-# for ft in feature_types:
-#     scaler_file = f"scaler_{ft}_{subject_tag}"
-#     if class_subset is not None:
-#         scaler_file += "_subset" + "-".join(str(c) for c in class_subset)
-#     scaler_file += ".pkl"
-#     scaler_path = os.path.join(SEMANTIC_CKPT_DIR, scaler_file)
-#     scalers[ft] = joblib.load(scaler_path)
-#     print("Loaded scaler:", scaler_file)
-
-
-# ==========================================
-# 3. Load EEG features (block 7 = test set)
-# ==========================================
-# def load_features(subname, ft):
-#     path = os.path.join(FEATURE_PATHS[ft], subname)
-#     arr = np.load(path)
-#     if ft in ["DE","PSD"]:
-#         arr = arr.reshape(-1, 62*5)
-#     elif ft == "segments":
-#         arr = rearrange(arr, "a b c d (w t) -> (a b c w) (d t)", w=2, t=200)
-#     return arr
-
-# samples_per_block = (len(class_subset) if class_subset else 40) * 5 * 2
-# test_idx = np.arange(6 * samples_per_block, 7 * samples_per_block)
-
 def load_features(subname, ft):
     path = os.path.join(FEATURE_PATHS[ft], subname)
     arr = np.load(path)  # (7,40,5,2,62,5) for DE/PSD, (7,40,5,62,400) for segments
@@ -108,13 +82,6 @@ def load_features(subname, ft):
 samples_per_block = (len(class_subset) if class_subset else 40) * 5 * 2
 test_idx = np.arange(6 * samples_per_block, 7 * samples_per_block)
 
-# features_test = []
-# for ft in feature_types:
-#     arr = load_features(subject_tag + ".npy", ft)
-#     arr = scalers[ft].transform(arr[test_idx].reshape(len(test_idx), -1))
-#     features_test.append(arr)
-# X_test = np.concatenate(features_test, axis=1)
-
 features_test = []
 for ft in feature_types:
     arr = load_features(subject_tag + ".npy", ft)
@@ -127,17 +94,16 @@ X_test = np.concatenate(features_test, axis=1)
 
 
 # ==========================================
-# 4. Build model
+# 3. Build model
 # ==========================================
 input_dim = X_test.shape[1]
 model = SemanticPredictor(input_dim).to(run_device)
-# model.load_state_dict(state_dict, strict=False)
 model.load_state_dict(state_dict)
 model.eval()
 
 
 # ==========================================
-# 5. Run inference
+# 4. Run inference
 # ==========================================
 with torch.no_grad():
     eeg_tensor = torch.tensor(X_test, dtype=torch.float32).to(run_device)
@@ -148,7 +114,7 @@ preds = preds.reshape(-1, 77, 768)
 
 
 # ==========================================
-# 6. Save outputs
+# 5. Save outputs
 # ==========================================
 base_name = ckpt_file.replace(".pt","")
 out_path  = os.path.join(OUTPUT_DIR, f"embeddings_{base_name}.npy")
