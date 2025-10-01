@@ -6,7 +6,7 @@ from diffusers import AutoencoderKL, DDIMScheduler
 from transformers import CLIPTokenizer, CLIPTextModel
 
 from core.unet import UNet3DConditionModel
-from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
+from pipelines.my_pipeline import TuneAVideoPipeline
 from core.util import save_videos_grid
 
 # ==========================================
