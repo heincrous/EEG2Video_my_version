@@ -104,11 +104,12 @@ def main():
     if seed is not None:
         set_seed(seed)
 
-    if True:  # enable scaling
-        learning_rate = (
-            learning_rate * gradient_accumulation * train_batch_size * accelerator.num_processes
-        )
-        print(f"Scaled LR = {learning_rate:.2e}")
+    scaled_lr = (
+        learning_rate * gradient_accumulation * train_batch_size * accelerator.num_processes
+    )
+    print(f"Scaled LR = {scaled_lr:.2e}")
+
+    optimizer = torch.optim.AdamW(unet.parameters(), lr=scaled_lr)
 
     # load pretrained models
     noise_scheduler = DDPMScheduler.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="scheduler")
@@ -130,8 +131,6 @@ def main():
 
     if gradient_checkpointing:
         unet.enable_gradient_checkpointing()
-
-    optimizer = torch.optim.AdamW(unet.parameters(), lr=learning_rate)
 
     # datasets
     latents_path = os.path.join(DATA_ROOT, "Video_latents/Video_latents.npy")
