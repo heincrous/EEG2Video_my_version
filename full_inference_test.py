@@ -52,7 +52,23 @@ with torch.no_grad():
             all_embeddings.append(emb)
 
 neg_embeddings = torch.mean(torch.cat(all_embeddings, dim=0), dim=0, keepdim=True)  # (1,77,768)
-print("Negative embedding shape:", neg_embeddings.shape)
+print("Negative (mean) embedding shape:", neg_embeddings.shape)
+
+# === Save both negative variants ===
+save_dir = "/content/drive/MyDrive/EEG2Video_checkpoints"
+os.makedirs(save_dir, exist_ok=True)
+
+# Save mean embedding
+np.save(os.path.join(save_dir, "negative_mean.npy"), neg_embeddings.detach().cpu().numpy())
+
+# Save empty-prompt embedding
+with torch.no_grad():
+    empty_inputs = tokenizer([""], padding="max_length", max_length=77, return_tensors="pt")
+    empty_ids    = empty_inputs.input_ids.to(device)
+    empty_emb    = text_encoder(empty_ids)[0]  # (1,77,768)
+np.save(os.path.join(save_dir, "negative_empty.npy"), empty_emb.detach().cpu().numpy())
+
+print("Saved negative_mean.npy and negative_empty.npy to", save_dir)
 
 # === Load pipeline ===
 unet = UNet3DConditionModel.from_pretrained(

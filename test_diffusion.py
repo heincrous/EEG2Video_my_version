@@ -57,7 +57,7 @@ video_tensor = result.videos
 print("Result.videos shape:", video_tensor.shape)
 
 # === SAVE GIF (repo method) ===
-SAVE_PATH = "/content/drive/MyDrive/EEG2Video_outputs/test_diffusion_caption.gif"
+SAVE_PATH = "/content/drive/MyDrive/EEG2Video_outputs/test_diffusion/test_diffusion_caption.gif"
 
 frames = result.videos  # tensor shape: (1, C, F, H, W)
 save_videos_grid(frames, SAVE_PATH, fps=fps)
