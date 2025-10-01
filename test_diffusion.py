@@ -36,7 +36,7 @@ pipe = pipe.to(device)
 
 # === PICK ONE CAPTION FROM BLOCK 7 (subset class) ===
 blip_text = np.load(BLIP_TEXT, allow_pickle=True)  # shape (7,40,5)
-caption = blip_text[6, 1, 0]   # Block 7, class=1, clip=0
+caption = blip_text[6, 10, 0]   # Block 7, class=1, clip=0
 print("Testing caption:", caption)
 
 # === RUN INFERENCE ===
