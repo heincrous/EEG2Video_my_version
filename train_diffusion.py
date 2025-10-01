@@ -104,13 +104,6 @@ def main():
     if seed is not None:
         set_seed(seed)
 
-    scaled_lr = (
-        learning_rate * gradient_accumulation * train_batch_size * accelerator.num_processes
-    )
-    print(f"Scaled LR = {scaled_lr:.2e}")
-
-    optimizer = torch.optim.AdamW(unet.parameters(), lr=scaled_lr)
-
     # load pretrained models
     noise_scheduler = DDPMScheduler.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="scheduler")
     tokenizer       = CLIPTokenizer.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="tokenizer")
@@ -118,7 +111,7 @@ def main():
     vae             = AutoencoderKL.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="vae")
     unet            = UNet3DConditionModel.from_pretrained_2d(PRETRAINED_MODEL_PATH, subfolder="unet")
 
-        # === Freeze VAE and text encoder ===
+    # === Freeze VAE and text encoder ===
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
 
@@ -131,6 +124,13 @@ def main():
 
     if gradient_checkpointing:
         unet.enable_gradient_checkpointing()
+
+    # now build optimizer (unet exists here)
+    scaled_lr = (
+        learning_rate * gradient_accumulation * train_batch_size * accelerator.num_processes
+    )
+    print(f"Scaled LR = {scaled_lr:.2e}")
+    optimizer = torch.optim.AdamW(unet.parameters(), lr=scaled_lr)
 
     # datasets
     latents_path = os.path.join(DATA_ROOT, "Video_latents/Video_latents.npy")
