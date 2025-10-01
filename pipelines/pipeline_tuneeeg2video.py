@@ -310,17 +310,30 @@ class TuneAVideoPipeline(DiffusionPipeline):
         timesteps = self.scheduler.timesteps
 
         num_channels_latents = self.unet.in_channels
+        # latents = self.prepare_latents(
+        #     batch_size * num_videos_per_eeg,
+        #     num_channels_latents,
+        #     video_length,
+        #     height,
+        #     width,
+        #     torch.float32,
+        #     device,
+        #     generator,
+        #     latents,
+        # )
+
         latents = self.prepare_latents(
             batch_size * num_videos_per_eeg,
             num_channels_latents,
             video_length,
             height,
             width,
-            torch.float32,
+            eeg_embeddings.dtype,   # 👈 match embeddings / UNet
             device,
             generator,
             latents,
         )
+
         latents_dtype = latents.dtype
 
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
