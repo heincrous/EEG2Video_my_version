@@ -6,6 +6,8 @@ import numpy as np
 from einops import rearrange
 from diffusers import AutoencoderKL, DDIMScheduler
 from transformers import CLIPTokenizer, CLIPTextModel
+from core.util import save_videos_grid  # helper from repo
+
 
 from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
 from core.unet import UNet3DConditionModel
@@ -55,18 +57,11 @@ result = pipe(
 video_tensor = result.videos
 print("Result.videos shape:", video_tensor.shape)
 
-# === SAVE MP4 ===
-frames = (video_tensor[0] * 255).clamp(0,255).to(torch.uint8)
-frames = rearrange(frames, 'c f h w -> f h w c').cpu().numpy()
+# === SAVE GIF (repo method) ===
+SAVE_PATH = "/content/drive/MyDrive/EEG2Video_outputs/test_diffusion_caption.gif"
 
-if frames.shape[-1] > 3:
-    frames = frames[..., :3]
-elif frames.shape[-1] == 1:
-    frames = np.repeat(frames, 3, axis=-1)
-
-writer = imageio.get_writer(SAVE_PATH, fps=fps, codec="libx264")
-for f in frames: writer.append_data(f)
-writer.close()
+frames = result.videos  # tensor shape: (1, C, F, H, W)
+save_videos_grid(frames, SAVE_PATH, fps=fps)
 
 print("Saved test video to:", SAVE_PATH)
 print("Final caption used for generation:", caption)
