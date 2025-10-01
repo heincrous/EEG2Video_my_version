@@ -140,7 +140,7 @@ print("Loaded CLIP embeddings shape:", clip_embs_all.shape)
 
 # --- Choose one embedding by block, class, trial ---
 test_block = 6
-class_id   = 19   # pick class index from your subset
+class_id   = 39   # pick class index from your subset
 trial      = 0    # which of the 5 trials
 
 clip_emb = clip_embs_all[test_block, class_id, trial]  # (77,768)
