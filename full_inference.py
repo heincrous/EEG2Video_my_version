@@ -10,6 +10,7 @@ from core.unet import UNet3DConditionModel
 from pipelines.pipeline_tuneeeg2video import TuneAVideoPipeline
 from core.util import save_videos_grid  # same helper they use
 
+
 # ==========================================
 # Config
 # ==========================================
@@ -51,6 +52,7 @@ pipe = TuneAVideoPipeline.from_pretrained(
 
 pipe.enable_vae_slicing()
 
+
 # ==========================================
 # Negative embedding options
 # ==========================================
@@ -70,6 +72,7 @@ elif USE_NEGATIVE_MODE == "eeg":
 
 else:
     raise ValueError("USE_NEGATIVE_MODE must be 'clip' or 'eeg'")
+
 
 # ==========================================
 # Run inference
