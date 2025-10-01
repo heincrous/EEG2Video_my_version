@@ -79,9 +79,6 @@ else:
 # ==========================================
 # Run inference
 # ==========================================
-# ==========================================
-# Run inference
-# ==========================================
 def run_inference():
     sem_preds = np.load(SEM_PATH)   # shape (N,77,768)
     video_length, fps = 6, 3
@@ -96,7 +93,7 @@ def run_inference():
     for trial in range(trials_per_class):
         for ci, class_id in enumerate(CLASS_SUBSET):
             emb = sem_preds[ci, trial]
-            caption = blip_text[test_block, class_id, trial].item()
+            caption = blip_text[test_block, class_id, trial]  # string already
 
             semantic_pred = torch.tensor(emb, dtype=torch.float32).unsqueeze(0).to(device)
 
