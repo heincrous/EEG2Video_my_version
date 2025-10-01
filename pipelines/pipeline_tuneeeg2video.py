@@ -369,6 +369,20 @@ class TuneAVideoPipeline(DiffusionPipeline):
         )
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
 
+    @property
+    def _execution_device(self):
+        # This tells the pipeline what device to use
+        if self.device != torch.device("meta") or not hasattr(self.unet, "_hf_hook"):
+            return self.device
+        for module in self.unet.modules():
+            if (
+                hasattr(module, "_hf_hook")
+                and hasattr(module._hf_hook, "execution_device")
+                and module._hf_hook.execution_device is not None
+            ):
+                return torch.device(module._hf_hook.execution_device)
+        return self.device
+    
     def _encode_embeddings(self, embeddings, device, num_videos, do_cfg, negative_embeds=None):
         """
         Accepts precomputed CLIP embeddings of shape (B,77,768).
