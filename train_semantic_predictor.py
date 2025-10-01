@@ -585,7 +585,7 @@ if __name__ == "__main__":
 
         features = load_subject_data(subname, FEATURE_TYPES)
 
-        samples_per_block = 40 * 5 * 2
+        samples_per_block = 40 * 5
         valid_len = samples_per_block * 7
         features = features[:valid_len]
         Y = clip_embeddings[:valid_len]
