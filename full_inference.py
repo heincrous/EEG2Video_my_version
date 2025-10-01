@@ -16,11 +16,16 @@ from core.util import save_videos_grid  # same helper they use
 SUBJECT       = "sub1.npy"
 FEATURE_TYPES = ["DE"]
 
+USE_NEGATIVE_MODE = "eeg"   # options: "clip" (empty text prompt) or "eeg" (mean test EEG)
+
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final_subset1-10-12-16-19-23-25-31-34-39"
 OUTPUT_DIR         = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference"
 BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
 SEM_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/embeddings_semantic_predictor_DE_sub1_subset1-10-12-16-19-23-25-31-34-39.npy"
+
+# Path to saved negative EEG from training (if USE_NEGATIVE_MODE="eeg")
+NEG_PATH           = f"/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints/negative_{'_'.join(FEATURE_TYPES)}_{SUBJECT.replace('.npy','')}_subset1-10-12-16-19-23-25-31-34-39.npy"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -46,18 +51,37 @@ pipe = TuneAVideoPipeline.from_pretrained(
 
 pipe.enable_vae_slicing()
 
-# === Build negative embedding using "" trick ===
-tokenizer    = CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer")
-text_encoder = CLIPTextModel.from_pretrained(PRETRAINED_SD_PATH, subfolder="text_encoder").to(device)
-neg_inputs   = tokenizer("", padding="max_length", max_length=77, return_tensors="pt").to(device)
+# ==========================================
+# Negative embedding options
+# ==========================================
+if USE_NEGATIVE_MODE == "clip":
+    # === Build negative embedding using "" trick ===
+    tokenizer    = CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer")
+    text_encoder = CLIPTextModel.from_pretrained(PRETRAINED_SD_PATH, subfolder="text_encoder").to(device)
+    neg_inputs   = tokenizer("", padding="max_length", max_length=77, return_tensors="pt").to(device)
+    with torch.no_grad():
+        negative_embedding = text_encoder(neg_inputs.input_ids)[0]  # (1,77,768)
 
-with torch.no_grad():
-    neg_embeddings = text_encoder(neg_inputs.input_ids)[0]  # (1,77,768)
+elif USE_NEGATIVE_MODE == "eeg":
+    # === Load precomputed negative EEG vector ===
+    if not os.path.exists(NEG_PATH):
+        raise FileNotFoundError(f"Negative EEG file not found: {NEG_PATH}")
+    negative_eeg = np.load(NEG_PATH)  # shape (feature_dim,)
+    # Expand into the CLIP-like shape (1,77,768) by simple tiling
+    # This matches the dimensionality expected by the pipeline
+    negative_embedding = torch.tensor(
+        np.tile(negative_eeg, (77, 768 // negative_eeg.shape[0])),
+        dtype=torch.float32
+    ).unsqueeze(0).to(device)  # (1,77,768)
 
+else:
+    raise ValueError("USE_NEGATIVE_MODE must be 'clip' or 'eeg'")
+
+# ==========================================
+# Run inference
+# ==========================================
 def run_inference():
-    # === Load semantic embeddings ===
     sem_preds = np.load(SEM_PATH)   # shape (N,77,768)
-
     video_length, fps = 6, 3  # 2 seconds
 
     for i, emb in enumerate(sem_preds):
@@ -67,7 +91,7 @@ def run_inference():
         video = pipe(
             model=None,
             eeg=semantic_pred,
-            negative_eeg=neg_embeddings,
+            negative_eeg=negative_embedding,
             latents=None,
             video_length=video_length,
             height=288,
@@ -76,7 +100,6 @@ def run_inference():
             guidance_scale=12.5,
         ).videos
 
-        # === Save video ===
         out_path = os.path.join(OUTPUT_DIR, f"sample_{i}.gif")
         save_videos_grid(video, out_path, fps=fps)
         print(f"Saved: {out_path}")
