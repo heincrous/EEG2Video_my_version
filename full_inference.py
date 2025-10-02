@@ -15,7 +15,7 @@ from core.util import save_videos_grid
 SUBJECT          = "sub1.npy"
 FEATURE_TYPES    = ["DE"]
 
-CLASS_SUBSET     = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
+CLASS_SUBSET     = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
 
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final_subset1-10-12-16-19-23-25-31-34-39"
