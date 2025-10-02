@@ -18,11 +18,11 @@ FEATURE_TYPES    = ["DE"]
 CLASS_SUBSET     = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
 
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
-FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final_subset1-10-12-16-19-23-25-31-34-39"
+FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final_subset0-2-4-10-11-12-22-26-29-37"
 OUTPUT_DIR         = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference"
 BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
-SEM_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/embeddings_semantic_predictor_DE_sub1_subset1-10-12-16-19-23-25-31-34-39.npy"
-NEG_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/semantic_predictor_DE_sub1_subset1-10-12-16-19-23-25-31-34-39_negative.npy"  # from pipeline output
+SEM_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/embeddings_semantic_predictor_DE_sub1_subset0-2-4-10-11-12-22-26-29-37.npy"
+# NEG_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/semantic_predictor_DE_sub1_subset1-10-12-16-19-23-25-31-34-39_negative.npy"  # from pipeline output
 
 NEG_MODE = "empty"   # choose: "empty" or "mean"
 
