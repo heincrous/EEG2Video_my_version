@@ -1,14 +1,14 @@
 # ==========================================
-# Diffusion Training
+# Diffusion Training (with option for variants + class distribution printout)
 # ==========================================
 import os
-from typing import Optional
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from einops import rearrange
+from collections import Counter
 
 from diffusers import AutoencoderKL, DDPMScheduler
 from diffusers.optimization import get_scheduler
@@ -35,10 +35,16 @@ seed                   = 42
 # restrict to certain classes (0–39); set to None for all
 CLASS_SUBSET           = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
 
-# paths
+# file paths
 PRETRAINED_MODEL_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 DATA_ROOT              = "/content/drive/MyDrive/EEG2Video_data/processed"
 SAVE_ROOT              = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints"
+
+# choose whether to use variant latents or original
+USE_VARIANTS           = True
+ORIGINAL_FILE          = "Video_latents/Video_latents.npy"
+VARIANTS_FILE          = "Video_latents/Video_latents_variants.npy"
+TEXT_FILE              = "BLIP_text/BLIP_text.npy"
 
 os.makedirs(SAVE_ROOT, exist_ok=True)
 
@@ -48,33 +54,46 @@ os.makedirs(SAVE_ROOT, exist_ok=True)
 # ==========================================
 class LatentsTextDataset(Dataset):
     def __init__(self, latents_path, text_path, tokenizer, class_subset=None):
-        latents = np.load(latents_path, allow_pickle=True).astype(np.float32)  # (7,40,5,6,4,36,64)
-        texts   = np.load(text_path, allow_pickle=True)     # (7,40,5)
+        latents = np.load(latents_path, allow_pickle=True).astype(np.float32)
+        texts   = np.load(text_path, allow_pickle=True)
 
-        # reshape
-        latents = latents.reshape(7, 40, 5, 6, 4, 36, 64)
-        texts   = texts.reshape(7, 40, 5)
+        # Shapes:
+        # - original: (7,40,5,6,4,36,64)
+        # - variants: (7,40,5*N,6,4,36,64)
+        if latents.ndim != 7:
+            raise ValueError(f"Expected 7D latents, got {latents.shape}")
 
-        # NEW (use all 7 blocks for training)
+        block_count, num_classes, num_clips = latents.shape[:3]
+
+        # flatten blocks/clips
         latents = latents.reshape(-1, 6, 4, 36, 64)
-        texts   = texts.reshape(-1)
-        block_count = 7
+        texts   = texts.reshape(block_count, num_classes, -1).reshape(-1)
 
         # build class labels
-        labels_block = np.repeat(np.arange(40), 5)      # 200 per block
-        labels_all   = np.tile(labels_block, block_count)  # 1200 for train (6×200) or 200 for test
+        labels_block = np.repeat(np.arange(num_classes), num_clips)
+        labels_all   = np.tile(labels_block, block_count)
 
         # apply class subset filter
         if class_subset is not None:
             mask = np.isin(labels_all, class_subset)
             latents, texts, labels_all = latents[mask], texts[mask], labels_all[mask]
 
+        # infer number of variants (divide by 5 original clips)
+        variants_per_clip = num_clips // 5
+
         self.latents   = latents
         self.texts     = texts
         self.labels    = labels_all
         self.tokenizer = tokenizer
 
-        print(f"Dataset prepared: {self.latents.shape[0]} clips (subset={class_subset})")
+        print(f"Dataset prepared: {self.latents.shape[0]} samples "
+              f"(subset={class_subset}, variants/clip={variants_per_clip}, path={latents_path})")
+
+        # print distribution after masking
+        counts = Counter(self.labels)
+        print("Class distribution (after subset filter):")
+        for c in sorted(counts.keys()):
+            print(f"  Class {c}: {counts[c]} samples")
 
     def __len__(self): 
         return len(self.latents)
@@ -129,11 +148,14 @@ def main():
     optimizer = torch.optim.AdamW(unet.parameters(), lr=learning_rate)
     print(f"LR = {learning_rate:.2e}")
 
-    # datasets
-    latents_path = os.path.join(DATA_ROOT, "Video_latents/Video_latents.npy")
-    text_path    = os.path.join(DATA_ROOT, "BLIP_text/BLIP_text.npy")
-    train_dataset = LatentsTextDataset(latents_path, text_path, tokenizer,
-                                       class_subset=CLASS_SUBSET)
+    # dataset selection
+    latents_file = VARIANTS_FILE if USE_VARIANTS else ORIGINAL_FILE
+    latents_path = os.path.join(DATA_ROOT, latents_file)
+    text_path    = os.path.join(DATA_ROOT, TEXT_FILE)
+
+    train_dataset = LatentsTextDataset(
+        latents_path, text_path, tokenizer, class_subset=CLASS_SUBSET
+    )
     
     print(f"Loaded {len(train_dataset)} training samples")
 
@@ -209,7 +231,8 @@ def main():
         subset_tag = ""
         if CLASS_SUBSET is not None:
             subset_tag = "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
-        save_dir = os.path.join(SAVE_ROOT, f"pipeline_final{subset_tag}")
+        variant_tag = "_variants" if USE_VARIANTS else "_original"
+        save_dir = os.path.join(SAVE_ROOT, f"pipeline_final{subset_tag}{variant_tag}")
         pipeline.save_pretrained(save_dir)
         print(f"Saved final pipeline to {save_dir}")
 
