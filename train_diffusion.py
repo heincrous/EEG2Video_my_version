@@ -23,7 +23,7 @@ from core.unet import UNet3DConditionModel
 # ==========================================
 # Config
 # ==========================================
-train_batch_size       = 8
+train_batch_size       = 4
 num_epochs             = 50
 learning_rate          = 3e-5
 gradient_accumulation  = 1
