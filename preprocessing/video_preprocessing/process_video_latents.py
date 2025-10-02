@@ -56,7 +56,8 @@ os.makedirs(out_dir, exist_ok=True)
 # Load pretrained VAE
 # ==========================================
 device = "cuda" if torch.cuda.is_available() else "cpu"
-vae = AutoencoderKL.from_pretrained(config["vae_path"], subfolder="vae").to(device, dtype=torch.float16)
+# keep weights in float32 for more accurate latent encoding
+vae = AutoencoderKL.from_pretrained(config["vae_path"], subfolder="vae").to(device, dtype=torch.float32)
 vae.eval()
 
 
@@ -72,7 +73,8 @@ for i, b in enumerate(all_blocks):
 # ==========================================
 # Allocate block-level array
 # ==========================================
-all_latents = np.zeros((7, 40, 5, 6, 4, 36, 64), dtype=np.float16)
+# store latents in float32 instead of float16
+all_latents = np.zeros((7, 40, 5, 6, 4, 36, 64), dtype=np.float32)
 
 
 # ==========================================
@@ -106,8 +108,9 @@ for block_id, block in enumerate(all_blocks):
             print(f"Warning: no frames in {video_path}, skipping")
             continue
 
+        # keep frames in float32
         frames = np.stack(frames, axis=0).astype(np.float32) / 255.0
-        frames = torch.from_numpy(frames).permute(0, 3, 1, 2).to(device, dtype=torch.float16)
+        frames = torch.from_numpy(frames).permute(0, 3, 1, 2).to(device, dtype=torch.float32)
 
         # subsample to 6 frames (3 FPS)
         if config["subsample"] and frames.shape[0] == config["target_frames"]:
@@ -120,12 +123,13 @@ for block_id, block in enumerate(all_blocks):
             frames = frames.to(memory_format=torch.channels_last)
             for i in range(0, frames.shape[0], config["batch_size"]):
                 batch = frames[i:i+config["batch_size"]] * 2 - 1  # scale to [-1,1]
-                latent = vae.encode(batch).latent_dist.sample()
+                latent = vae.encode(batch).latent_dist.sample()   # fp32
                 latent = latent * 0.18215
                 latents.append(latent)
             latents = torch.cat(latents, dim=0)  # [6,4,36,64]
 
-        all_latents[block_id, cls, clip] = latents.cpu().numpy()
+        # save latents as float32
+        all_latents[block_id, cls, clip] = latents.cpu().numpy().astype(np.float32)
 
 
 # ==========================================
