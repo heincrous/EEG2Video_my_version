@@ -33,7 +33,7 @@ config = {
     "resize_w":      512,
     "resize_h":      288,
     "target_frames": 48,   # expected clip length @ 24 fps
-    "variants":      [0, 4, 8],  # offsets for subsampling
+    "variants":      [0, 2, 4, 6, 8, 10],  # offsets for subsampling
     "frames_per_clip": 6,
     "batch_size":    32,   # frames per VAE forward pass
 
@@ -123,7 +123,7 @@ for block_id, block in enumerate(all_blocks):
             # save into slot: 5 clips × 3 variants = 15 slots
             variant_idx = clip * len(config["variants"]) + v
             all_latents[block_id, cls, variant_idx] = latents.cpu().numpy().astype(np.float32)
-            
+
 
 # ==========================================
 # Save block-level array
