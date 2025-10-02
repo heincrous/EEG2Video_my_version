@@ -123,11 +123,12 @@ for block_id, block in enumerate(all_blocks):
             # save into slot: 5 clips × 3 variants = 15 slots
             variant_idx = clip * len(config["variants"]) + v
             all_latents[block_id, cls, variant_idx] = latents.cpu().numpy().astype(np.float32)
-
+            
 
 # ==========================================
 # Save block-level array
 # ==========================================
+os.makedirs(out_dir, exist_ok=True)   # ensure directory still exists at save time
 save_path = os.path.join(out_dir, "Video_latents_variants.npy")
 np.save(save_path, all_latents)
 print(f"\nSaved block-level latents → {save_path}, shape {all_latents.shape}")

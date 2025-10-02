@@ -135,6 +135,7 @@ for block_id, block in enumerate(all_blocks):
 # ==========================================
 # Save block-level array
 # ==========================================
+os.makedirs(out_dir, exist_ok=True)   # ensure directory still exists at save time
 save_path = os.path.join(out_dir, "Video_latents.npy")
 np.save(save_path, all_latents)
 print(f"\nSaved block-level latents → {save_path}, shape {all_latents.shape}")
