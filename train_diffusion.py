@@ -24,7 +24,7 @@ from core.unet import UNet3DConditionModel
 # Config
 # ==========================================
 train_batch_size       = 8
-num_epochs             = 20
+num_epochs             = 5
 learning_rate          = 3e-5
 gradient_accumulation  = 1
 gradient_checkpointing = True

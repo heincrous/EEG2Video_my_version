@@ -4,10 +4,12 @@
 import os, gc, torch, numpy as np
 from diffusers import AutoencoderKL, DDIMScheduler
 from transformers import CLIPTokenizer, CLIPTextModel
+import re
 
 from core.unet import UNet3DConditionModel
 from pipelines.my_pipeline import TuneAVideoPipeline
 from core.util import save_videos_grid
+
 
 # ==========================================
 # Config
@@ -51,6 +53,7 @@ pipe = TuneAVideoPipeline(
 pipe.unet.to(torch.float16)
 pipe.enable_vae_slicing()
 
+
 # ==========================================
 # Run inference over subset CLIP embeddings
 # ==========================================
@@ -59,7 +62,7 @@ def run_inference():
     for class_id in CLASS_SUBSET:
         for trial in range(trials_per_class):
             emb      = clip_embs[test_block, class_id, trial]
-            caption  = blip_text[test_block, class_id, trial]
+            caption  = str(blip_text[test_block, class_id, trial])
             clip_emb = torch.tensor(emb, dtype=torch.float16).unsqueeze(0).to(device)
 
             video = pipe(
@@ -72,11 +75,11 @@ def run_inference():
                 guidance_scale=12.5,
             ).videos
 
-            out_gif = os.path.join(OUTPUT_DIR, f"class{class_id}_trial{trial+1}.gif")
-            out_txt = os.path.join(OUTPUT_DIR, f"class{class_id}_trial{trial+1}.txt")
-            save_videos_grid(video, out_gif, fps=fps)
-            with open(out_txt, "w") as f: f.write(caption + "\n")
+            # sanitize caption to safe filename
+            safe_caption = re.sub(r'[^a-zA-Z0-9_-]', '_', caption)  
+            out_gif = os.path.join(OUTPUT_DIR, f"{safe_caption}.gif")
 
+            save_videos_grid(video, out_gif, fps=fps)
             print(f"Saved: {out_gif}")
 
 run_inference()

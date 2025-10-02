@@ -4,6 +4,7 @@
 import os, gc, torch, numpy as np
 from diffusers import AutoencoderKL, DDIMScheduler
 from transformers import CLIPTokenizer, CLIPTextModel
+import re
 
 from core.unet import UNet3DConditionModel
 from pipelines.my_pipeline import TuneAVideoPipeline
@@ -15,7 +16,7 @@ from core.util import save_videos_grid
 CLASS_SUBSET       = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final_subset0-2-4-10-11-12-22-26-29-37"
-OUTPUT_DIR         = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference"
+OUTPUT_DIR         = "/content/drive/MyDrive/EEG2Video_outputs/full_inference"
 BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
 SEM_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/embeddings_semantic_predictor_DE_sub1_subset0-2-4-10-11-12-22-26-29-37.npy"
 
@@ -62,7 +63,7 @@ def run_inference():
     for trial in range(trials_per_class):
         for ci, class_id in enumerate(CLASS_SUBSET):
             emb     = sem_preds[ci, trial]
-            caption = blip_text[test_block, class_id, trial]
+            caption = str(blip_text[test_block, class_id, trial])
             semantic_emb = torch.tensor(emb, dtype=torch.float16).unsqueeze(0).to(device)
 
             video = pipe(
@@ -75,11 +76,14 @@ def run_inference():
                 guidance_scale=12.5,
             ).videos
 
-            out_gif = os.path.join(OUTPUT_DIR, f"class{class_id}_trial{trial+1}.gif")
-            out_txt = os.path.join(OUTPUT_DIR, f"class{class_id}_trial{trial+1}.txt")
-            save_videos_grid(video, out_gif, fps=fps)
-            with open(out_txt, "w") as f: f.write(caption + "\n")
+            # sanitize caption to be a safe filename
+            safe_caption = re.sub(r'[^a-zA-Z0-9_-]', '_', caption)
+            # optional: truncate to avoid overly long filenames
+            if len(safe_caption) > 120:
+                safe_caption = safe_caption[:120]
 
+            out_gif = os.path.join(OUTPUT_DIR, f"{safe_caption}.gif")
+            save_videos_grid(video, out_gif, fps=fps)
             print(f"Saved: {out_gif}")
 
 run_inference()
