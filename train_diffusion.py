@@ -125,12 +125,9 @@ def main():
     if gradient_checkpointing:
         unet.enable_gradient_checkpointing()
 
-    # now build optimizer (unet exists here)
-    scaled_lr = (
-        learning_rate * gradient_accumulation * train_batch_size * accelerator.num_processes
-    )
-    print(f"Scaled LR = {scaled_lr:.2e}")
-    optimizer = torch.optim.AdamW(unet.parameters(), lr=scaled_lr)
+    # === Optimizer ===
+    optimizer = torch.optim.AdamW(unet.parameters(), lr=learning_rate)
+    print(f"LR = {learning_rate:.2e}")
 
     # datasets
     latents_path = os.path.join(DATA_ROOT, "Video_latents/Video_latents.npy")
