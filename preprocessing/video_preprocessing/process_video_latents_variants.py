@@ -1,5 +1,5 @@
 # ==========================================
-# ENCODE MP4 CLIPS INTO VIDEO LATENTS (with 3 variants)
+# ENCODE MP4 CLIPS INTO VIDEO LATENTS (N variants, stride method)
 # ==========================================
 # Input:
 #   EEG2Video_data/processed/Video_mp4/BlockY/classYY_clipZZ.mp4
@@ -7,11 +7,11 @@
 #
 # Process:
 #   - Load frames, resize to 512×288 (no distortion)
-#   - Generate 3 variants by offsetting subsampling (0,4,8)
+#   - Generate N variants by evenly offsetting subsampling
 #   - Each variant: 6 frames @ 3 FPS
 #   - Encode each frame with Stable Diffusion VAE
 #   - Latent per frame = [4,36,64]
-#   - Collect → [7, 40, 15, 6, 4, 36, 64]   (15 clips per class)
+#   - Collect → [7, 40, 5*N, 6, 4, 36, 64]
 #
 # Output:
 #   EEG2Video_data/processed/Video_latents/Video_latents_variants.npy
@@ -24,28 +24,30 @@ import torch
 from tqdm import tqdm
 from diffusers import AutoencoderKL
 
-
 # ==========================================
 # CONFIG
 # ==========================================
 config = {
-    "fps":           24,
-    "resize_w":      512,
-    "resize_h":      288,
-    "target_frames": 48,   # expected clip length @ 24 fps
-    "variants":      [0, 2, 4, 6, 8, 10],  # offsets for subsampling
+    "fps":             24,
+    "resize_w":        512,
+    "resize_h":        288,
+    "target_frames":   48,   # expected clip length @ 24 fps
     "frames_per_clip": 6,
-    "batch_size":    32,   # frames per VAE forward pass
+    "num_variants":    6,    # only parameter you choose
+    "batch_size":      512,
 
     "drive_root": "/content/drive/MyDrive/EEG2Video_data",
     "vae_path":   "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4",
 }
 
+# derive stride offsets
+stride = config["target_frames"] // config["frames_per_clip"]
+config["variants"] = [i for i in range(config["num_variants"])]
+
 # paths
 in_dir  = os.path.join(config["drive_root"], "processed", "Video_mp4")
 out_dir = os.path.join(config["drive_root"], "processed", "Video_latents")
 os.makedirs(out_dir, exist_ok=True)
-
 
 # ==========================================
 # Load pretrained VAE
@@ -53,7 +55,6 @@ os.makedirs(out_dir, exist_ok=True)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 vae = AutoencoderKL.from_pretrained(config["vae_path"], subfolder="vae").to(device, dtype=torch.float32)
 vae.eval()
-
 
 # ==========================================
 # List available blocks
@@ -63,12 +64,11 @@ print("Available blocks:")
 for i, b in enumerate(all_blocks):
     print(f"[{i}] {b}")
 
-
 # ==========================================
 # Allocate block-level array
 # ==========================================
-all_latents = np.zeros((7, 40, 15, config["frames_per_clip"], 4, 36, 64), dtype=np.float32)
-
+slots_per_class = 5 * config["num_variants"]   # 5 clips × N variants
+all_latents = np.zeros((7, 40, slots_per_class, config["frames_per_clip"], 4, 36, 64), dtype=np.float32)
 
 # ==========================================
 # Main processing loop
@@ -105,8 +105,10 @@ for block_id, block in enumerate(all_blocks):
         frames = torch.from_numpy(frames).permute(0, 3, 1, 2).to(device, dtype=torch.float32)
 
         # generate variants
-        for v, offset in enumerate(config["variants"]):
-            idxs = np.linspace(offset, config["target_frames"] - 1, config["frames_per_clip"], dtype=int)
+        step = config["target_frames"] // config["frames_per_clip"]
+        for v in range(config["num_variants"]):
+            offset = v  # staggered starting point
+            idxs = np.arange(offset, offset + step*config["frames_per_clip"], step)
             frames_sel = frames[idxs]
 
             # encode frames in batches
@@ -114,23 +116,20 @@ for block_id, block in enumerate(all_blocks):
                 latents = []
                 frames_sel = frames_sel.to(memory_format=torch.channels_last)
                 for i in range(0, frames_sel.shape[0], config["batch_size"]):
-                    batch = frames_sel[i:i+config["batch_size"]] * 2 - 1  # scale to [-1,1]
-                    latent = vae.encode(batch).latent_dist.sample()   # fp32
+                    batch = frames_sel[i:i+config["batch_size"]] * 2 - 1
+                    latent = vae.encode(batch).latent_dist.sample()
                     latent = latent * 0.18215
                     latents.append(latent)
-                latents = torch.cat(latents, dim=0)  # [6,4,36,64]
+                latents = torch.cat(latents, dim=0)
 
-            # save into slot: 5 clips × 3 variants = 15 slots
-            variant_idx = clip * len(config["variants"]) + v
+            variant_idx = clip * config["num_variants"] + v
             all_latents[block_id, cls, variant_idx] = latents.cpu().numpy().astype(np.float32)
-
 
 # ==========================================
 # Save block-level array
 # ==========================================
-os.makedirs(out_dir, exist_ok=True)   # ensure directory still exists at save time
+os.makedirs(out_dir, exist_ok=True)
 save_path = os.path.join(out_dir, "Video_latents_variants.npy")
 np.save(save_path, all_latents)
 print(f"\nSaved block-level latents → {save_path}, shape {all_latents.shape}")
-
 print("\nProcessing complete.")
