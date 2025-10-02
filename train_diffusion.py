@@ -24,7 +24,7 @@ from core.unet import UNet3DConditionModel
 # Config
 # ==========================================
 train_batch_size       = 8
-num_epochs             = 100
+num_epochs             = 20
 learning_rate          = 3e-5
 gradient_accumulation  = 1
 gradient_checkpointing = True
@@ -48,7 +48,7 @@ os.makedirs(SAVE_ROOT, exist_ok=True)
 # ==========================================
 class LatentsTextDataset(Dataset):
     def __init__(self, latents_path, text_path, tokenizer, class_subset=None):
-        latents = np.load(latents_path, allow_pickle=True)  # (7,40,5,6,4,36,64)
+        latents = np.load(latents_path, allow_pickle=True).astype(np.float32)  # (7,40,5,6,4,36,64)
         texts   = np.load(text_path, allow_pickle=True)     # (7,40,5)
 
         # reshape
