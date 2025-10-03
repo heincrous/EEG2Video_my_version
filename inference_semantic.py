@@ -40,7 +40,7 @@ print("Subject:", subject_name)
 print("Class subset:", CLASS_SUBSET)
 
 # ==========================================
-# 2. Load EEG features (block 7 = test set)
+# 2. Load EEG features (train/test split like training)
 # ==========================================
 def load_features(subname, ft):
     path = os.path.join(FEATURE_PATHS[ft], subname)
@@ -54,35 +54,38 @@ def load_features(subname, ft):
 
     return arr
 
-# compute indices
-samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5
-test_idx = np.arange(6 * samples_per_block, 7 * samples_per_block)
-
-features_test = []
+features_all = []
 for ft in FEATURE_TYPES:
     arr = load_features(subject_name, ft)
 
-    # build label array (0–39 repeated)
-    labels_block = np.repeat(np.arange(40), 5)  # 200 per block
-    labels_all   = np.tile(labels_block, 7)     # 1400
+    # truncate to valid length (7 blocks × 40 classes × 5 clips)
+    valid_len = 40 * 5 * 7
+    arr = arr[:valid_len]
 
-    # mask to subset if needed
+    # build label array
+    labels_block = np.repeat(np.arange(40), 5)   # 200 per block
+    labels_all   = np.tile(labels_block, 7)      # 1400
+
+    # apply class subset mask if needed
     if CLASS_SUBSET is not None:
         mask = np.isin(labels_all, CLASS_SUBSET)
-        arr = arr[mask]
+        arr, labels_all = arr[mask], labels_all[mask]
 
     # flatten to 2D
     arr = arr.reshape(arr.shape[0], -1)
+    features_all.append(arr)
 
-    # fit scaler on **all blocks** (train+test)
-    scaler = StandardScaler().fit(arr)
-    arr = scaler.transform(arr)
+# concatenate feature types (one feature type → no effect)
+features_all = np.concatenate(features_all, axis=1)
 
-    # now slice block 7 (test set only)
-    arr = arr[test_idx]
-    features_test.append(arr)
+# fit scaler on all samples (train+test, after masking)
+scaler = StandardScaler().fit(features_all)
+features_all = scaler.transform(features_all)
 
-X_test = np.concatenate(features_test, axis=1)
+# compute block split AFTER masking
+samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5
+test_idx = np.arange(6 * samples_per_block, 7 * samples_per_block)
+X_test = features_all[test_idx]
 
 # ==========================================
 # 3. Build model
@@ -101,7 +104,7 @@ if MODE == "predict":
         preds = model(eeg_tensor).cpu().numpy()
 
     preds = preds.reshape(-1, 77, 768)
-    base_name = ckpt_file.replace(".pt","")
+    base_name = ckpt_file.replace(".pt", "")
     out_path  = os.path.join(OUTPUT_DIR, f"embeddings_{base_name}.npy")
     np.save(out_path, preds.astype(np.float32))
     print("Saved semantic embeddings to:", out_path)
