@@ -59,8 +59,8 @@ pipe.enable_vae_slicing()
 # ==========================================
 def run_inference():
     video_length, fps = 6, 3
-    for class_id in CLASS_SUBSET:
-        for trial in range(trials_per_class):
+    for trial in range(trials_per_class):
+        for class_id in CLASS_SUBSET:
             emb      = clip_embs[test_block, class_id, trial]
             caption  = str(blip_text[test_block, class_id, trial])
             clip_emb = torch.tensor(emb, dtype=torch.float16).unsqueeze(0).to(device)
@@ -75,10 +75,11 @@ def run_inference():
                 guidance_scale=12.5,
             ).videos
 
-            # sanitize caption to safe filename
-            safe_caption = re.sub(r'[^a-zA-Z0-9_-]', '_', caption)  
-            out_gif = os.path.join(OUTPUT_DIR, f"{safe_caption}.gif")
+            safe_caption = re.sub(r'[^a-zA-Z0-9_-]', '_', caption)
+            if len(safe_caption) > 120:
+                safe_caption = safe_caption[:120]
 
+            out_gif = os.path.join(OUTPUT_DIR, f"{safe_caption}.gif")
             save_videos_grid(video, out_gif, fps=fps)
             print(f"Saved: {out_gif}")
 
