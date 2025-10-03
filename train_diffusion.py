@@ -57,29 +57,29 @@ class LatentsTextDataset(Dataset):
         latents = np.load(latents_path, allow_pickle=True).astype(np.float32)
         texts   = np.load(text_path, allow_pickle=True)
 
-        # Shapes:
-        # - original: (7,40,5,6,4,36,64)
-        # - variants: (7,40,5*N,6,4,36,64)
-        if latents.ndim != 7:
-            raise ValueError(f"Expected 7D latents, got {latents.shape}")
-
         block_count, num_classes, num_clips = latents.shape[:3]
 
-        # flatten blocks/clips
+        # flatten latents
         latents = latents.reshape(-1, 6, 4, 36, 64)
-        texts   = texts.reshape(block_count, num_classes, -1).reshape(-1)
 
-        # build class labels
+        # original texts always (7,40,5)
+        texts = texts.reshape(block_count, num_classes, 5)
+
+        # figure out variants per clip
+        variants_per_clip = num_clips // 5
+
+        # repeat each caption for every variant
+        texts = np.repeat(texts, variants_per_clip, axis=2)  # (7,40,5*N)
+        texts = texts.reshape(-1)
+
+        # build labels
         labels_block = np.repeat(np.arange(num_classes), num_clips)
         labels_all   = np.tile(labels_block, block_count)
 
-        # apply class subset filter
+        # apply subset filter
         if class_subset is not None:
             mask = np.isin(labels_all, class_subset)
             latents, texts, labels_all = latents[mask], texts[mask], labels_all[mask]
-
-        # infer number of variants (divide by 5 original clips)
-        variants_per_clip = num_clips // 5
 
         self.latents   = latents
         self.texts     = texts
@@ -89,7 +89,7 @@ class LatentsTextDataset(Dataset):
         print(f"Dataset prepared: {self.latents.shape[0]} samples "
               f"(subset={class_subset}, variants/clip={variants_per_clip}, path={latents_path})")
 
-        # print distribution after masking
+        from collections import Counter
         counts = Counter(self.labels)
         print("Class distribution (after subset filter):")
         for c in sorted(counts.keys()):
