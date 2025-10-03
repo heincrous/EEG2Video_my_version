@@ -71,13 +71,15 @@ for ft in FEATURE_TYPES:
         mask = np.isin(labels_all, CLASS_SUBSET)
         arr = arr[mask]
 
-    arr = arr[test_idx]  # select block 7 subset
-    flat = arr.reshape(len(test_idx), -1)
+    # flatten to 2D
+    arr = arr.reshape(arr.shape[0], -1)
 
-    # scaling (⚠ ideally load training scaler, here fit on test)
-    scaler = StandardScaler().fit(flat)
-    arr = scaler.transform(flat)
+    # fit scaler on **all blocks** (train+test)
+    scaler = StandardScaler().fit(arr)
+    arr = scaler.transform(arr)
 
+    # now slice block 7 (test set only)
+    arr = arr[test_idx]
     features_test.append(arr)
 
 X_test = np.concatenate(features_test, axis=1)
