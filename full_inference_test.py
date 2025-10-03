@@ -14,12 +14,15 @@ from core.util import save_videos_grid
 # ==========================================
 # Config
 # ==========================================
-CLASS_SUBSET       = [1, 3, 5, 6, 7, 8, 9, 21, 23, 24] # [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
+CLASS_SUBSET       = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final_subset0-2-4-10-11-12-22-26-29-37_variants"
 OUTPUT_DIR         = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference"
 BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
 CLIP_EMB_PATH      = "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy"
+
+# Toggle between vanilla or finetuned diffusion
+USE_FINETUNED = False   # set True to use your fine-tuned UNet
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -43,11 +46,14 @@ with torch.no_grad():
 neg_embeddings = empty_emb.to(torch.float16).to(device)
 
 # === Load pipeline ===
+unet_path = FINETUNED_SD_PATH if USE_FINETUNED else PRETRAINED_SD_PATH
+unet_sub  = "unet" if USE_FINETUNED else "unet"
+
 pipe = TuneAVideoPipeline(
     vae=AutoencoderKL.from_pretrained(PRETRAINED_SD_PATH, subfolder="vae", torch_dtype=torch.float16),
     text_encoder=CLIPTextModel.from_pretrained(PRETRAINED_SD_PATH, subfolder="text_encoder", torch_dtype=torch.float16),
     tokenizer=CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer"),
-    unet=UNet3DConditionModel.from_pretrained_2d(FINETUNED_SD_PATH, subfolder="unet"),
+    unet=UNet3DConditionModel.from_pretrained_2d(unet_path, subfolder=unet_sub),
     scheduler=DDIMScheduler.from_pretrained(PRETRAINED_SD_PATH, subfolder="scheduler"),
 ).to(device)
 pipe.unet.to(torch.float16)
