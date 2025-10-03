@@ -19,9 +19,13 @@ FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_che
 OUTPUT_DIR         = "/content/drive/MyDrive/EEG2Video_outputs/full_inference"
 BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
 SEM_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/embeddings_semantic_predictor_DE_sub1_subset0-2-4-10-11-12-22-26-29-37.npy"
+NEG_SEM_PATH       = SEM_PATH.replace(".npy", "_negative.npy")   # mean-EEG negative embedding
+
+# Negative embedding toggle: "empty", "mean_eeg", "mean_sem"
+NEGATIVE_MODE      = "empty"
 
 # Toggle between vanilla or finetuned diffusion
-USE_FINETUNED = True   # set True to use your fine-tuned UNet
+USE_FINETUNED = True
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -37,13 +41,32 @@ num_classes    = len(CLASS_SUBSET)
 trials_per_class = 5
 test_block     = 6
 
-# === Build empty-string negative embedding ===
-tokenizer    = CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer")
-text_encoder = CLIPTextModel.from_pretrained(PRETRAINED_SD_PATH, subfolder="text_encoder").to(device)
-with torch.no_grad():
-    empty_inputs = tokenizer([""], padding="max_length", max_length=77, return_tensors="pt")
-    empty_emb    = text_encoder(empty_inputs.input_ids.to(device))[0]
-neg_embeddings = empty_emb.to(torch.float16).to(device)
+# ==========================================
+# Build negative embedding
+# ==========================================
+if NEGATIVE_MODE == "empty":
+    tokenizer    = CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer")
+    text_encoder = CLIPTextModel.from_pretrained(PRETRAINED_SD_PATH, subfolder="text_encoder").to(device)
+    with torch.no_grad():
+        empty_inputs = tokenizer([""], padding="max_length", max_length=77, return_tensors="pt")
+        empty_emb    = text_encoder(empty_inputs.input_ids.to(device))[0]
+    neg_embeddings = empty_emb.to(torch.float16).to(device)
+    print("Using EMPTY STRING negative embedding.")
+
+elif NEGATIVE_MODE == "mean_eeg":
+    if not os.path.exists(NEG_SEM_PATH):
+        raise FileNotFoundError(f"Mean-EEG negative embedding not found at {NEG_SEM_PATH}")
+    neg_pred = np.load(NEG_SEM_PATH)   # shape (1,77,768)
+    neg_embeddings = torch.tensor(neg_pred, dtype=torch.float16).to(device)
+    print("Using MEAN EEG → semantic predictor negative embedding.")
+
+elif NEGATIVE_MODE == "mean_sem":
+    mean_sem = sem_preds_all.mean(axis=0, keepdims=True)   # (1,77,768)
+    neg_embeddings = torch.tensor(mean_sem, dtype=torch.float16).to(device)
+    print("Using MEAN of produced semantic embeddings as negative embedding.")
+
+else:
+    raise ValueError(f"Unknown NEGATIVE_MODE {NEGATIVE_MODE}")
 
 # === Load pipeline ===
 unet_path = FINETUNED_SD_PATH if USE_FINETUNED else PRETRAINED_SD_PATH
