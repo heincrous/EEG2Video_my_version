@@ -21,7 +21,7 @@ BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/
 SEM_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/embeddings_semantic_predictor_DE_sub1_subset0-2-4-10-11-12-22-26-29-37.npy"
 
 # Toggle between vanilla or finetuned diffusion
-USE_FINETUNED = False   # set True to use your fine-tuned UNet
+USE_FINETUNED = True   # set True to use your fine-tuned UNet
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 

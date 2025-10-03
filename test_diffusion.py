@@ -20,7 +20,7 @@ OUTPUT_DIR         = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inferen
 BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
 
 # Toggle between vanilla or finetuned diffusion
-USE_FINETUNED = False   # set True to use your fine-tuned UNet
+USE_FINETUNED = True   # set True to use your fine-tuned UNet
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
