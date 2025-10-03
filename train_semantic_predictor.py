@@ -33,7 +33,7 @@ USE_ALL_SUBJECTS = False
 subject_name     = "sub1.npy"
 
 # restrict to certain classes (0–39); set to None for all
-CLASS_SUBSET     = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
+CLASS_SUBSET     = None
 
 # loss type: "mse", "cosine", "mse+cosine", "contrastive"
 LOSS_TYPE        = "mse+cosine"
