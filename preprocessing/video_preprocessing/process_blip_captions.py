@@ -61,7 +61,7 @@ ordinals = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th"]
 # Allocate block-level arrays
 # ==========================================
 all_texts = np.empty((7, 40, 5), dtype=object)
-all_embs  = np.zeros((7, 40, 5, 77, 768), dtype=np.float16)
+all_embs  = np.zeros((7, 40, 5, 77, 768), dtype=np.float32)
 
 
 # ==========================================
