@@ -14,7 +14,7 @@ from core.util import save_videos_grid
 # ==========================================
 # Config
 # ==========================================
-CLASS_SUBSET       = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
+CLASS_SUBSET       = [1, 3, 5, 6, 7, 8, 9, 21, 23, 24] # [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final_subset0-2-4-10-11-12-22-26-29-37_variants"
 OUTPUT_DIR         = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference"
