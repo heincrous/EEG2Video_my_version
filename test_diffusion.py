@@ -1,66 +1,79 @@
 # ==========================================
-# Test Diffusion Model with Single Caption (subset pipeline)
+# Full Inference (Video generation using BLIP captions directly)
 # ==========================================
-import os, sys, torch, imageio, gc
-import numpy as np
-from einops import rearrange
+import os, gc, torch, numpy as np
 from diffusers import AutoencoderKL, DDIMScheduler
 from transformers import CLIPTokenizer, CLIPTextModel
-from core.util import save_videos_grid  # helper from repo
+import re
 
-
-from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
 from core.unet import UNet3DConditionModel
+from pipelines.pipeline_tuneavideo import TuneAVideoPipeline
+from core.util import save_videos_grid
 
-# === DIRECTORIES ===
-PRETRAINED_MODEL_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
-FINETUNED_PIPELINE    = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final_subset1-10-12-16-19-23-25-31-34-39"
-BLIP_TEXT             = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
+# ==========================================
+# Config
+# ==========================================
+CLASS_SUBSET       = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]  # choose your classes here
+PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
+FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final_subset0-2-4-10-11-12-22-26-29-37_variants"
+OUTPUT_DIR         = "/content/drive/MyDrive/EEG2Video_outputs/test_full_inference_captions"
+BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
+
+# Toggle between vanilla or finetuned diffusion
+USE_FINETUNED = False   # set True to use your fine-tuned UNet
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # === MEMORY CONFIG ===
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 gc.collect(); torch.cuda.empty_cache()
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# === LOAD TRAINED PIPELINE (same as training setup) ===
+# === Load captions ===
+blip_text   = np.load(BLIP_TEXT_PATH, allow_pickle=True)       # (7,40,5)
+test_block  = 6
+trials_per_class = 1   # one caption per class
+
+# === Load pipeline ===
+unet_path = FINETUNED_SD_PATH if USE_FINETUNED else PRETRAINED_SD_PATH
+unet_sub  = "unet"
+
 pipe = TuneAVideoPipeline(
-    vae=AutoencoderKL.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="vae", torch_dtype=torch.float16),
-    text_encoder=CLIPTextModel.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="text_encoder", torch_dtype=torch.float16),
-    tokenizer=CLIPTokenizer.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="tokenizer"),
-    unet=UNet3DConditionModel.from_pretrained_2d(FINETUNED_PIPELINE, subfolder="unet"),
-    scheduler=DDIMScheduler.from_pretrained(PRETRAINED_MODEL_PATH, subfolder="scheduler"),
-)
+    vae=AutoencoderKL.from_pretrained(PRETRAINED_SD_PATH, subfolder="vae", torch_dtype=torch.float16),
+    text_encoder=CLIPTextModel.from_pretrained(PRETRAINED_SD_PATH, subfolder="text_encoder", torch_dtype=torch.float16),
+    tokenizer=CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer"),
+    unet=UNet3DConditionModel.from_pretrained_2d(unet_path, subfolder=unet_sub),
+    scheduler=DDIMScheduler.from_pretrained(PRETRAINED_SD_PATH, subfolder="scheduler"),
+).to(device)
 pipe.unet.to(torch.float16)
 pipe.enable_vae_slicing()
-pipe = pipe.to(device)
 
-# === PICK ONE CAPTION FROM BLOCK 7 (subset class) ===
-blip_text = np.load(BLIP_TEXT, allow_pickle=True)  # shape (7,40,5)
-caption = blip_text[6, 10, 0]   # Block 7, class=1, clip=0
-print("Testing caption:", caption)
+# ==========================================
+# Run inference over subset captions
+# ==========================================
+def run_inference():
+    video_length, fps = 6, 3
+    for class_id in CLASS_SUBSET:
+        for trial in range(trials_per_class):
+            caption = str(blip_text[test_block, class_id, trial])
 
-# === RUN INFERENCE ===
-generator = torch.Generator(device=device).manual_seed(42)
-video_length, fps = 6, 3  # 6 frames at 3 fps → 2 seconds
+            result = pipe(
+                prompt=caption,              # pass caption string
+                video_length=video_length,
+                height=288,
+                width=512,
+                num_inference_steps=100,
+                guidance_scale=12.5,
+            )
 
-result = pipe(
-    caption,
-    video_length=video_length,
-    width=512,
-    height=288,
-    num_inference_steps=100,
-    guidance_scale=12.5,
-    generator=generator,
-)
+            video = result.videos
 
-video_tensor = result.videos
-print("Result.videos shape:", video_tensor.shape)
+            safe_caption = re.sub(r'[^a-zA-Z0-9_-]', '_', caption)
+            if len(safe_caption) > 120:
+                safe_caption = safe_caption[:120]
 
-# === SAVE GIF (repo method) ===
-SAVE_PATH = "/content/drive/MyDrive/EEG2Video_outputs/test_diffusion/test_diffusion_caption.gif"
+            out_gif = os.path.join(OUTPUT_DIR, f"{safe_caption}.gif")
+            save_videos_grid(video, out_gif, fps=fps)
+            print(f"Saved: {out_gif}")
 
-frames = result.videos  # tensor shape: (1, C, F, H, W)
-save_videos_grid(frames, SAVE_PATH, fps=fps)
-
-print("Saved test video to:", SAVE_PATH)
-print("Final caption used for generation:", caption)
+run_inference()
