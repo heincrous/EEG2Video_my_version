@@ -20,6 +20,9 @@ OUTPUT_DIR         = "/content/drive/MyDrive/EEG2Video_outputs/full_inference"
 BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
 SEM_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/embeddings_semantic_predictor_DE_sub1_subset0-2-4-10-11-12-22-26-29-37.npy"
 
+# Toggle between vanilla or finetuned diffusion
+USE_FINETUNED = False   # set True to use your fine-tuned UNet
+
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # === MEMORY CONFIG ===
@@ -28,11 +31,11 @@ gc.collect(); torch.cuda.empty_cache()
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # === Load captions + semantic predictor embeddings ===
-blip_text = np.load(BLIP_TEXT_PATH, allow_pickle=True)   # (7,40,5)
-sem_preds_all = np.load(SEM_PATH)                       # (N,77,768)
-num_classes = len(CLASS_SUBSET)
+blip_text      = np.load(BLIP_TEXT_PATH, allow_pickle=True)   # (7,40,5)
+sem_preds_all  = np.load(SEM_PATH)                           # (N,77,768)
+num_classes    = len(CLASS_SUBSET)
 trials_per_class = 5
-test_block = 6
+test_block     = 6
 
 # === Build empty-string negative embedding ===
 tokenizer    = CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer")
@@ -43,11 +46,14 @@ with torch.no_grad():
 neg_embeddings = empty_emb.to(torch.float16).to(device)
 
 # === Load pipeline ===
+unet_path = FINETUNED_SD_PATH if USE_FINETUNED else PRETRAINED_SD_PATH
+unet_sub  = "unet" if USE_FINETUNED else "unet"
+
 pipe = TuneAVideoPipeline(
     vae=AutoencoderKL.from_pretrained(PRETRAINED_SD_PATH, subfolder="vae", torch_dtype=torch.float16),
     text_encoder=CLIPTextModel.from_pretrained(PRETRAINED_SD_PATH, subfolder="text_encoder", torch_dtype=torch.float16),
     tokenizer=CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer"),
-    unet=UNet3DConditionModel.from_pretrained_2d(FINETUNED_SD_PATH, subfolder="unet"),
+    unet=UNet3DConditionModel.from_pretrained_2d(unet_path, subfolder=unet_sub),
     scheduler=DDIMScheduler.from_pretrained(PRETRAINED_SD_PATH, subfolder="scheduler"),
 ).to(device)
 pipe.unet.to(torch.float16)
@@ -76,9 +82,7 @@ def run_inference():
                 guidance_scale=12.5,
             ).videos
 
-            # sanitize caption to be a safe filename
             safe_caption = re.sub(r'[^a-zA-Z0-9_-]', '_', caption)
-            # optional: truncate to avoid overly long filenames
             if len(safe_caption) > 120:
                 safe_caption = safe_caption[:120]
 
