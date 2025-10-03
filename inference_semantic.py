@@ -5,13 +5,12 @@ import os, torch
 import numpy as np
 from einops import rearrange
 from sklearn.preprocessing import StandardScaler
-from train_semantic_predictor import SemanticPredictor, FEATURE_PATHS, run_device
+from train_semantic_predictor import SemanticPredictor, FEATURE_PATHS, run_device, CLASS_SUBSET, subject_name, FEATURE_TYPES
 
 # ==========================================
 # Config
 # ==========================================
 MODE = "predict"   # options: "predict", "negative"
-
 
 # ==========================================
 # Paths
@@ -21,7 +20,7 @@ OUTPUT_DIR        = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embedding
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # ==========================================
-# 1. List checkpoints
+# 1. Select checkpoint
 # ==========================================
 ckpts = [f for f in os.listdir(SEMANTIC_CKPT_DIR) if f.endswith(".pt")]
 print("Available semantic predictor checkpoints:")
@@ -36,58 +35,46 @@ print("Loading checkpoint:", ckpt_path)
 ckpt = torch.load(ckpt_path, map_location=run_device)
 state_dict = ckpt["state_dict"]
 
-# deduce subject + features from filename
-parts = ckpt_file.replace(".pt","").split("_")
-
-# subject tag
-subject_tag = next((p for p in parts if p.startswith("sub")), None)
-
-# feature types
-if subject_tag:
-    subj_idx = parts.index(subject_tag)
-    feature_types = parts[2:subj_idx]
-else:
-    feature_types = parts[2:-1] if "subset" in parts[-1] else parts[2:]
-
-# class subset
-if "subset" in ckpt_file:
-    subset_str = ckpt_file.split("subset")[1].replace(".pt","")
-    class_subset = [int(x) for x in subset_str.split("-")]
-else:
-    class_subset = None
-
-print("Feature types:", feature_types)
-print("Subject:", subject_tag)
-print("Class subset:", class_subset)
+print("Feature types:", FEATURE_TYPES)
+print("Subject:", subject_name)
+print("Class subset:", CLASS_SUBSET)
 
 # ==========================================
 # 2. Load EEG features (block 7 = test set)
 # ==========================================
 def load_features(subname, ft):
     path = os.path.join(FEATURE_PATHS[ft], subname)
-    arr = np.load(path)  # (7,40,5,62,5) for DE/PSD (2s), (7,40,5,62,400) for segments
+    arr = np.load(path)  # (7,40,5,62,5) or (7,40,5,62,400)
 
     if ft in ["DE", "PSD"]:
-        # Already 1 sample per 2s → just flatten
         arr = arr.reshape(7, 40, 5, -1)       # (7,40,5,310)
         arr = arr.reshape(-1, arr.shape[-1])  # (1400,310)
-
     elif ft == "segments":
         arr = rearrange(arr, "a b c d (w t) -> (a b c w) (d t)", w=2, t=200)
 
     return arr
 
-# === Test block indices (block 6 only) ===
-samples_per_block = (len(class_subset) if class_subset else 40) * 5
+# compute indices
+samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5
 test_idx = np.arange(6 * samples_per_block, 7 * samples_per_block)
 
 features_test = []
-for ft in feature_types:
-    arr = load_features(subject_tag + ".npy", ft)
-    arr = arr[test_idx]  # take only test block
+for ft in FEATURE_TYPES:
+    arr = load_features(subject_name, ft)
+
+    # build label array (0–39 repeated)
+    labels_block = np.repeat(np.arange(40), 5)  # 200 per block
+    labels_all   = np.tile(labels_block, 7)     # 1400
+
+    # mask to subset if needed
+    if CLASS_SUBSET is not None:
+        mask = np.isin(labels_all, CLASS_SUBSET)
+        arr = arr[mask]
+
+    arr = arr[test_idx]  # select block 7 subset
     flat = arr.reshape(len(test_idx), -1)
 
-    # scaling (ideally load training scaler; here we fit on test block)
+    # scaling (⚠ ideally load training scaler, here fit on test)
     scaler = StandardScaler().fit(flat)
     arr = scaler.transform(flat)
 
@@ -111,10 +98,7 @@ if MODE == "predict":
         eeg_tensor = torch.tensor(X_test, dtype=torch.float32).to(run_device)
         preds = model(eeg_tensor).cpu().numpy()
 
-    # reshape to (N,77,768)
     preds = preds.reshape(-1, 77, 768)
-
-    # save
     base_name = ckpt_file.replace(".pt","")
     out_path  = os.path.join(OUTPUT_DIR, f"embeddings_{base_name}.npy")
     np.save(out_path, preds.astype(np.float32))
@@ -122,18 +106,13 @@ if MODE == "predict":
     print("Shape:", preds.shape)
 
 elif MODE == "negative":
-    # Compute mean EEG feature from the test set
-    X_neg = X_test.mean(axis=0, keepdims=True)  # shape (1, feat_dim)
-
+    X_neg = X_test.mean(axis=0, keepdims=True)
     with torch.no_grad():
         neg_pred = model(torch.tensor(X_neg, dtype=torch.float32).to(run_device))
         neg_pred = neg_pred.cpu().numpy().reshape(1, 77, 768)
 
-    # save
     neg_tag = ckpt_file.replace(".pt", "") + "_negative"
     out_path = os.path.join(OUTPUT_DIR, f"{neg_tag}.npy")
     np.save(out_path, neg_pred.astype(np.float32))
     print("Saved NEGATIVE semantic embedding to:", out_path)
     print("Shape:", neg_pred.shape)
-
-
