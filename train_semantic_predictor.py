@@ -329,7 +329,7 @@ from einops import rearrange
 # Config
 # ==========================================
 batch_size    = 32
-num_epochs    = 10
+num_epochs    = 20
 lr            = 5e-4
 run_device    = "cuda"
 
