@@ -123,7 +123,17 @@ if __name__ == '__main__':
     EEG = rearrange(EEG, 'a b c e f -> (a b c) (e f)')
     eeg = rearrange(eeg, 'a b c e f -> (a b c) (e f)')
     
-    Text = np.load('/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings_authors/CLIP_embeddings_authors.npy')  # shape (40, n_samples, 77*768)
+    Text = []
+    clip_all = np.load('/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings_authors/CLIP_embeddings_authors.npy')  # shape (7, 40, 5, 77, 768)
+
+    for i in range(6):  # training blocks 0–5
+        clip_block = clip_all[i]  # shape (40, 5, 77, 768)
+        indices = [list(GT_label[i]).index(element) for element in chosed_label]  # same subset as EEG
+        chosen_clip = clip_block[indices]  # shape (subset, 5, 77, 768)
+        chosen_clip = rearrange(chosen_clip, 'b c d e -> (b c) (d e)')  # flatten to (subset*5, 77*768)
+        Text.append(chosen_clip)
+
+    Text = np.concatenate(Text, axis=0)
     Text = torch.from_numpy(Text).float()
 
     model = CLIP()
