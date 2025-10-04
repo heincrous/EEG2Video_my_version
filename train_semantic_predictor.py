@@ -290,16 +290,25 @@ if __name__ == "__main__":
         if CLASS_SUBSET is not None:
             subset_tag = "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
 
-        ckpt_name = f"semantic_predictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.pt"
+        ckpt_name  = f"semantic_predictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.pt"
         embed_name = f"embeddings_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.npy"
 
-        ckpt_path = os.path.join(SEMANTIC_CKPT_DIR, ckpt_name)
+        ckpt_path  = os.path.join(SEMANTIC_CKPT_DIR, ckpt_name)
         embed_path = os.path.join("/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings", embed_name)
 
+        print("\nChecking for existing files to delete...")
+        found_any = False
         for path in [ckpt_path, embed_path]:
             if os.path.exists(path):
                 os.remove(path)
                 print(f"🧹 Deleted existing file: {path}")
+                found_any = True
+            else:
+                print(f"— No existing file found: {path}")
+        if not found_any:
+            print("✅ No old checkpoints or embeddings found. Fresh run will begin.")
+        else:
+            print("✅ All old matching files deleted. Fresh run will begin.")
 
         # load data
         features = load_subject_data(subname, FEATURE_TYPES)
