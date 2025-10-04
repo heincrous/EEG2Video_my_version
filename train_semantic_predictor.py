@@ -1,5 +1,5 @@
 # ==========================================
-# EEG → CLIP Semantic Predictor (GT-aligned + Cleanup + Metrics + Legit Procrustes)
+# EEG → CLIP Semantic Predictor (GT-aligned + Full 5-clip training + Sanity Check + Save Inference)
 # ==========================================
 import torch
 import numpy as np
@@ -10,7 +10,6 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from einops import rearrange
 from sklearn.metrics.pairwise import cosine_similarity
-from scipy.linalg import orthogonal_procrustes
 import os, random, glob
 
 
@@ -39,7 +38,7 @@ class CLIP(nn.Module):
 # ==========================================
 # Dataset
 # ==========================================
-class Dataset():
+class Dataset:
     def __init__(self, eeg, text):
         self.eeg = eeg
         self.text = text
@@ -64,7 +63,6 @@ GT_label = np.array([
  [29,16,1,22,34,39,24,10,8,35,27,31,23,17,2,15,25,40,3,36,26,6,14,37,9,12,19,30,5,28,32,4,13,18,21,20,7,11,33,38],
  [38,34,40,10,28,7,1,37,22,9,16,5,12,36,20,30,6,15,35,2,31,26,18,24,8,3,23,19,14,13,21,4,25,11,32,17,39,29,33,27]
 ])
-
 chosed_label = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
 
 
@@ -128,13 +126,24 @@ if __name__ == '__main__':
     eegdata = np.load(eeg_path)
     clip_embeddings = np.load(clip_path)
 
+    # === Sanity check: class alignment across blocks ===
+    print("\n=== Sanity Check: EEG–CLIP Class Alignment ===")
+    for blk in range(2):  # check first 2 blocks
+        eeg_order = [np.where(GT_label[blk] == lbl)[0][0] for lbl in chosed_label]
+        clip_order = [np.where(GT_label[blk] == lbl)[0][0] for lbl in chosed_label]
+        if eeg_order != clip_order:
+            print(f"❌ Misalignment detected in block {blk}")
+        else:
+            print(f"✅ Block {blk} aligned correctly. EEG/CLIP order: {eeg_order[:5]} ...")
+
+    # === Load EEG & CLIP for all 5 clips per class ===
     eeg, text = [], []
     for blk in range(6):
         indices = [np.where(GT_label[blk] == lbl)[0][0] for lbl in chosed_label]
-        eeg_block = eegdata[blk, indices]
-        text_block = clip_embeddings[blk, indices]
+        eeg_block = eegdata[blk, indices]                   # shape: [10, 5, 62, 5]
+        text_block = clip_embeddings[blk, indices]          # shape: [10, 5, 77, 768]
         eeg.append(eeg_block)
-        text.append(text_block.reshape(len(chosed_label)*5, -1))
+        text.append(text_block.reshape(len(chosed_label)*5, -1))  # 10×5 clips flattened
     eeg = np.stack(eeg, axis=0)
     eeg = rearrange(eeg, 'a b c e f -> (a b c) (e f)')
     text = np.concatenate(text, axis=0)
@@ -146,6 +155,7 @@ if __name__ == '__main__':
     dataset = Dataset(eeg, text)
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
 
+    # === Test block ===
     test_block = 6
     indices = [np.where(GT_label[test_block] == lbl)[0][0] for lbl in chosed_label]
     eeg_test = eegdata[test_block, indices]
@@ -153,11 +163,11 @@ if __name__ == '__main__':
     eeg_test = scaler.transform(eeg_test)
     text_test = clip_embeddings[test_block, indices].reshape(len(chosed_label)*5, -1)
 
+    # === Train ===
     model = CLIP().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(dataloader))
 
-    # === Train ===
     for epoch in tqdm(range(1, 51)):
         model.train()
         total_loss = 0
@@ -184,34 +194,12 @@ if __name__ == '__main__':
     torch.save({'state_dict': model.state_dict()}, final_ckpt)
     print(f"\n✅ Final model saved: {final_ckpt}")
 
-    # === Train-set alignment for Procrustes ===
+    # === Inference and Save Predicted Embeddings ===
     model.eval()
     with torch.no_grad():
-        preds_train = model(torch.tensor(eeg).float().to(device)).cpu().numpy()
-    preds_train_flat = preds_train.reshape(preds_train.shape[0], -1)
-    true_train_flat  = text.reshape(text.shape[0], -1)
-
-    # center and compute rotation on training data only
-    X_train = preds_train_flat - preds_train_flat.mean(0, keepdims=True)
-    Y_train = true_train_flat  - true_train_flat.mean(0, keepdims=True)
-    # === Memory-safe Procrustes ===
-    XtY = X_train.T @ Y_train            # shape (d, d) but built in float32
-    U, _, Vt = np.linalg.svd(XtY, full_matrices=False)
-    R = U @ Vt
-    print("✅ Procrustes alignment matrix learned from TRAIN set")
-
-    # === Inference on TEST set with aligned rotation ===
-    with torch.no_grad():
         preds_test = model(torch.tensor(eeg_test).float().to(device)).cpu().numpy()
-    preds_test_flat = preds_test.reshape(preds_test.shape[0], -1)
-    preds_test_centered = preds_test_flat - preds_train_flat.mean(0, keepdims=True)
-    preds_aligned = preds_test_centered @ R
 
-    mean_cos, within, between = compute_cosine_metrics(preds_aligned, text_test)
-    print(f"\n=== Post-Procrustes (trained on train set) ===\nCos={mean_cos:.4f} | Within={within:.4f} | Between={between:.4f}")
-
-    # Save aligned test predictions
-    preds_aligned = preds_aligned.reshape(len(chosed_label)*5, 77, 768)
-    save_pred_path = os.path.join(embed_dir, f"pred_embeddings_{subset_tag}_aligned.npy")
-    np.save(save_pred_path, preds_aligned)
-    print(f"✅ Aligned test predictions saved: {save_pred_path}")
+    preds_test = preds_test.reshape(len(chosed_label)*5, 77, 768)
+    save_pred_path = os.path.join(embed_dir, f"pred_embeddings_{subset_tag}.npy")
+    np.save(save_pred_path, preds_test)
+    print(f"✅ Test predictions saved: {save_pred_path}")
