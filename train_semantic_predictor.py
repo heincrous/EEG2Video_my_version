@@ -124,7 +124,7 @@ if __name__ == '__main__':
     sd_model  = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
     ckpt_dir  = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
     embed_dir = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings"
-    subset_tag = "sub1_subset10_clsReg"
+    subset_tag = "sub1_subset10"
 
     os.makedirs(ckpt_dir, exist_ok=True)
     os.makedirs(embed_dir, exist_ok=True)
@@ -192,7 +192,7 @@ if __name__ == '__main__':
     model = CLIP().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(dataloader))
-    lambda_cls = 0.1  # class regularization strength
+    lambda_cls = 1  # class regularization strength
 
     for epoch in tqdm(range(1, 51)):
         model.train()
