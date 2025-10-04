@@ -193,17 +193,18 @@ if __name__ == "__main__":
     else:
         print("✅ All old matching files deleted. Fresh run will begin.\n")
 
-    print("Normalizing EEG features...")
-    scaler = StandardScaler().fit(eeg)
-    eeg = scaler.transform(eeg)
-
     # 6-train / 1-test block split
     samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5
     train_idx = np.arange(0, 6 * samples_per_block)
     test_idx  = np.arange(6 * samples_per_block, 7 * samples_per_block)
 
-    X_train, X_test = eeg[train_idx], eeg[test_idx]
+    X_train_raw, X_test_raw = eeg[train_idx], eeg[test_idx]
     Y_train, Y_test = clip[train_idx], clip[test_idx]
+
+    print("Normalizing EEG features (fit on training data only)...")
+    scaler = StandardScaler().fit(X_train_raw)
+    X_train = scaler.transform(X_train_raw)
+    X_test  = scaler.transform(X_test_raw)
 
     train_loader = DataLoader(EEGDataset(X_train, Y_train), batch_size=batch_size, shuffle=True)
     test_loader  = DataLoader(EEGDataset(X_test,  Y_test),  batch_size=batch_size, shuffle=False)
@@ -224,5 +225,3 @@ if __name__ == "__main__":
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     np.save(embed_path, preds)
     print(f"Test-set embeddings saved: {embed_path} | Shape: {preds.shape}")
-
-

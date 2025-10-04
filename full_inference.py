@@ -22,7 +22,7 @@ SEM_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddin
 NEG_SEM_PATH       = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/embeddings_windows_100_sub1_subset0-2-4-10-11-12-22-26-29-37_negative.npy"
 
 # Negative embedding toggle: "empty", "mean_eeg", "mean_sem"
-NEGATIVE_MODE      = "empty"
+NEGATIVE_MODE      = "mean_sem"
 
 # Toggle between vanilla or finetuned diffusion
 USE_FINETUNED = True
