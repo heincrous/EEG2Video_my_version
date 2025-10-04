@@ -14,7 +14,7 @@ import torch.nn.functional as F
 # ==========================================
 batch_size    = 32
 num_epochs    = 100
-lr            = 1e-4
+lr            = 1e-5
 run_device    = "cuda"
 
 FEATURE_TYPES = ["DE"]    # choose: ["segments"], ["DE"], ["PSD"], ["windows_100"], ["windows_200"], or fusion list
