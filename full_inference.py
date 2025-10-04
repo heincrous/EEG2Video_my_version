@@ -25,7 +25,7 @@ NEG_SEM_PATH       = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddin
 NEGATIVE_MODE      = "mean_sem"
 
 # Toggle between vanilla or finetuned diffusion
-USE_FINETUNED = True
+USE_FINETUNED = False
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
