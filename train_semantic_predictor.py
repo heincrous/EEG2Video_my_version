@@ -13,7 +13,7 @@ import torch.nn.functional as F
 # Config (author defaults)
 # ==========================================
 batch_size    = 32
-num_epochs    = 200
+num_epochs    = 50
 lr            = 5e-4
 run_device    = "cuda"
 
@@ -201,6 +201,19 @@ if __name__ == "__main__":
     X_train_raw, X_test_raw = eeg[train_idx], eeg[test_idx]
     Y_train, Y_test = clip[train_idx], clip[test_idx]
 
+    # ==========================================
+    # Average CLIP embeddings per class (train targets only)
+    # ==========================================
+    print("Averaging CLIP embeddings per class for training targets...")
+    unique_classes = np.unique(labels[train_idx])
+    averaged_targets = {}
+
+    for c in unique_classes:
+        averaged_targets[c] = clip[train_idx][labels[train_idx] == c].mean(axis=0)
+
+    # assign averaged CLIP vector to each EEG sample of that class
+    Y_train = np.array([averaged_targets[c] for c in labels[train_idx]])
+
     print("Normalizing EEG features (fit on training data only)...")
     scaler = StandardScaler().fit(X_train_raw)
     X_train = scaler.transform(X_train_raw)
@@ -209,7 +222,7 @@ if __name__ == "__main__":
     train_loader = DataLoader(EEGDataset(X_train, Y_train), batch_size=batch_size, shuffle=True)
     test_loader  = DataLoader(EEGDataset(X_test,  Y_test),  batch_size=batch_size, shuffle=False)
 
-    print(f"Training {SUBJECT_NAME} with {FEATURE_TYPES} (author scheme)...")
+    print(f"Training {SUBJECT_NAME} with {FEATURE_TYPES} (author scheme + class-averaged CLIP)...")
     model = SemanticMLP(eeg.shape[1])
     train(model, train_loader, test_loader, run_device)
 
