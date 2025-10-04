@@ -13,7 +13,7 @@ import torch.nn.functional as F
 # Config (author defaults)
 # ==========================================
 batch_size    = 32
-num_epochs    = 25
+num_epochs    = 100
 lr            = 5e-4
 run_device    = "cuda"
 
