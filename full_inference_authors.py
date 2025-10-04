@@ -19,7 +19,7 @@ BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/
 SEM_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/embeddings_subset1-3-5-11-12-13-23-27-30-38_block6.npy"
 
 # Negative embedding toggle: "empty", "mean_eeg", "mean_sem"
-NEGATIVE_MODE      = "empty"
+NEGATIVE_MODE      = "mean_sem"
 USE_FINETUNED      = True
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
