@@ -17,7 +17,7 @@ num_epochs    = 200
 lr            = 5e-4
 run_device    = "cuda"
 
-FEATURE_TYPES = ["DE", "segments"]    # choose: ["segments"], ["DE"], ["PSD"], ["windows_100"], ["windows_200"], or fusion list
+FEATURE_TYPES = ["DE", "windows_200"]    # choose: ["segments"], ["DE"], ["PSD"], ["windows_100"], ["windows_200"], or fusion list
 SUBJECT_NAME  = "sub1.npy"
 CLASS_SUBSET  = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]  # set None for all 40
 
