@@ -16,7 +16,7 @@ from einops import rearrange
 # ==========================================
 batch_size    = 32
 num_epochs    = 50
-lr            = 3e-4
+lr            = 1e-3
 run_device    = "cuda"
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
@@ -75,11 +75,17 @@ class SemanticMLP(nn.Module):
     def __init__(self, input_dim, p=P):
         super().__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(input_dim, 10000), nn.ReLU(), nn.LayerNorm(10000), nn.Dropout(p),
-            nn.Linear(10000, 10000), nn.ReLU(), nn.LayerNorm(10000), nn.Dropout(p),
-            nn.Linear(10000, 10000), nn.ReLU(), nn.LayerNorm(10000), nn.Dropout(p),
-            nn.Linear(10000, 10000), nn.ReLU(), nn.LayerNorm(10000), nn.Dropout(p),
-            nn.Linear(10000, 77*768)
+            nn.Linear(input_dim, 4096),
+            nn.LayerNorm(4096),
+            nn.GELU(),
+            nn.Dropout(p),
+
+            nn.Linear(4096, 2048),
+            nn.LayerNorm(2048),
+            nn.GELU(),
+            nn.Dropout(p),
+
+            nn.Linear(2048, 77*768)
         )
     def forward(self, x):
         return self.mlp(x)
@@ -134,7 +140,7 @@ def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject")
 
     if SCHEDULER_TYPE.lower() == "cosine":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=num_epochs * len(train_iter)
+            optimizer, T_max=num_epochs
         )
     else:
         scheduler = None
@@ -163,7 +169,7 @@ def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject")
                 target = torch.ones(y_hat.size(0), device=device)
                 cos_part = cos_loss(F.normalize(y_hat, dim=-1), F.normalize(y, dim=-1), target)
                 mse_part = mse_loss(y_hat, y)
-                loss = mse_part + cos_part
+                loss = 0.5 * mse_part + 0.5 * cos_part
             elif LOSS_TYPE == "contrastive":
                 loss = contrastive_loss_fn(y_hat, y)
             else:
@@ -171,15 +177,16 @@ def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject")
 
             if USE_VAR_REG:
                 var = torch.var(y_hat, dim=0).mean()
-                loss += VAR_LAMBDA * (1.0 / (var + 1e-8))  # penalize collapse
-                epoch_var.append(var.item())
+                loss += VAR_LAMBDA * F.relu(0.5 - var) ** 2
 
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
             optimizer.step()
-            if scheduler:
-                scheduler.step()
 
             total_loss += loss.item() * y.size(0)
+
+            if scheduler:
+                scheduler.step()
 
         # 🧠 Print mean variance once per epoch
         if USE_VAR_REG and len(epoch_var) > 0:
@@ -201,32 +208,6 @@ def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject")
                os.path.join(SEMANTIC_CKPT_DIR, model_name))
     print(f"Saved checkpoint: {model_name}")
 
-    # run inference immediately after training
-    net.eval()
-    with torch.no_grad():
-        eeg_tensor = torch.tensor(X_test, dtype=torch.float32).to(device)
-        preds = net(eeg_tensor)
-        preds = F.normalize(preds, dim=-1)  # normalize each embedding
-        preds = preds.cpu().numpy().reshape(-1, 77, 768)
-
-    # build output directory and file name
-    OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings"
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    base_name = f"embeddings_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}"
-    if CLASS_SUBSET is not None:
-        subset_tag = "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
-        base_name += subset_tag
-    out_path = os.path.join(OUTPUT_DIR, f"{base_name}.npy")
-
-    # check normalization before saving
-    flat_preds = preds.reshape(-1, preds.shape[-1])  # flatten tokens
-    mean_norm = np.mean(np.linalg.norm(flat_preds, axis=-1))
-    print(f"🧭 Mean embedding norm before save: {mean_norm:.4f}")
-
-    np.save(out_path, preds.astype(np.float32))
-    print(f"Saved semantic embeddings to: {out_path}")
-    print(f"Shape: {preds.shape}")
-
     return net
 
 
@@ -238,39 +219,51 @@ def evaluate(net, data_iter, device):
     cos = nn.CosineSimilarity(dim=-1)
     total_mse, total_cos, count, dim = 0, 0, 0, None
     preds_all, labels_all = [], []
+
     with torch.no_grad():
         for X, y, lbl in data_iter:
             X, y, lbl = X.to(device), y.to(device), lbl.to(device)
             y_hat = net(X)
 
-            # Normalize both for cosine-based evaluation
-            y_hat = F.normalize(y_hat, dim=-1)
-            y     = F.normalize(y, dim=-1)
-
+            # --- unnormalized MSE ---
             total_mse += F.mse_loss(y_hat, y, reduction="sum").item()
-            total_cos += cos(y_hat, y).mean().item() * y.size(0)
+
+            # --- cosine on normalized vectors ---
+            y_hat_n = F.normalize(y_hat, dim=-1)
+            y_n     = F.normalize(y, dim=-1)
+            total_cos += cos(y_hat_n, y_n).mean().item() * y.size(0)
 
             preds_all.append(y_hat.cpu().numpy())
             labels_all.append(lbl.cpu().numpy())
+
             count += y.size(0)
             dim = y.size(1)
+
     preds_all  = np.concatenate(preds_all, axis=0)
     labels_all = np.concatenate(labels_all, axis=0)
 
-    # compute fisher score dynamically
+    # --- Fisher score for class separability ---
     try:
         classes = np.unique(labels_all)
         class_samples = [preds_all[labels_all == c] for c in classes]
         class_means   = [c.mean(axis=0) for c in class_samples]
         overall_mean  = np.mean(class_means, axis=0)
+
         between = sum(len(c) * np.sum((m - overall_mean) ** 2)
                       for c, m in zip(class_samples, class_means))
         within  = sum(np.sum((c - m) ** 2) for c, m in zip(class_samples, class_means))
+
         fisher_score = between / (within + 1e-8)
+        if np.isnan(fisher_score) or np.isinf(fisher_score):
+            fisher_score = 0.0
     except Exception:
         fisher_score = 0.0
 
-    return total_mse / (count * dim), total_cos / count, fisher_score
+    # --- averaged metrics ---
+    avg_mse = total_mse / (count * dim)
+    avg_cos = total_cos / count
+
+    return avg_mse, avg_cos, fisher_score
 
 
 # ==========================================
@@ -386,3 +379,23 @@ if __name__ == "__main__":
         modelnet = SemanticPredictor(input_dim)
         modelnet = train(modelnet, train_iter, test_iter,
                          num_epochs, lr, run_device, subname=subname)
+        
+        # Run inference after training
+        modelnet.eval()
+        with torch.no_grad():
+            eeg_tensor = torch.tensor(X_test, dtype=torch.float32).to(run_device)
+            preds = modelnet(eeg_tensor)
+            preds = F.normalize(preds, dim=-1)
+            preds = preds.cpu().numpy().reshape(-1, 77, 768)
+
+        OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings"
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        base_name = f"embeddings_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}"
+        if CLASS_SUBSET is not None:
+            subset_tag = "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
+            base_name += subset_tag
+        out_path = os.path.join(OUTPUT_DIR, f"{base_name}.npy")
+
+        np.save(out_path, preds.astype(np.float32))
+        print(f"Saved semantic embeddings to: {out_path} | Shape: {preds.shape}")
+
