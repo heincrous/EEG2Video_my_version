@@ -36,12 +36,12 @@ subject_name     = "sub1.npy"
 CLASS_SUBSET     = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
 
 # loss type: "mse", "cosine", "mse+cosine", "contrastive"
-LOSS_TYPE        = "cosine"
+LOSS_TYPE        = "contrastive"
 
-USE_VAR_REG = True
+USE_VAR_REG = False
 VAR_LAMBDA  = 0.05
 
-P = 0.2 # dropout prob
+P = 0 # dropout prob 0.2
 
 FEATURE_PATHS = {
     "segments":    "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
