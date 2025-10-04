@@ -15,8 +15,8 @@ from einops import rearrange
 # Config
 # ==========================================
 batch_size    = 32
-num_epochs    = 50
-lr            = 1e-6
+num_epochs    = 100
+lr            = 1e-5
 run_device    = "cuda"
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
