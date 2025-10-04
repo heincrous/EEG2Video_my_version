@@ -1,6 +1,6 @@
 import numpy as np
 import os
-from preprocessing.EEG_preprocessing.DE_PSD import DE_PSD
+from DE_PSD import DE_PSD
 from tqdm import tqdm
 
 fre = 200
@@ -17,16 +17,11 @@ def get_files_names_in_directory(directory):
             files_names.append(filename)
     return files_names
 
-sub_list = get_files_names_in_directory("/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments_authors/")
-de_root  = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per1s_authors"
-psd_root = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_PSD_1per1s_authors"
-
-os.makedirs(de_root, exist_ok=True)
-os.makedirs(psd_root, exist_ok=True)
+sub_list = get_files_names_in_directory("data/Segmented_Rawf_200Hz_2s/")
 
 for subname in sub_list:
 
-    loaded_data = np.load('/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments_authors/' + subname)
+    loaded_data = np.load('data/Segmented_Rawf_200Hz_2s/' + subname)
     # (7 * 40 * 5 * 62 * 2*fre)
 
     print("Successfully loaded .npy file.")
@@ -53,8 +48,7 @@ for subname in sub_list:
         DE_data = np.concatenate((DE_data, de_block_data.reshape(1, 40, 5, 2, 62, 5)))
         PSD_data = np.concatenate((PSD_data, psd_block_data.reshape(1, 40, 5, 2, 62, 5)))
 
-    np.save(os.path.join(de_root, subname + ".npy"), DE_data)
-    np.save(os.path.join(psd_root, subname + ".npy"), PSD_data)
-
+    np.save("data/DE_1per1s/" + subname + ".npy", DE_data)
+    np.save("data/PSD_1per1s/" + subname + ".npy", PSD_data)
 
     # break
