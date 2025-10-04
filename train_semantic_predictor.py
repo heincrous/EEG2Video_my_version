@@ -108,11 +108,12 @@ if __name__ == '__main__':
     eeg = rearrange(eeg, 'a b c e f -> (a b c) (e f)')
 
     Text = []
-    for i in range(6):  # same block selection
+    for i in range(6):  # training blocks
         indices = [list(GT_label[i]).index(element) for element in chosed_label]
-        text = clipdata[i][indices, :]  # match EEG order
+        text = clipdata[i][indices, 0:1, :, :]        # first clip only
+        text = np.repeat(text, repeats=5, axis=1)     # repeat across 5 EEG clips
         text = torch.from_numpy(text)
-        text = rearrange(text, 'a b c d -> (a b) (c d)')
+        text = rearrange(text, 'a b c d -> (a b) (c d)')  # flatten
         Text.append(text)
     Text = torch.cat(Text, dim=0)
 
@@ -134,7 +135,7 @@ if __name__ == '__main__':
     # ==========================================
     # Training
     # ==========================================
-    for epoch in tqdm(range(200)):
+    for epoch in tqdm(range(50)):
         model.train()
         epoch_loss = 0
         for i, batch in enumerate(dataloader):
@@ -165,7 +166,7 @@ if __name__ == '__main__':
     test_indices = [list(GT_label[6]).index(element) for element in chosed_label]
     eeg_test = eegdata[6][test_indices, :]
     eeg_test = torch.from_numpy(eeg_test)
-    eeg_test = rearrange(eeg_test, 'a b c d e -> (a b c) (d e)')
+    eeg_test = rearrange(eeg_test, 'a b c d -> (a b) (c d)')
     eeg_test = normalize.transform(eeg_test)
     eeg_test = torch.from_numpy(eeg_test).float().to(device)
 
