@@ -15,7 +15,7 @@ CLASS_SUBSET       = [1, 3, 5, 11, 12, 13, 23, 27, 30, 38]  # 1-indexed subset
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final_subset0-2-4-10-11-12-22-26-29-37_variants"
 OUTPUT_DIR         = "/content/drive/MyDrive/EEG2Video_outputs/full_inference_subset10"
-BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
+BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text_authors/BLIP_text_full.npy"
 SEM_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/pred_embeddings_sub1_subset10.npy"
 
 NEGATIVE_MODE      = "mean_sem"   # options: "empty", "mean_sem"
