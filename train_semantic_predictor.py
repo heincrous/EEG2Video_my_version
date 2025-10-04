@@ -13,11 +13,11 @@ import torch.nn.functional as F
 # Config (author defaults)
 # ==========================================
 batch_size    = 32
-num_epochs    = 200
+num_epochs    = 50
 lr            = 5e-4
 run_device    = "cuda"
 
-FEATURE_TYPES = ["DE", "PSD"]    # choose: ["segments"], ["DE"], ["PSD"], ["windows_100"], ["windows_200"], or fusion list
+FEATURE_TYPES = ["windows_100"]    # choose: ["segments"], ["DE"], ["PSD"], ["windows_100"], ["windows_200"], or fusion list
 SUBJECT_NAME  = "sub1.npy"
 CLASS_SUBSET  = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]  # set None for all 40
 
@@ -32,7 +32,7 @@ CLIP_EMB_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embedd
 SEMANTIC_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
 OUTPUT_DIR        = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings"
 
-TEMPORAL_MODE = "concat"   # options: "mean" or "concat"
+TEMPORAL_MODE = "mean"   # options: "mean" or "concat"
 
 # ==========================================
 # Model (same as authors)
