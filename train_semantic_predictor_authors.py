@@ -13,7 +13,7 @@ import os
 # ==========================================
 SUBJECT_NAME   = "sub1.npy"
 CLASS_SUBSET   = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]   # None for all
-NUM_EPOCHS     = 200
+NUM_EPOCHS     = 50
 BATCH_SIZE     = 32
 LR             = 5e-4
 DEVICE         = "cuda" if torch.cuda.is_available() else "cpu"
