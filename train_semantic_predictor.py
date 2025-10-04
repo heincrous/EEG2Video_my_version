@@ -13,7 +13,7 @@ import torch.nn.functional as F
 # Config (author defaults)
 # ==========================================
 batch_size    = 32
-num_epochs    = 50
+num_epochs    = 25
 lr            = 5e-4
 run_device    = "cuda"
 
@@ -218,7 +218,11 @@ if __name__ == "__main__":
         X_test_torch = torch.tensor(X_test, dtype=torch.float32).to(run_device)
         preds = model(X_test_torch).cpu().numpy()
 
+    # reshape each embedding from (59136,) → (77, 768)
+    preds = preds.reshape(preds.shape[0], 77, 768)
+
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     np.save(embed_path, preds)
     print(f"Test-set embeddings saved: {embed_path} | Shape: {preds.shape}")
+
 
