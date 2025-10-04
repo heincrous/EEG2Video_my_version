@@ -239,13 +239,33 @@ if __name__ == '__main__':
     mean_cos = np.mean(np.diag(cosine_similarity(pred_norm, true_norm)))
     print(f"\n=== Test Block (Block 7) Cosine Similarity: {mean_cos:.4f} ===")
 
+    # ==========================================
+    # Procrustes alignment test
+    # ==========================================
+    from scipy.linalg import orthogonal_procrustes
+    print("Performing Procrustes alignment test...")
+
+    pred_flat_c = preds_flat - preds_flat.mean(axis=0)
+    true_flat_c = true_flat - true_flat.mean(axis=0)
+    R, _ = orthogonal_procrustes(pred_flat_c, true_flat_c)
+    pred_aligned = pred_flat_c @ R
+
+    aligned_cos = np.mean(np.diag(cosine_similarity(
+        pred_aligned / np.linalg.norm(pred_aligned, axis=1, keepdims=True),
+        true_flat_c / np.linalg.norm(true_flat_c, axis=1, keepdims=True)
+    )))
+    print(f"After Procrustes alignment → mean cosine = {aligned_cos:.4f}")
+
+    # ==========================================
+    # Save model checkpoint
+    # ==========================================
     path = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
     os.makedirs(path, exist_ok=True)
 
     save_path = os.path.join(path, "eeg2text_10_classes.pt")
     torch.save({'state_dict': model_dict}, save_path)
-
     print(f"Model saved to {save_path}")
+
 
     
 
