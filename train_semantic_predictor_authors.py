@@ -106,7 +106,7 @@ device='cuda:0'
 #     return formatted_time
 
 if __name__ == '__main__':
-    eegdata = np.load('/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per2s_authors')
+    eegdata = np.load('/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per2s_authors/sub1.npy')
     
     print(eegdata.shape)
     EEG = []
