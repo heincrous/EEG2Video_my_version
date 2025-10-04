@@ -194,7 +194,7 @@ if __name__ == '__main__':
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(dataloader))
     lambda_cls = 1  # class regularization strength
 
-    for epoch in tqdm(range(1, 51)):
+    for epoch in tqdm(range(1, 201)):
         model.train()
         total_loss = 0
         for eeg_batch, text_batch, class_batch in dataloader:
