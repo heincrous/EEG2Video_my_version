@@ -139,8 +139,9 @@ def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject")
     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
 
     if SCHEDULER_TYPE.lower() == "cosine":
+        # slower decay: complete cosine cycle over half the training
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=num_epochs
+            optimizer, T_max=max(1, num_epochs // 2)
         )
     else:
         scheduler = None
@@ -169,7 +170,7 @@ def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject")
                 target = torch.ones(y_hat.size(0), device=device)
                 cos_part = cos_loss(F.normalize(y_hat, dim=-1), F.normalize(y, dim=-1), target)
                 mse_part = mse_loss(y_hat, y)
-                loss = 0.5 * mse_part + 0.5 * cos_part
+                loss = 0.3 * mse_part + 0.7 * cos_part
             elif LOSS_TYPE == "contrastive":
                 loss = contrastive_loss_fn(y_hat, y)
             else:
@@ -178,6 +179,7 @@ def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject")
             if USE_VAR_REG:
                 var = torch.var(y_hat, dim=0).mean()
                 loss += VAR_LAMBDA * F.relu(0.5 - var) ** 2
+                epoch_var.append(var.item())
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
