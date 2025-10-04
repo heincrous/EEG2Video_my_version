@@ -36,7 +36,7 @@ subject_name     = "sub1.npy"
 CLASS_SUBSET     = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
 
 # loss type: "mse", "cosine", "mse+cosine", "contrastive"
-LOSS_TYPE        = "mse+cosine"
+LOSS_TYPE        = "mse"
 
 USE_VAR_REG = False
 VAR_LAMBDA  = 0.01
