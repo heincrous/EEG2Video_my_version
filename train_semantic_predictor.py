@@ -145,6 +145,8 @@ def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject")
     for epoch in range(num_epochs):
         net.train()
         total_loss = 0
+        epoch_var = []  # track variance across batches
+
         for X, y, _ in train_iter:
             X, y = X.to(device), y.to(device)
             optimizer.zero_grad()
@@ -168,12 +170,9 @@ def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject")
                 raise ValueError(f"Unknown LOSS_TYPE {LOSS_TYPE}")
 
             if USE_VAR_REG:
-                # Encourage non-collapsed embeddings (too-low variance → penalty)
                 var = torch.var(y_hat, dim=0).mean()
-                loss += VAR_LAMBDA * (1.0 / (var + 1e-8))  # inverse to penalize collapse, not explosion
-
-            if epoch == 0:
-                print(f"[DEBUG] Mean variance: {var.item():.6f}")
+                loss += VAR_LAMBDA * (1.0 / (var + 1e-8))  # penalize collapse
+                epoch_var.append(var.item())
 
             loss.backward()
             optimizer.step()
@@ -182,10 +181,14 @@ def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject")
 
             total_loss += loss.item() * y.size(0)
 
+        # 🧠 Print mean variance once per epoch
+        if USE_VAR_REG and len(epoch_var) > 0:
+            print(f"[DEBUG] Mean variance (epoch {epoch+1}): {np.mean(epoch_var):.6f}")
+
         # evaluate on test set
         test_mse, test_cos, fisher_score = evaluate(net, test_iter, device)
         print(f"[{epoch+1}] train_loss={total_loss/len(train_iter.dataset):.4f}, "
-              f"test_mse={test_mse:.4f}, test_cos={test_cos:.4f}, fisher_score={fisher_score:.4f}")
+            f"test_mse={test_mse:.4f}, test_cos={test_cos:.4f}, fisher_score={fisher_score:.4f}")
 
     # save after all epochs
     os.makedirs(SEMANTIC_CKPT_DIR, exist_ok=True)
