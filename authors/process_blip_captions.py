@@ -131,15 +131,9 @@ print("CLIP_embeddings_cleaned.npy ", all_embs_cleaned.shape)
 
 
 # ==========================================
-# CLASS SEPARABILITY TEST
+# CLASS SEPARABILITY TEST (BLOCK-WISE)
 # ==========================================
-print("\n=== Computing cosine separation between classes ===")
-mean_full   = all_embs_full.mean(axis=-2).reshape(-1, 768)
-mean_clean  = all_embs_cleaned.mean(axis=-2).reshape(-1, 768)
-
-labels = np.repeat(np.arange(40), 5*7)
-cos_full  = cosine_similarity(mean_full)
-cos_clean = cosine_similarity(mean_clean)
+print("\n=== Computing cosine separation within each block ===")
 
 def compute_sep(cos_matrix, labels):
     within = np.mean([cos_matrix[i,j]
@@ -152,9 +146,21 @@ def compute_sep(cos_matrix, labels):
                        if labels[i]!=labels[j]])
     return within, between, within - between
 
-w_f, b_f, d_f = compute_sep(cos_full, labels)
-w_c, b_c, d_c = compute_sep(cos_clean, labels)
 
-print(f"Full captions   → within={w_f:.3f}, between={b_f:.3f}, Δ={d_f:.3f}")
-print(f"Cleaned captions→ within={w_c:.3f}, between={b_c:.3f}, Δ={d_c:.3f}")
-print("\nΔ = (within - between). Higher Δ = better class separation.")
+def blockwise_separation(embeddings):
+    deltas = []
+    for block_id in range(7):
+        mean_block = embeddings[block_id].mean(axis=-2).reshape(-1, 768)
+        labels = np.repeat(np.arange(40), 5)
+        cos_block = cosine_similarity(mean_block)
+        _, _, delta = compute_sep(cos_block, labels)
+        deltas.append(delta)
+    return np.mean(deltas)
+
+delta_full  = blockwise_separation(all_embs_full)
+delta_clean = blockwise_separation(all_embs_cleaned)
+
+print(f"Average Δ (within–between) per block:")
+print(f"Full captions   → Δ = {delta_full:.3f}")
+print(f"Cleaned captions→ Δ = {delta_clean:.3f}")
+print("\nHigher Δ = better class separation within each block (local order only).")
