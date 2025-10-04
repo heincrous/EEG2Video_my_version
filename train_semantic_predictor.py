@@ -194,7 +194,10 @@ if __name__ == '__main__':
     # center and compute rotation on training data only
     X_train = preds_train_flat - preds_train_flat.mean(0, keepdims=True)
     Y_train = true_train_flat  - true_train_flat.mean(0, keepdims=True)
-    R, _ = orthogonal_procrustes(X_train, Y_train)
+    # === Memory-safe Procrustes ===
+    XtY = X_train.T @ Y_train            # shape (d, d) but built in float32
+    U, _, Vt = np.linalg.svd(XtY, full_matrices=False)
+    R = U @ Vt
     print("✅ Procrustes alignment matrix learned from TRAIN set")
 
     # === Inference on TEST set with aligned rotation ===
