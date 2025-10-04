@@ -17,7 +17,6 @@ BATCH_SIZE       = 32
 LR               = 5e-4
 DEVICE           = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Paths
 EEG_PATH_ROOT    = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per2s"
 CLIP_PATH        = "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy"
 CKPT_DIR         = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
@@ -45,13 +44,14 @@ class SemanticPredictor(nn.Module):
 # Dataset
 # ==========================================
 class EEGTextDataset(torch.utils.data.Dataset):
-    def __init__(self, eeg, text):
+    def __init__(self, eeg, text, labels):
         self.eeg = eeg
         self.text = text
+        self.labels = labels
     def __len__(self):
         return len(self.eeg)
     def __getitem__(self, idx):
-        return self.eeg[idx], self.text[idx]
+        return self.eeg[idx], self.text[idx], self.labels[idx]
 
 
 # ==========================================
@@ -75,6 +75,35 @@ def clear_old(feature_type, subject_name, subset):
 
 
 # ==========================================
+# Evaluation
+# ==========================================
+def evaluate(model, eeg, text, labels):
+    model.eval()
+    cos = nn.CosineSimilarity(dim=-1)
+    with torch.no_grad():
+        eeg_tensor = torch.tensor(eeg, dtype=torch.float32).to(DEVICE)
+        text_tensor = torch.tensor(text, dtype=torch.float32).to(DEVICE)
+        preds = model(eeg_tensor)
+
+        # Cosine similarity
+        preds_norm = F.normalize(preds, dim=-1)
+        text_norm = F.normalize(text_tensor, dim=-1)
+        cos_sim = cos(preds_norm, text_norm).mean().item()
+
+        # Fisher score
+        preds_np = preds.cpu().numpy()
+        labels_np = np.array(labels)
+        classes = np.unique(labels_np)
+        class_samples = [preds_np[labels_np == c] for c in classes]
+        class_means = [c.mean(axis=0) for c in class_samples]
+        overall_mean = np.mean(class_means, axis=0)
+        between = sum(len(c) * np.sum((m - overall_mean) ** 2) for c, m in zip(class_samples, class_means))
+        within  = sum(np.sum((c - m) ** 2) for c, m in zip(class_samples, class_means))
+        fisher_score = between / (within + 1e-8)
+    return cos_sim, fisher_score
+
+
+# ==========================================
 # Main
 # ==========================================
 if __name__ == "__main__":
@@ -87,39 +116,48 @@ if __name__ == "__main__":
     # Flatten
     eegdata = eegdata.reshape(-1, 62*5)            # (1400, 310)
     text_embeds = text_embeds.reshape(-1, 77*768)  # (1400, 59136)
-
-    # Labels
     labels = np.tile(np.repeat(np.arange(40), 5), 7)
 
-    # Apply subset if defined
+    # Split: first 6 blocks train, last block test
+    block_size = 40 * 5
+    train_idx = np.arange(0, 6 * block_size)
+    test_idx  = np.arange(6 * block_size, 7 * block_size)
+
+    eeg_train, eeg_test = eegdata[train_idx], eegdata[test_idx]
+    text_train, text_test = text_embeds[train_idx], text_embeds[test_idx]
+    labels_train, labels_test = labels[train_idx], labels[test_idx]
+
+    # Apply subset
     if CLASS_SUBSET is not None:
-        mask = np.isin(labels, CLASS_SUBSET)
-        eegdata = eegdata[mask]
-        text_embeds = text_embeds[mask]
-        labels = labels[mask]
-        print(f"Using subset {CLASS_SUBSET} → {len(labels)} samples")
+        mask_train = np.isin(labels_train, CLASS_SUBSET)
+        mask_test  = np.isin(labels_test, CLASS_SUBSET)
+        eeg_train, text_train, labels_train = eeg_train[mask_train], text_train[mask_train], labels_train[mask_train]
+        eeg_test, text_test, labels_test = eeg_test[mask_test], text_test[mask_test], labels_test[mask_test]
+        print(f"Using subset {CLASS_SUBSET}: train {len(labels_train)}, test {len(labels_test)}")
 
     # Delete old files
     ckpt_path, emb_path = clear_old(feature_type, SUBJECT_NAME, CLASS_SUBSET)
 
-    # Normalize EEG
+    # Normalize
     scaler = preprocessing.StandardScaler()
-    eegdata = scaler.fit_transform(eegdata)
+    scaler.fit(eeg_train)
+    eeg_train = scaler.transform(eeg_train)
+    eeg_test = scaler.transform(eeg_test)
 
-    # Dataloader
-    dataset = EEGTextDataset(eegdata, text_embeds)
-    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+    # Dataloaders
+    train_ds = EEGTextDataset(eeg_train, text_train, labels_train)
+    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True)
 
-    # Model and training setup
+    # Model + optim
     model = SemanticPredictor().to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS * len(dataloader))
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS * len(train_loader))
 
-    # Train
+    # Train loop
     for epoch in tqdm(range(NUM_EPOCHS)):
         model.train()
         total_loss = 0
-        for eeg, text in dataloader:
+        for eeg, text, _ in train_loader:
             eeg, text = eeg.float().to(DEVICE), text.float().to(DEVICE)
             optimizer.zero_grad()
             pred = model(eeg)
@@ -128,7 +166,10 @@ if __name__ == "__main__":
             optimizer.step()
             scheduler.step()
             total_loss += loss.item()
-        print(f"[Epoch {epoch+1}] Loss = {total_loss:.6f}")
+
+        # Evaluate on test block
+        cos_sim, fisher = evaluate(model, eeg_test, text_test, labels_test)
+        print(f"[Epoch {epoch+1}] Train Loss={total_loss:.6f} | Test Cos={cos_sim:.4f} | Fisher={fisher:.4f}")
 
     # Save checkpoint
     os.makedirs(CKPT_DIR, exist_ok=True)
@@ -139,7 +180,7 @@ if __name__ == "__main__":
     os.makedirs(EMB_DIR, exist_ok=True)
     model.eval()
     with torch.no_grad():
-        eeg_tensor = torch.tensor(eegdata, dtype=torch.float32).to(DEVICE)
+        eeg_tensor = torch.tensor(eeg_test, dtype=torch.float32).to(DEVICE)
         preds = model(eeg_tensor).cpu().numpy()
         np.save(emb_path, preds.astype(np.float32))
     print(f"✅ Saved semantic embeddings: {emb_path} | Shape: {preds.shape}")
