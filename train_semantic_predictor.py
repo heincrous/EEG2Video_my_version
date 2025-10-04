@@ -15,7 +15,7 @@ from einops import rearrange
 # Config
 # ==========================================
 batch_size    = 32
-num_epochs    = 200
+num_epochs    = 100
 lr            = 5e-4
 run_device    = "cuda"
 
@@ -33,7 +33,7 @@ USE_ALL_SUBJECTS = False
 subject_name     = "sub1.npy"
 
 # restrict to certain classes (0–39); set to None for all
-CLASS_SUBSET     = None
+CLASS_SUBSET     = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
 
 # loss type: "mse", "cosine", "mse+cosine", "contrastive"
 LOSS_TYPE        = "mse+cosine"
@@ -113,7 +113,7 @@ def contrastive_loss_fn(y_hat, y, margin=1.0):
 
 
 # ==========================================
-# Training loop (no validation)
+# Training loop
 # ==========================================
 def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject"):
     net.to(device)
@@ -176,6 +176,26 @@ def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject")
     torch.save({"state_dict": net.state_dict()},
                os.path.join(SEMANTIC_CKPT_DIR, model_name))
     print(f"Saved checkpoint: {model_name}")
+
+    # run inference immediately after training
+    net.eval()
+    with torch.no_grad():
+        eeg_tensor = torch.tensor(X_test, dtype=torch.float32).to(device)
+        preds = net(eeg_tensor).cpu().numpy().reshape(-1, 77, 768)
+
+    # build output directory and file name
+    OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings"
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    base_name = f"embeddings_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}"
+    if CLASS_SUBSET is not None:
+        subset_tag = "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
+        base_name += subset_tag
+    out_path = os.path.join(OUTPUT_DIR, f"{base_name}.npy")
+
+    np.save(out_path, preds.astype(np.float32))
+    print(f"Saved semantic embeddings to: {out_path}")
+    print(f"Shape: {preds.shape}")
+
     return net
 
 
