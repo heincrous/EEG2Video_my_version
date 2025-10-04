@@ -55,13 +55,7 @@ GT_LABEL = np.array([
 # ==========================================
 # Align captions to subset (1-indexed logic)
 # ==========================================
-print("Verifying class alignment with test block:")
 subset_indices = [list(GT_LABEL[test_block]).index(lbl) for lbl in CLASS_SUBSET]
-for lbl in CLASS_SUBSET:
-    idx = list(GT_LABEL[test_block]).index(lbl)
-    print(f"Class {lbl:02d}  ->  position {idx:02d}")
-print("-" * 40)
-
 subset_captions = blip_text[test_block][subset_indices]  # (10,5)
 
 # ==========================================

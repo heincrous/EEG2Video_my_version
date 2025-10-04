@@ -1,5 +1,5 @@
 # ==========================================
-# EEG → CLIP Semantic Predictor (GT-aligned + Cleanup + Metrics)
+# EEG → CLIP Semantic Predictor (GT-aligned + Cleanup + Metrics + Legit Procrustes)
 # ==========================================
 import torch
 import numpy as np
@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from einops import rearrange
 from sklearn.metrics.pairwise import cosine_similarity
+from scipy.linalg import orthogonal_procrustes
 import os, random, glob
 
 
@@ -68,7 +69,7 @@ chosed_label = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
 
 
 # ==========================================
-# Utility: seed + cleanup
+# Utility
 # ==========================================
 def seed_everything(seed=0):
     random.seed(seed)
@@ -83,13 +84,13 @@ def seed_everything(seed=0):
 def cleanup_old_files(ckpt_dir, embed_dir, subset_tag):
     print("Checking for existing files to delete...")
     ckpt_pattern = os.path.join(ckpt_dir, f"eeg2text_{subset_tag}.pt")
-    embed_pattern = os.path.join(embed_dir, f"pred_embeddings_{subset_tag}.npy")
+    embed_pattern = os.path.join(embed_dir, f"pred_embeddings_{subset_tag}*.npy")
     for path in glob.glob(ckpt_pattern):
         os.remove(path)
-        print(f"🧹 Deleted existing checkpoint: {path}")
+        print(f"🧹 Deleted checkpoint: {path}")
     for path in glob.glob(embed_pattern):
         os.remove(path)
-        print(f"🧹 Deleted existing embedding: {path}")
+        print(f"🧹 Deleted embedding: {path}")
     print("✅ Cleanup complete.\n")
 
 
@@ -98,12 +99,8 @@ def compute_cosine_metrics(preds, trues, n_classes=10, n_clips=5):
     trues = trues.reshape(n_classes, n_clips, -1)
     preds_norm = preds / np.linalg.norm(preds, axis=2, keepdims=True)
     trues_norm = trues / np.linalg.norm(trues, axis=2, keepdims=True)
-
-    # pred–true cosine
     mean_cos = np.mean([cosine_similarity(p, t).diagonal().mean() for p, t in zip(preds_norm, trues_norm)])
-    # within-class
     within = np.mean([np.mean(cosine_similarity(preds_norm[c])) for c in range(n_classes)])
-    # between-class
     flat = preds_norm.reshape(n_classes * n_clips, -1)
     cos = cosine_similarity(flat)
     labels = np.repeat(np.arange(n_classes), n_clips)
@@ -118,18 +115,16 @@ if __name__ == '__main__':
     seed_everything(114514)
     device = 'cuda:0'
 
-    # === Paths ===
-    eeg_path    = "/content/drive/MyDrive/EEG2Video_data/processed/DE_1per2s_authors/sub1.npy"
-    clip_path   = "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings_authors/CLIP_embeddings_full.npy"
-    ckpt_dir    = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
-    embed_dir   = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings"
-    subset_tag  = "sub1_subset10"
+    eeg_path  = "/content/drive/MyDrive/EEG2Video_data/processed/DE_1per2s_authors/sub1.npy"
+    clip_path = "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings_authors/CLIP_embeddings_full.npy"
+    ckpt_dir  = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
+    embed_dir = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings"
+    subset_tag = "sub1_subset10"
 
     os.makedirs(ckpt_dir, exist_ok=True)
     os.makedirs(embed_dir, exist_ok=True)
     cleanup_old_files(ckpt_dir, embed_dir, subset_tag)
 
-    # === Load data ===
     eegdata = np.load(eeg_path)
     clip_embeddings = np.load(clip_path)
 
@@ -144,7 +139,6 @@ if __name__ == '__main__':
     eeg = rearrange(eeg, 'a b c e f -> (a b c) (e f)')
     text = np.concatenate(text, axis=0)
 
-    # normalize (train only)
     scaler = preprocessing.StandardScaler()
     scaler.fit(eeg)
     eeg = scaler.transform(eeg)
@@ -152,7 +146,6 @@ if __name__ == '__main__':
     dataset = Dataset(eeg, text)
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
 
-    # === Prepare test set ===
     test_block = 6
     indices = [np.where(GT_label[test_block] == lbl)[0][0] for lbl in chosed_label]
     eeg_test = eegdata[test_block, indices]
@@ -160,12 +153,11 @@ if __name__ == '__main__':
     eeg_test = scaler.transform(eeg_test)
     text_test = clip_embeddings[test_block, indices].reshape(len(chosed_label)*5, -1)
 
-    # === Model setup ===
     model = CLIP().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(dataloader))
 
-    # === Training ===
+    # === Train ===
     for epoch in tqdm(range(1, 51)):
         model.train()
         total_loss = 0
@@ -187,17 +179,36 @@ if __name__ == '__main__':
             mean_cos, within, between = compute_cosine_metrics(preds_test, text_test)
             print(f"[Epoch {epoch}] Train Loss={total_loss:.4f} | Cos={mean_cos:.4f} | Within={within:.4f} | Between={between:.4f}")
 
-    # === Save final model ===
+    # === Save model ===
     final_ckpt = os.path.join(ckpt_dir, f"eeg2text_{subset_tag}.pt")
     torch.save({'state_dict': model.state_dict()}, final_ckpt)
     print(f"\n✅ Final model saved: {final_ckpt}")
 
-    # === Final inference on test block ===
+    # === Train-set alignment for Procrustes ===
     model.eval()
     with torch.no_grad():
-        preds_final = model(torch.tensor(eeg_test).float().to(device)).cpu().numpy()
+        preds_train = model(torch.tensor(eeg).float().to(device)).cpu().numpy()
+    preds_train_flat = preds_train.reshape(preds_train.shape[0], -1)
+    true_train_flat  = text.reshape(text.shape[0], -1)
 
-    preds_final = preds_final.reshape(len(chosed_label)*5, 77, 768)
-    save_pred_path = os.path.join(embed_dir, f"pred_embeddings_{subset_tag}.npy")
-    np.save(save_pred_path, preds_final)
-    print(f"✅ Final test predictions saved: {save_pred_path}")
+    # center and compute rotation on training data only
+    X_train = preds_train_flat - preds_train_flat.mean(0, keepdims=True)
+    Y_train = true_train_flat  - true_train_flat.mean(0, keepdims=True)
+    R, _ = orthogonal_procrustes(X_train, Y_train)
+    print("✅ Procrustes alignment matrix learned from TRAIN set")
+
+    # === Inference on TEST set with aligned rotation ===
+    with torch.no_grad():
+        preds_test = model(torch.tensor(eeg_test).float().to(device)).cpu().numpy()
+    preds_test_flat = preds_test.reshape(preds_test.shape[0], -1)
+    preds_test_centered = preds_test_flat - preds_train_flat.mean(0, keepdims=True)
+    preds_aligned = preds_test_centered @ R
+
+    mean_cos, within, between = compute_cosine_metrics(preds_aligned, text_test)
+    print(f"\n=== Post-Procrustes (trained on train set) ===\nCos={mean_cos:.4f} | Within={within:.4f} | Between={between:.4f}")
+
+    # Save aligned test predictions
+    preds_aligned = preds_aligned.reshape(len(chosed_label)*5, 77, 768)
+    save_pred_path = os.path.join(embed_dir, f"pred_embeddings_{subset_tag}_aligned.npy")
+    np.save(save_pred_path, preds_aligned)
+    print(f"✅ Aligned test predictions saved: {save_pred_path}")
