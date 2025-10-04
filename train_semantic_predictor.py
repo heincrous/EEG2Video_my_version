@@ -32,6 +32,7 @@ CLIP_EMB_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embedd
 SEMANTIC_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
 OUTPUT_DIR        = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings"
 
+TEMPORAL_MODE = "concat"   # options: "mean" or "concat"
 
 # ==========================================
 # Model (same as authors)
@@ -68,15 +69,37 @@ def load_features(subname, types):
     feats = []
     for t in types:
         arr = np.load(os.path.join(FEATURE_PATHS[t], subname))
+
         if t in ["DE", "PSD"]:
-            arr = arr.reshape(-1, 62 * 5)        # (7,40,5,62,5)
+            # (7,40,5,62,5)
+            arr = arr.reshape(7, 40, 5, 62 * 5)
+
         elif t == "segments":
-            arr = arr.reshape(-1, 62 * 400)      # (7,40,5,62,400)
+            # (7,40,5,62,400)
+            arr = arr.reshape(7, 40, 5, 62 * 400)
+
         elif t == "windows_100":
-            arr = arr.reshape(-1, 62 * 100)      # (7,40,5,7,62,100)
+            # (7,40,5,7,62,100)
+            if TEMPORAL_MODE == "mean":
+                arr = arr.mean(axis=3).reshape(7, 40, 5, 62 * 100)
+            elif TEMPORAL_MODE == "concat":
+                arr = arr.reshape(7, 40, 5, 7 * 62 * 100)
+            else:
+                raise ValueError("TEMPORAL_MODE must be 'mean' or 'concat'.")
+
         elif t == "windows_200":
-            arr = arr.reshape(-1, 62 * 200)      # (7,40,5,3,62,200)
+            # (7,40,5,3,62,200)
+            if TEMPORAL_MODE == "mean":
+                arr = arr.mean(axis=3).reshape(7, 40, 5, 62 * 200)
+            elif TEMPORAL_MODE == "concat":
+                arr = arr.reshape(7, 40, 5, 3 * 62 * 200)
+            else:
+                raise ValueError("TEMPORAL_MODE must be 'mean' or 'concat'.")
+
+        # flatten (7 blocks × 40 classes × 5 clips)
+        arr = arr.reshape(-1, arr.shape[-1])
         feats.append(arr)
+
     return np.concatenate(feats, axis=1)
 
 
