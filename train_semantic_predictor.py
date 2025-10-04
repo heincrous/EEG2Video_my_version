@@ -71,6 +71,11 @@ GT_label = np.array([[23, 22, 9, 6, 18,       14, 5, 36, 25, 19,      28, 35, 3,
              31, 26, 18, 24, 8,      3, 23, 19, 14, 13,      21, 4, 25, 11, 32,      17, 39, 29, 33, 27]
             ])
 chosed_label = [1, 3, 5, 11, 12, 13, 23, 27, 30, 38]
+
+# Convert to 0-index to match array access
+GT_label = GT_label - 1
+chosed_label = [c - 1 for c in chosed_label]
+
 # chosed_label = [i for i in range(1,41)]
 labels = np.zeros((40, 5, 62, 5))
 for i in range(40):
@@ -124,6 +129,18 @@ if __name__ == '__main__':
 
     clip_embeddings = np.load('/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings_authors/CLIP_embeddings_full.npy')  # shape [7,40,5,77,768]
     Text = []
+
+    # ==========================================
+    # Sanity check alignment between EEG, CLIP, and GT_label
+    # ==========================================
+    for blk in range(6):
+        block_labels = GT_label[blk]
+        indices = [list(block_labels).index(lbl) for lbl in chosed_label]
+        mapped_classes = [block_labels[idx] for idx in indices]
+        print(f"Block {blk+1}:")
+        for j, cls in enumerate(chosed_label):
+            print(f"  Wanted {cls+1:02d}  |  Picked index {indices[j]:02d}  |  GT_label value {mapped_classes[j]+1:02d}")
+        print("-" * 40)
 
     # use 6 blocks for training (block 7 reserved for testing)
     for i in range(6):
