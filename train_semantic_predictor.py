@@ -87,7 +87,7 @@ device = 'cuda:0'
 # Main
 # ==========================================
 if __name__ == '__main__':
-    eegdata = np.load('/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per2s_authors/sub1.npy')
+    eegdata = np.load('/content/drive/MyDrive/EEG2Video_data/processed/DE_1per2s_authors/sub1.npy')
     clipdata = np.load('/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings_authors/CLIP_embeddings_full.npy')
 
     print("EEG data shape:", eegdata.shape)
