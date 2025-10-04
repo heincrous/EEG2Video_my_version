@@ -212,11 +212,13 @@ if __name__ == "__main__":
     model = SemanticMLP(eeg.shape[1])
     train(model, train_loader, test_loader, run_device)
 
-    print("Generating semantic embeddings...")
+    print("Generating semantic embeddings for test set only...")
     model.eval()
     with torch.no_grad():
-        preds = model(torch.tensor(eeg, dtype=torch.float32).to(run_device)).cpu().numpy()
+        X_test_torch = torch.tensor(X_test, dtype=torch.float32).to(run_device)
+        preds = model(X_test_torch).cpu().numpy()
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     np.save(embed_path, preds)
-    print(f"Embeddings saved: {embed_path} | Shape: {preds.shape}")
+    print(f"Test-set embeddings saved: {embed_path} | Shape: {preds.shape}")
+
