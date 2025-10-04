@@ -1,6 +1,6 @@
 # ==========================================
 # EEG → CLIP Semantic Predictor
-# (All EEGs × All CLIPs per class + Sanity + 10-Epoch Eval + Save Inference)
+# (All EEGs × All CLIPs per class + Cosine Loss + Normalized Targets + Rescaled Output)
 # ==========================================
 import torch
 import numpy as np
@@ -151,6 +151,11 @@ if __name__ == '__main__':
     eeg = np.array(eeg).reshape(len(eeg), -1)
     text = np.array(text).reshape(len(text), -1)
 
+    # === Compute CLIP mean norm + normalize for cosine loss ===
+    clip_norm_mean = np.mean(np.linalg.norm(text, axis=1))
+    print(f"Average CLIP norm (train): {clip_norm_mean:.3f}")
+    text = text / np.linalg.norm(text, axis=1, keepdims=True)
+
     scaler = preprocessing.StandardScaler()
     eeg = scaler.fit_transform(eeg)
 
@@ -170,7 +175,7 @@ if __name__ == '__main__':
     text_test = np.array(text_test).reshape(-1, 77 * 768)
     eeg_test = scaler.transform(eeg_test)
 
-    # === Train ===
+    # === Train (cosine similarity loss) ===
     model = CLIP().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(dataloader))
@@ -182,8 +187,9 @@ if __name__ == '__main__':
             eeg_batch = eeg_batch.float().to(device)
             text_batch = text_batch.float().to(device)
             optimizer.zero_grad()
-            preds = model(eeg_batch)
-            loss = F.mse_loss(preds, text_batch)
+            preds = F.normalize(model(eeg_batch), dim=-1)
+            text_batch = F.normalize(text_batch, dim=-1)
+            loss = 1 - (preds * text_batch).sum(dim=-1).mean()
             loss.backward()
             optimizer.step()
             scheduler.step()
@@ -201,9 +207,11 @@ if __name__ == '__main__':
     torch.save({'state_dict': model.state_dict()}, final_ckpt)
     print(f"\n✅ Final model saved: {final_ckpt}")
 
-    # === Save inference ===
+    # === Save inference (rescaled to CLIP norm) ===
     with torch.no_grad():
-        preds_test = model(torch.tensor(eeg_test).float().to(device)).cpu().numpy()
+        preds_test = model(torch.tensor(eeg_test).float().to(device))
+        preds_test = F.normalize(preds_test, dim=-1) * clip_norm_mean  # restore CLIP scale
+        preds_test = preds_test.cpu().numpy()
     save_pred_path = os.path.join(embed_dir, f"pred_embeddings_{subset_tag}.npy")
     np.save(save_pred_path, preds_test.reshape(len(chosed_label)*5, 77, 768))
     print(f"✅ Final predictions saved: {save_pred_path}")
