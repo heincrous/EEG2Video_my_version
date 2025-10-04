@@ -222,6 +222,29 @@ if __name__ == '__main__':
     mean_cos = np.mean(np.diag(cosine_similarity(pred_norm, true_norm)))
     print(f"\n=== Test Block (Block 7) Cosine Similarity: {mean_cos:.4f} ===")
 
+    # ==========================================
+    # Procrustes alignment check
+    # ==========================================
+    from scipy.linalg import orthogonal_procrustes
+    print("Running Procrustes alignment test...")
+
+    # center data
+    preds_centered = preds_flat - preds_flat.mean(axis=0)
+    true_centered  = true_flat - true_flat.mean(axis=0)
+
+    # compute optimal orthogonal rotation
+    R, _ = orthogonal_procrustes(preds_centered, true_centered)
+    preds_aligned = preds_centered @ R
+
+    # normalize
+    preds_aligned_norm = preds_aligned / np.linalg.norm(preds_aligned, axis=1, keepdims=True)
+    true_centered_norm = true_centered / np.linalg.norm(true_centered, axis=1, keepdims=True)
+
+    # cosine similarity after alignment
+    aligned_cos = np.mean(np.diag(cosine_similarity(preds_aligned_norm, true_centered_norm)))
+    print(f"After Procrustes alignment → mean cosine = {aligned_cos:.4f}")
+
+
     path = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
     os.makedirs(path, exist_ok=True)
 
