@@ -18,7 +18,7 @@ PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffus
 FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final_subset0-2-4-10-11-12-22-26-29-37_variants"
 OUTPUT_DIR         = "/content/drive/MyDrive/EEG2Video_outputs/full_inference"
 BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
-SEM_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/embeddings_semantic_predictor_DE_sub1_subset0-2-4-10-11-12-22-26-29-37.npy"
+SEM_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/embeddings_windows_100_sub1_subset0-2-4-10-11-12-22-26-29-37.npy"
 NEG_SEM_PATH       = SEM_PATH.replace(".npy", "_negative.npy")   # mean-EEG negative embedding
 
 # Negative embedding toggle: "empty", "mean_eeg", "mean_sem"
