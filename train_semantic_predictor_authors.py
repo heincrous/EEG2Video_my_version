@@ -70,8 +70,8 @@ GT_label = np.array([[23, 22, 9, 6, 18,       14, 5, 36, 25, 19,      28, 35, 3,
             [38, 34, 40, 10, 28,     7, 1, 37, 22, 9,        16, 5, 12, 36, 20,      30, 6, 15, 35, 2,
              31, 26, 18, 24, 8,      3, 23, 19, 14, 13,      21, 4, 25, 11, 32,      17, 39, 29, 33, 27]
             ])
-# chosed_label = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
-chosed_label = [i for i in range(1,41)]
+chosed_label = [1, 3, 5, 11, 12, 13, 23, 27, 30, 38]
+# chosed_label = [i for i in range(1,41)]
 labels = np.zeros((40, 5, 62, 5))
 for i in range(40):
     labels[i]=i
@@ -90,22 +90,23 @@ def seed_everything(seed=0, cudnn_deterministic=True):
         print('Note: not using cudnn.deterministic')
 seed_everything(114514)
 device='cuda:0'
-import datetime
-def get_time():
-    current_time = datetime.datetime.now()
 
-    # 加8小时并取mod 24
-    new_hour = (current_time.hour + 8) % 24
+# import datetime
+# def get_time():
+#     current_time = datetime.datetime.now()
 
-    # 构建新的时间，替换小时部分
-    new_time = current_time.replace(hour=new_hour)
+#     # 加8小时并取mod 24
+#     new_hour = (current_time.hour + 8) % 24
 
-    # 格式化输出
-    formatted_time = new_time.strftime("%m-%d_%H-%M")
-    return formatted_time
+#     # 构建新的时间，替换小时部分
+#     new_time = current_time.replace(hour=new_hour)
+
+#     # 格式化输出
+#     formatted_time = new_time.strftime("%m-%d_%H-%M")
+#     return formatted_time
 
 if __name__ == '__main__':
-    eegdata = np.load('../data/SEED-DV/DE_1per2s/sub1.npy')
+    eegdata = np.load('/content/drive/MyDrive/EEG2Video_data/processed/EEG_DE_1per2s_authors')
     
     print(eegdata.shape)
     EEG = []
@@ -121,17 +122,9 @@ if __name__ == '__main__':
     eeg = torch.from_numpy(eeg)
     EEG = rearrange(EEG, 'a b c e f -> (a b c) (e f)')
     eeg = rearrange(eeg, 'a b c e f -> (a b c) (e f)')
-    Text = []
-    for i in range(6):
-        text_embedding = torch.load(f'../text_embeds/block{i}.pt')
-        text = rearrange(text_embedding,'(a b) c d -> a b c d',a=40)
-        indices = [list(GT_label[0]).index(element) for element in chosed_label]
-        text = text[indices,:][:,::5].repeat_interleave(5, dim=1)
-        
-        Text.append(text)
-    Text = torch.cat(Text,dim=0)
-
-    Text = torch.reshape(Text, (-1, Text.shape[2]*Text.shape[3]))
+    
+    Text = np.load('/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings_authors/CLIP_embeddings_authors.npy')  # shape (40, n_samples, 77*768)
+    Text = torch.from_numpy(Text).float()
 
     model = CLIP()
     model=model.to(device)
@@ -148,7 +141,7 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(dataloader))
 
-    for epoch in tqdm(range(200)):
+    for epoch in tqdm(range(50)):
         model.train()
         epoch_loss = 0
         for i, batch in enumerate(dataloader):
@@ -168,7 +161,38 @@ if __name__ == '__main__':
 
     model_dict = model.state_dict()
     
-    path = f'../checkpoints/Semantic/{current_time}/'
-    os.makedirs(path,exist_ok=True)
-    torch.save({'state_dict': model_dict}, f'../checkpoints/Semantic/{current_time}/eeg2text_40_classes.pt')
-    
+    path = '/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints/'
+    os.makedirs(path, exist_ok=True)
+    torch.save({'state_dict': model_dict}, os.path.join(path, 'semantic_predictor_subset.pt'))
+
+    # ==========================================
+    # Inference on test block (block 6)
+    # ==========================================
+    print("\n=== Running inference on test block 6 ===")
+
+    model.eval()
+    test_block = 6
+
+    # select EEG for chosen labels in block 6
+    indices = [list(GT_label[test_block]).index(element) for element in chosed_label]
+    test_eeg = eegdata[test_block][indices, :]
+
+    # normalize with same scaler
+    test_eeg = normalize.transform(test_eeg)
+    test_eeg = torch.from_numpy(test_eeg).float().to(device)
+
+    # run model
+    with torch.no_grad():
+        pred_embeddings = model(test_eeg)
+
+    # save predicted embeddings
+    save_dir = '/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/'
+    os.makedirs(save_dir, exist_ok=True)
+
+    subset_tag = "-".join(map(str, chosed_label))
+    save_path = os.path.join(save_dir, f'embeddings_subset{subset_tag}_block6.npy')
+    np.save(save_path, pred_embeddings.cpu().numpy())
+
+    print(f"✅ Inference complete. Saved embeddings to:\n{save_path}")
+
+

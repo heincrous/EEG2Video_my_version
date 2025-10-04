@@ -102,5 +102,5 @@ np.save(os.path.join(out_text_dir,  "BLIP_text_authors.npy"),  all_texts)
 np.save(os.path.join(out_embed_dir, "CLIP_embeddings_authors.npy"), all_embs)
 
 print("\nDone.")
-print(f"Saved BLIP_text.npy shape: {all_texts.shape}")
-print(f"Saved CLIP_embeddings.npy shape: {all_embs.shape}")
+print(f"Saved BLIP_text_authors.npy shape: {all_texts.shape}")
+print(f"Saved CLIP_embeddings_authors.npy shape: {all_embs.shape}")
