@@ -152,7 +152,7 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(dataloader))
 
-    for epoch in tqdm(range(50)):
+    for epoch in tqdm(range(100)):
         model.train()
         epoch_loss = 0
         for i, batch in enumerate(dataloader):
@@ -188,7 +188,8 @@ if __name__ == '__main__':
     indices = [list(GT_label[test_block]).index(element) for element in chosed_label]
     test_eeg = eegdata[test_block][indices, :]
 
-    # normalize with same scaler
+    # reshape same as training EEG before normalization
+    test_eeg = test_eeg.reshape(-1, test_eeg.shape[-2] * test_eeg.shape[-1])  # (N, 62*5) or (N, 310)
     test_eeg = normalize.transform(test_eeg)
     test_eeg = torch.from_numpy(test_eeg).float().to(device)
 
@@ -196,14 +197,19 @@ if __name__ == '__main__':
     with torch.no_grad():
         pred_embeddings = model(test_eeg)
 
+    # reshape to (N, 77, 768) for downstream diffusion/video pipeline
+    pred_embeddings = pred_embeddings.cpu().numpy().reshape(len(chosed_label) * 5, 77, 768)
+
     # save predicted embeddings
     save_dir = '/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/'
     os.makedirs(save_dir, exist_ok=True)
 
     subset_tag = "-".join(map(str, chosed_label))
     save_path = os.path.join(save_dir, f'embeddings_subset{subset_tag}_block6.npy')
-    np.save(save_path, pred_embeddings.cpu().numpy())
+    np.save(save_path, pred_embeddings)
 
     print(f"✅ Inference complete. Saved embeddings to:\n{save_path}")
+    print(f"Saved shape: {pred_embeddings.shape}")
+
 
 
