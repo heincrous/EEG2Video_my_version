@@ -162,20 +162,31 @@ for epoch in tqdm(range(1, num_epochs + 1)):
         eeg_batch = eeg_batch.float().to(device)
         text_batch = text_batch.float().to(device)
         optimizer.zero_grad()
+
         preds = model(eeg_batch)
-        loss = F.mse_loss(preds, text_batch)
+        # normalize for cosine alignment
+        preds_norm = F.normalize(preds, dim=-1)
+        text_norm = F.normalize(text_batch, dim=-1)
+
+        # combine cosine and mse losses
+        cos_loss = 1 - F.cosine_similarity(preds_norm, text_norm, dim=-1).mean()
+        mse_loss = F.mse_loss(preds, text_batch)
+        var_loss = torch.std(preds, dim=0).mean()  # encourage variance spread
+
+        loss = mse_loss + 0.3 * cos_loss - 0.001 * var_loss
         loss.backward()
         optimizer.step()
         scheduler.step()
         epoch_loss += loss.item()
+
     if epoch % 10 == 0:
         model.eval()
         with torch.no_grad():
-            preds = model(torch.tensor(eeg_test).float().to(device)).cpu().numpy()
-        pred_norm = preds / np.linalg.norm(preds, axis=1, keepdims=True)
+            preds = model(torch.tensor(eeg_test).float().to(device))
+            preds = F.normalize(preds, dim=-1).cpu().numpy()
         true_norm = true_flat / np.linalg.norm(true_flat, axis=1, keepdims=True)
-        mean_cos = np.mean(np.diag(cosine_similarity(pred_norm, true_norm)))
-        within, between = class_cosine(pred_norm)
+        mean_cos = np.mean(np.diag(cosine_similarity(preds, true_norm)))
+        within, between = class_cosine(preds)
         print(f"[Epoch {epoch:03d}] Loss={epoch_loss:.4f} | EEG→CLIP={mean_cos:.4f} | Within={within:.4f} | Between={between:.4f} | Δ={within-between:.4f}")
 
 # ==========================================
