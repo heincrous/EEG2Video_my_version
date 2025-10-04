@@ -127,14 +127,18 @@ if __name__ == '__main__':
 
     # use 6 blocks for training (block 7 reserved for testing)
     for i in range(6):
-        text_embedding = torch.from_numpy(clip_embeddings[i])  # [40,5,77,768]
-        text = text_embedding.reshape(40, 5, -1)  # flatten 77*768 per clip
+        text = torch.from_numpy(clip_embeddings[i])  # [40,5,77,768]
         indices = [list(GT_label[i]).index(lbl) for lbl in chosed_label]
-        text = text[indices]
+
+        # === exact authors’ subsample + repeat scheme ===
+        text = text[indices, :][:, ::5].repeat_interleave(5, dim=1)
+
+        # flatten last two dims (77*768)
+        text = text.reshape(len(chosed_label), 5, -1)
         Text.append(text)
+
     Text = torch.cat(Text, dim=0)  # [6*40,5,77*768]
     Text = Text.reshape(-1, Text.shape[-1])  # [6*40*5, 77*768]
-
 
     model = CLIP()
     model=model.to(device)
