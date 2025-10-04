@@ -1,6 +1,6 @@
 import numpy as np
 import os
-from DE_PSD import DE_PSD
+from .DE_PSD import DE_PSD
 from tqdm import tqdm
 
 # Extract DE or PSD features with a 2-second window, that is, for each 2-second EEG segment, we extract a DE or PSD feature.
