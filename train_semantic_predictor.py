@@ -1,6 +1,6 @@
 # ==========================================
 # EEG → CLIP Semantic Predictor
-# (Mean EEG per class + All CLIPs per class + 10-epoch Evaluation + Full Inference)
+# (Mean EEG per class + All CLIPs per class + Cleanup + 10-epoch Evaluation + Full Inference)
 # ==========================================
 import torch
 import numpy as np
@@ -74,6 +74,19 @@ def seed_everything(seed=0):
     torch.backends.cudnn.deterministic = True
 
 
+def cleanup_old_files(ckpt_dir, embed_dir, subset_tag):
+    print("Checking for existing files to delete...")
+    ckpt_pattern = os.path.join(ckpt_dir, f"eeg2text_{subset_tag}.pt")
+    embed_pattern = os.path.join(embed_dir, f"pred_embeddings_{subset_tag}*.npy")
+    for path in glob.glob(ckpt_pattern):
+        os.remove(path)
+        print(f"🧹 Deleted checkpoint: {path}")
+    for path in glob.glob(embed_pattern):
+        os.remove(path)
+        print(f"🧹 Deleted embedding: {path}")
+    print("✅ Cleanup complete.\n")
+
+
 def compute_cosine_metrics(preds, trues, n_classes=10, n_clips=5):
     preds = preds.reshape(n_classes, n_clips, -1)
     trues = trues.reshape(n_classes, n_clips, -1)
@@ -103,33 +116,32 @@ if __name__ == "__main__":
 
     os.makedirs(ckpt_dir, exist_ok=True)
     os.makedirs(embed_dir, exist_ok=True)
+    cleanup_old_files(ckpt_dir, embed_dir, subset_tag)
 
-    eegdata = np.load(eeg_path)          # shape (7, 40, 5, 310)
-    clipdata = np.load(clip_path)        # shape (7, 40, 5, 77, 768)
+    eegdata = np.load(eeg_path)     # (7, 40, 5, 310)
+    clipdata = np.load(clip_path)   # (7, 40, 5, 77, 768)
 
-    # === Aggregate EEG mean per class, pair with all 5 CLIP embeddings ===
+    # === Train set: average EEG per class, pair with all 5 CLIPs ===
     eeg, text = [], []
     for blk in range(6):
         for lbl in chosed_label:
             idx = np.where(GT_label[blk] == lbl)[0][0]
-            eeg_mean = eegdata[blk, idx].mean(axis=0)        # average EEG per class per block
-            for c in range(5):                               # all 5 clips
+            eeg_mean = eegdata[blk, idx].mean(axis=0)
+            for c in range(5):
                 eeg.append(eeg_mean)
                 text.append(clipdata[blk, idx, c].reshape(-1))
     eeg, text = np.array(eeg), np.array(text)
-
     scaler = preprocessing.StandardScaler()
     eeg = scaler.fit_transform(eeg)
-
     dataset = Dataset(eeg, text)
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
 
-    # === Prepare test block ===
+    # === Test set: all EEG clips and CLIPs ===
     test_block = 6
     eeg_test, text_test = [], []
     for lbl in chosed_label:
         idx = np.where(GT_label[test_block] == lbl)[0][0]
-        for c in range(5):  # use every EEG clip for inference
+        for c in range(5):
             eeg_test.append(eegdata[test_block, idx, c])
             text_test.append(clipdata[test_block, idx, c].reshape(-1))
     eeg_test, text_test = np.array(eeg_test), np.array(text_test)
@@ -162,9 +174,10 @@ if __name__ == "__main__":
 
     # === Save model ===
     torch.save({'state_dict': model.state_dict()}, os.path.join(ckpt_dir, f"eeg2text_{subset_tag}.pt"))
+    print(f"\n✅ Model saved to {ckpt_dir}")
 
-    # === Save final inference ===
+    # === Save final predictions ===
     with torch.no_grad():
         preds = model(torch.tensor(eeg_test).float().to(device)).cpu().numpy()
     np.save(os.path.join(embed_dir, f"pred_embeddings_{subset_tag}.npy"), preds.reshape(len(chosed_label)*5, 77, 768))
-    print(f"\n✅ Inference complete and saved.")
+    print(f"✅ Final embeddings saved to {embed_dir}")
