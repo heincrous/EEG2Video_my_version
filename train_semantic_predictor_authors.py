@@ -124,12 +124,13 @@ if __name__ == '__main__':
     eeg = rearrange(eeg, 'a b c e f -> (a b c) (e f)')
     
     Text = []
-    clip_all = np.load('/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings_authors/CLIP_embeddings_authors.npy')  # shape (7, 40, 5, 77, 768)
+    clip_all = np.load('/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings_authors/CLIP_embeddings_authors.npy')  # shape (7, 200, 77, 768)
 
     for i in range(6):  # training blocks 0–5
-        clip_block = clip_all[i]  # shape (40, 5, 77, 768)
-        indices = [list(GT_label[i]).index(element) for element in chosed_label]  # same subset as EEG
-        chosen_clip = clip_block[indices]  # shape (subset, 5, 77, 768)
+        clip_block = clip_all[i]  # (200, 77, 768)
+        clip_block = rearrange(clip_block, '(b c) d e -> b c d e', b=40)  # -> (40, 5, 77, 768)
+        indices = [list(GT_label[i]).index(element) for element in chosed_label]
+        chosen_clip = clip_block[indices]  # choose subset labels
         chosen_clip = rearrange(chosen_clip, 'b c d e -> (b c) (d e)')  # flatten to (subset*5, 77*768)
         Text.append(chosen_clip)
 
