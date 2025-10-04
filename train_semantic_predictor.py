@@ -1,6 +1,6 @@
 # ==========================================
 # EEG → CLIP Semantic Predictor
-# (All EEGs × All CLIPs per class + Cosine Loss + Normalized Targets + Rescaled Output, float32)
+# (All EEGs × All CLIPs per class + Fixed Cosine Loss + Safe Metrics + float32)
 # ==========================================
 import torch
 import numpy as np
@@ -93,17 +93,31 @@ def cleanup_old_files(ckpt_dir, embed_dir, subset_tag):
 
 
 def compute_cosine_metrics(preds, trues, n_classes=10, n_clips=5):
-    preds = preds.reshape(n_classes, n_clips, -1)
-    trues = trues.reshape(n_classes, n_clips, -1)
+    preds = preds.reshape(n_classes, n_clips, -1).astype(np.float32)
+    trues = trues.reshape(n_classes, n_clips, -1).astype(np.float32)
+
     preds_norm = preds / np.linalg.norm(preds, axis=2, keepdims=True)
     trues_norm = trues / np.linalg.norm(trues, axis=2, keepdims=True)
-    mean_cos = np.mean([cosine_similarity(p, t).diagonal().mean() for p, t in zip(preds_norm, trues_norm)])
-    within = np.mean([np.mean(cosine_similarity(preds_norm[c])) for c in range(n_classes)])
+
+    mean_cos = np.mean([
+        np.diag(cosine_similarity(p, t)).mean()
+        for p, t in zip(preds_norm, trues_norm)
+    ])
+
+    within_vals = []
+    for c in range(n_classes):
+        cos_c = cosine_similarity(preds_norm[c])
+        np.fill_diagonal(cos_c, 0)
+        within_vals.append(cos_c.mean())
+    within = np.mean(within_vals)
+
     flat = preds_norm.reshape(n_classes * n_clips, -1)
-    cos = cosine_similarity(flat)
     labels = np.repeat(np.arange(n_classes), n_clips)
-    between = cos[labels[:, None] != labels[None, :]].mean()
-    return mean_cos, within, between
+    cos_all = cosine_similarity(flat)
+    mask = labels[:, None] != labels[None, :]
+    between = cos_all[mask].mean()
+
+    return float(mean_cos), float(within), float(between)
 
 
 # ==========================================
@@ -136,7 +150,7 @@ if __name__ == '__main__':
         else:
             print(f"✅ Block {blk} aligned correctly: {eeg_order[:5]} ...")
 
-    # === Use ALL EEG clips × ALL CLIPs per class (many-to-many mapping) ===
+    # === Build training data ===
     eeg, text = [], []
     for blk in range(6):  # first 6 blocks for training
         for lbl in chosed_label:
@@ -151,7 +165,6 @@ if __name__ == '__main__':
     eeg = np.array(eeg, dtype=np.float32).reshape(len(eeg), -1)
     text = np.array(text, dtype=np.float32).reshape(len(text), -1)
 
-    # === Compute CLIP mean norm + normalize for cosine loss ===
     clip_norm_mean = np.mean(np.linalg.norm(text, axis=1))
     print(f"Average CLIP norm (train): {clip_norm_mean:.3f}")
     text = text / np.linalg.norm(text, axis=1, keepdims=True)
@@ -161,9 +174,9 @@ if __name__ == '__main__':
 
     print(f"\nTraining EEG shape: {eeg.shape}, CLIP shape: {text.shape}")
     dataset = Dataset(eeg, text)
-    dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=512, shuffle=True)
 
-    # === Prepare Test block (ALL EEG clips) ===
+    # === Prepare test data ===
     test_block = 6
     eeg_test, text_test = [], []
     for lbl in chosed_label:
@@ -175,22 +188,25 @@ if __name__ == '__main__':
     text_test = np.array(text_test, dtype=np.float32).reshape(-1, 77 * 768)
     eeg_test = scaler.transform(eeg_test).astype(np.float32)
 
-    # === Train (cosine similarity loss) ===
+    # === Train (safe cosine loss) ===
     model = CLIP().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(dataloader))
 
     for epoch in tqdm(range(1, 101)):
         model.train()
-        total_loss = 0
+        total_loss = 0.0
         for eeg_batch, text_batch in dataloader:
             eeg_batch = eeg_batch.to(device)
             text_batch = text_batch.to(device)
             optimizer.zero_grad()
+
             preds = F.normalize(model(eeg_batch), dim=-1)
             text_batch = F.normalize(text_batch, dim=-1)
-            cos_sim = F.cosine_similarity(preds, text_batch, dim=-1, eps=1e-8)
+
+            cos_sim = F.cosine_similarity(preds, text_batch, dim=-1, eps=1e-8).clamp(-1, 1)
             loss = 1 - cos_sim.mean()
+
             loss.backward()
             optimizer.step()
             scheduler.step()
@@ -199,7 +215,8 @@ if __name__ == '__main__':
         if epoch % 10 == 0:
             model.eval()
             with torch.no_grad():
-                preds_test = model(torch.tensor(eeg_test).to(device)).cpu().numpy()
+                preds_test = model(torch.tensor(eeg_test).to(device))
+                preds_test = F.normalize(preds_test, dim=-1).cpu().numpy()
             mean_cos, within, between = compute_cosine_metrics(preds_test, text_test)
             print(f"[Epoch {epoch}] Loss={total_loss:.4f} | Cos={mean_cos:.4f} | Within={within:.4f} | Between={between:.4f}")
 
