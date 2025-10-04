@@ -126,14 +126,13 @@ dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
 
 
 # ==========================================
-# Training
+# Training setup
 # ==========================================
 model = CLIP().to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(dataloader))
 num_epochs = 200
 
-# Prepare test data
 test_block = 6
 indices = [np.where(GT_label[test_block] == lbl)[0][0] for lbl in chosed_label]
 eeg_test = eegdata[test_block, indices]
@@ -142,6 +141,10 @@ eeg_test = normalize.transform(eeg_test)
 text_test = clip_embeddings[test_block, indices].reshape(len(chosed_label) * 5, -1)
 true_flat = text_test
 
+
+# ==========================================
+# Helper for cosine metrics
+# ==========================================
 def class_cosine(preds):
     n_class, n_clip = 10, 5
     preds = preds.reshape(n_class, n_clip, -1)
@@ -155,6 +158,10 @@ def class_cosine(preds):
                 between.append(cos_between)
     return np.mean(within), np.mean(between)
 
+
+# ==========================================
+# Training loop (with dual test evaluation)
+# ==========================================
 for epoch in tqdm(range(1, num_epochs + 1)):
     model.train()
     epoch_loss = 0.0
@@ -164,14 +171,12 @@ for epoch in tqdm(range(1, num_epochs + 1)):
         optimizer.zero_grad()
 
         preds = model(eeg_batch)
-        # normalize for cosine alignment
         preds_norm = F.normalize(preds, dim=-1)
         text_norm = F.normalize(text_batch, dim=-1)
 
-        # combine cosine and mse losses
         cos_loss = 1 - F.cosine_similarity(preds_norm, text_norm, dim=-1).mean()
         mse_loss = F.mse_loss(preds, text_batch)
-        var_loss = torch.std(preds, dim=0).mean()  # encourage variance spread
+        var_loss = torch.std(preds, dim=0).mean()
 
         loss = mse_loss + 0.3 * cos_loss - 0.001 * var_loss
         loss.backward()
@@ -179,23 +184,60 @@ for epoch in tqdm(range(1, num_epochs + 1)):
         scheduler.step()
         epoch_loss += loss.item()
 
+    # ===============================
+    # Test every 10 epochs
+    # ===============================
     if epoch % 10 == 0:
         model.eval()
         with torch.no_grad():
-            preds = model(torch.tensor(eeg_test).float().to(device))
-            preds = F.normalize(preds, dim=-1).cpu().numpy()
-        true_norm = true_flat / np.linalg.norm(true_flat, axis=1, keepdims=True)
-        mean_cos = np.mean(np.diag(cosine_similarity(preds, true_norm)))
-        within, between = class_cosine(preds)
-        print(f"[Epoch {epoch:03d}] Loss={epoch_loss:.4f} | EEG→CLIP={mean_cos:.4f} | Within={within:.4f} | Between={between:.4f} | Δ={within-between:.4f}")
+            # --- Full test set (50 clips) ---
+            preds_full = model(torch.tensor(eeg_test).float().to(device))
+            preds_full = F.normalize(preds_full, dim=-1).cpu().numpy()
+
+            pred_norm = preds_full / np.linalg.norm(preds_full, axis=1, keepdims=True)
+            true_norm = true_flat / np.linalg.norm(true_flat, axis=1, keepdims=True)
+            mean_cos_full = np.mean(np.diag(cosine_similarity(pred_norm, true_norm)))
+            within_full, between_full = class_cosine(pred_norm)
+
+            # --- Averaged EEG per class (10 samples) ---
+            eeg_block = eegdata[test_block, indices].reshape(len(chosed_label), 5, -1)
+            eeg_mean = eeg_block.mean(axis=1)
+            eeg_mean = normalize.transform(eeg_mean)
+            preds_avg = model(torch.tensor(eeg_mean).float().to(device))
+            preds_avg = F.normalize(preds_avg, dim=-1).cpu().numpy()
+
+            text_block = clip_embeddings[test_block, indices].reshape(len(chosed_label), 5, -1)
+            text_mean = text_block.mean(axis=1)
+            pred_avg_norm = preds_avg / np.linalg.norm(preds_avg, axis=1, keepdims=True)
+            true_avg_norm = text_mean / np.linalg.norm(text_mean, axis=1, keepdims=True)
+            mean_cos_avg = np.mean(np.diag(cosine_similarity(pred_avg_norm, true_avg_norm)))
+
+        print(f"[Epoch {epoch:03d}] "
+              f"Loss={epoch_loss:.4f} | "
+              f"EEG→CLIP(full)={mean_cos_full:.4f} | "
+              f"Δ_full={(within_full-between_full):.4f} | "
+              f"EEG→CLIP(avg)={mean_cos_avg:.4f}")
+
 
 # ==========================================
-# Save final model and embeddings
+# Final save
 # ==========================================
 model.eval()
 with torch.no_grad():
-    preds = model(torch.tensor(eeg_test).float().to(device)).cpu().numpy()
-preds = preds.reshape(len(chosed_label)*5, 77, 768)
-np.save(os.path.join(emb_dir, "pred_embeddings_sub1_subset10.npy"), preds)
-torch.save({'state_dict': model.state_dict()}, os.path.join(ckpt_dir, "eeg2text_10_classes.pt"))
-print("✅ Training complete and outputs saved.")
+    eeg_block = eegdata[test_block, indices].reshape(len(chosed_label), 5, -1)
+    eeg_mean = eeg_block.mean(axis=1)
+    eeg_mean = normalize.transform(eeg_mean)
+    preds_avg = model(torch.tensor(eeg_mean).float().to(device)).cpu().numpy()
+    eeg_test_full = eegdata[test_block, indices]
+    eeg_test_full = rearrange(eeg_test_full, 'b c e f -> (b c) (e f)')
+    eeg_test_full = normalize.transform(eeg_test_full)
+    preds_full = model(torch.tensor(eeg_test_full).float().to(device)).cpu().numpy()
+
+np.save(os.path.join(emb_dir, "pred_embeddings_sub1_subset10_avg.npy"),
+        preds_avg.reshape(len(chosed_label), 77, 768))
+np.save(os.path.join(emb_dir, "pred_embeddings_sub1_subset10.npy"),
+        preds_full.reshape(len(chosed_label)*5, 77, 768))
+torch.save({'state_dict': model.state_dict()},
+           os.path.join(ckpt_dir, "eeg2text_10_classes.pt"))
+
+print("✅ Training complete and outputs saved (both averaged and full inference).")
