@@ -36,12 +36,12 @@ subject_name     = "sub1.npy"
 CLASS_SUBSET     = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
 
 # loss type: "mse", "cosine", "mse+cosine", "contrastive"
-LOSS_TYPE        = "mse"
+LOSS_TYPE        = "cosine"
 
-USE_VAR_REG = False
-VAR_LAMBDA  = 0.01
+USE_VAR_REG = True
+VAR_LAMBDA  = 0.05
 
-P = 0 # dropout prob
+P = 0.1 # dropout prob
 
 FEATURE_PATHS = {
     "segments":    "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
@@ -58,19 +58,31 @@ SEMANTIC_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_check
 # ==========================================
 # Semantic MLP
 # ==========================================
+# class SemanticMLP(nn.Module):
+#     def __init__(self, input_dim, p=P):
+#         super().__init__()
+#         self.mlp = nn.Sequential(
+#             nn.Linear(input_dim, 10000), nn.ReLU(), nn.Dropout(p),
+#             nn.Linear(10000, 10000), nn.ReLU(), nn.Dropout(p),
+#             nn.Linear(10000, 10000), nn.ReLU(), nn.Dropout(p),
+#             nn.Linear(10000, 10000), nn.ReLU(), nn.Dropout(p),
+#             nn.Linear(10000, 77*768)
+#         )
+#     def forward(self, x):
+#         return self.mlp(x)
+
 class SemanticMLP(nn.Module):
     def __init__(self, input_dim, p=P):
         super().__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(input_dim, 10000), nn.ReLU(), nn.Dropout(p),
-            nn.Linear(10000, 10000), nn.ReLU(), nn.Dropout(p),
-            nn.Linear(10000, 10000), nn.ReLU(), nn.Dropout(p),
-            nn.Linear(10000, 10000), nn.ReLU(), nn.Dropout(p),
+            nn.Linear(input_dim, 10000), nn.ReLU(), nn.LayerNorm(10000), nn.Dropout(p),
+            nn.Linear(10000, 10000), nn.ReLU(), nn.LayerNorm(10000), nn.Dropout(p),
+            nn.Linear(10000, 10000), nn.ReLU(), nn.LayerNorm(10000), nn.Dropout(p),
+            nn.Linear(10000, 10000), nn.ReLU(), nn.LayerNorm(10000), nn.Dropout(p),
             nn.Linear(10000, 77*768)
         )
     def forward(self, x):
         return self.mlp(x)
-
 
 # ==========================================
 # Fusion wrapper
@@ -141,11 +153,15 @@ def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject")
             if LOSS_TYPE == "mse":
                 loss = mse_loss(y_hat, y)
             elif LOSS_TYPE == "cosine":
+                y_hat_norm = F.normalize(y_hat, dim=-1)
+                y_norm = F.normalize(y, dim=-1)
                 target = torch.ones(y_hat.size(0), device=device)
-                loss = cos_loss(y_hat, y, target)
+                loss = cos_loss(y_hat_norm, y_norm, target)
             elif LOSS_TYPE in ["mse+cosine", "cosine+mse"]:
                 target = torch.ones(y_hat.size(0), device=device)
-                loss = mse_loss(y_hat, y) + cos_loss(y_hat, y, target)
+                cos_part = cos_loss(F.normalize(y_hat, dim=-1), F.normalize(y, dim=-1), target)
+                mse_part = mse_loss(y_hat, y)
+                loss = mse_part + cos_part
             elif LOSS_TYPE == "contrastive":
                 loss = contrastive_loss_fn(y_hat, y)
             else:
@@ -181,7 +197,9 @@ def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject")
     net.eval()
     with torch.no_grad():
         eeg_tensor = torch.tensor(X_test, dtype=torch.float32).to(device)
-        preds = net(eeg_tensor).cpu().numpy().reshape(-1, 77, 768)
+        preds = net(eeg_tensor)
+        preds = F.normalize(preds, dim=-1)  # normalize each embedding
+        preds = preds.cpu().numpy().reshape(-1, 77, 768)
 
     # build output directory and file name
     OUTPUT_DIR = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings"
@@ -191,6 +209,11 @@ def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject")
         subset_tag = "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
         base_name += subset_tag
     out_path = os.path.join(OUTPUT_DIR, f"{base_name}.npy")
+
+    # check normalization before saving
+    flat_preds = preds.reshape(-1, preds.shape[-1])  # flatten tokens
+    mean_norm = np.mean(np.linalg.norm(flat_preds, axis=-1))
+    print(f"🧭 Mean embedding norm before save: {mean_norm:.4f}")
 
     np.save(out_path, preds.astype(np.float32))
     print(f"Saved semantic embeddings to: {out_path}")
@@ -211,8 +234,14 @@ def evaluate(net, data_iter, device):
         for X, y, lbl in data_iter:
             X, y, lbl = X.to(device), y.to(device), lbl.to(device)
             y_hat = net(X)
+
+            # Normalize both for cosine-based evaluation
+            y_hat = F.normalize(y_hat, dim=-1)
+            y     = F.normalize(y, dim=-1)
+
             total_mse += F.mse_loss(y_hat, y, reduction="sum").item()
             total_cos += cos(y_hat, y).mean().item() * y.size(0)
+
             preds_all.append(y_hat.cpu().numpy())
             labels_all.append(lbl.cpu().numpy())
             count += y.size(0)
