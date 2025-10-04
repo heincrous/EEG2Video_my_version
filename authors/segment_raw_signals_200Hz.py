@@ -17,6 +17,9 @@ def get_files_names_in_directory(directory):
 
 sub_list = get_files_names_in_directory("/content/drive/MyDrive/EEG2Video_data/raw/EEG/")
 
+output_dir = "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments_authors"
+os.makedirs(output_dir, exist_ok=True)
+
 for subname in sub_list:
     npydata = np.load('/content/drive/MyDrive/EEG2Video_data/raw/EEG/' + subname)
 
