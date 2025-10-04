@@ -1,14 +1,13 @@
-# ==========================================
-# EEG → CLIP Semantic Predictor (Self-Aligning + Periodic Test Evaluation)
-# ==========================================
-import os, random, torch, numpy as np
+import torch
+import numpy as np
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from sklearn import preprocessing
-from sklearn.metrics.pairwise import cosine_similarity
-from einops import rearrange
+import torch.nn.functional as F
 from tqdm import tqdm
+from einops import rearrange
+from sklearn.metrics.pairwise import cosine_similarity
+import os, random
 
 
 # ==========================================
@@ -20,45 +19,38 @@ class CLIP(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(310, 10000),
             nn.ReLU(),
-            nn.Dropout(0.1),
             nn.Linear(10000, 10000),
             nn.ReLU(),
-            nn.Dropout(0.1),
             nn.Linear(10000, 10000),
             nn.ReLU(),
-            nn.Dropout(0.1),
             nn.Linear(10000, 10000),
             nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(10000, 77 * 768),
+            nn.Linear(10000, 77 * 768)
         )
 
     def forward(self, eeg):
-        out = self.mlp(eeg)
-        out = F.normalize(out, dim=-1)  # project to CLIP hypersphere
-        return out
+        return self.mlp(eeg)
 
 
 # ==========================================
 # Dataset
 # ==========================================
-class Dataset:
+class Dataset():
     def __init__(self, eeg, text):
         self.eeg = eeg
         self.text = text
+        self.len = eeg.shape[0]
 
     def __len__(self):
-        return len(self.eeg)
+        return self.len
 
-    def __getitem__(self, idx):
-        return self.eeg[idx], self.text[idx]
+    def __getitem__(self, item):
+        return self.eeg[item], self.text[item]
 
 
 # ==========================================
-# Config
+# Ground-truth labels
 # ==========================================
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
 GT_label = np.array([
  [23,22,9,6,18,14,5,36,25,19,28,35,3,16,24,40,15,27,38,33,34,4,39,17,1,26,20,29,13,32,37,2,11,12,30,31,8,21,7,10],
  [27,33,22,28,31,12,38,4,18,17,35,39,40,5,24,32,15,13,2,16,34,25,19,30,23,3,8,29,7,20,11,14,37,6,21,1,10,36,26,9],
@@ -72,15 +64,23 @@ chosed_label = [1, 3, 5, 11, 12, 13, 23, 27, 30, 38]
 
 
 # ==========================================
-# Seed + Cleanup
+# Seed
 # ==========================================
 def seed_everything(seed=114514):
     random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
 seed_everything()
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
+
+# ==========================================
+# Cleanup old files
+# ==========================================
 ckpt_dir = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
 emb_dir  = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings"
 os.makedirs(ckpt_dir, exist_ok=True)
@@ -94,51 +94,53 @@ for d in [ckpt_dir, emb_dir]:
 
 
 # ==========================================
-# Load EEG and CLIP
+# Data loading and alignment
 # ==========================================
-eegdata = np.load("/content/drive/MyDrive/EEG2Video_data/processed/DE_1per2s_authors/sub1.npy")
-clip_embeddings = np.load("/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings_authors/CLIP_embeddings_full.npy")
-print("EEG:", eegdata.shape, "CLIP:", clip_embeddings.shape)
+eegdata = np.load('/content/drive/MyDrive/EEG2Video_data/processed/DE_1per2s_authors/sub1.npy')
+clip_embeddings = np.load('/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings_authors/CLIP_embeddings_full.npy')
 
-EEG, Text = [], []
-for blk in range(6):  # 0–5 training blocks
-    eeg_idx = [list(GT_label[blk]).index(lbl) for lbl in chosed_label]
-    EEG.append(eegdata[blk][eeg_idx])
-    text_blk = torch.from_numpy(clip_embeddings[blk])
-    text_idx = [list(GT_label[blk]).index(lbl) for lbl in chosed_label]
-    text_blk = text_blk[text_idx, :][:, ::5].repeat_interleave(5, dim=1)
-    text_blk = text_blk.reshape(len(chosed_label), 5, -1)
-    Text.append(text_blk)
+eeg = []
+Text = []
 
-EEG = np.stack(EEG, axis=0)
-EEG = rearrange(EEG, "a b c e f -> (a b c) (e f)")
-Text = torch.cat(Text, dim=0).reshape(-1, Text[0].shape[-1])
-print("Train EEG:", EEG.shape, "Train Text:", Text.shape)
+for blk in range(6):
+    indices = [np.where(GT_label[blk] == lbl)[0][0] for lbl in chosed_label]
+    chosed_eeg = eegdata[blk, indices]
+    eeg.append(chosed_eeg)
+
+    text = clip_embeddings[blk, indices]
+    text = text.reshape(len(chosed_label) * 5, -1)
+    Text.append(text)
+
+eeg = np.stack(eeg, axis=0)
+eeg = rearrange(eeg, 'a b c e f -> (a b c) (e f)')
+Text = np.concatenate(Text, axis=0)
 
 # Normalize EEG
-scaler = preprocessing.StandardScaler()
-scaler.fit(EEG)
-EEG = scaler.transform(EEG)
+normalize = preprocessing.StandardScaler()
+normalize.fit(eeg)
+eeg = normalize.transform(eeg)
+print("Train EEG:", eeg.shape, "Train Text:", Text.shape)
 
-dataset = Dataset(EEG, Text)
-loader = DataLoader(dataset, batch_size=32, shuffle=True)
+dataset = Dataset(eeg, Text)
+dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
 
 
 # ==========================================
-# Setup model + optimizer
+# Training
 # ==========================================
 model = CLIP().to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(loader))
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(dataloader))
+num_epochs = 200
 
-
-# ==========================================
-# Helper functions
-# ==========================================
-def compute_cosine(preds, trues):
-    preds = preds / np.linalg.norm(preds, axis=1, keepdims=True)
-    trues = trues / np.linalg.norm(trues, axis=1, keepdims=True)
-    return np.mean(np.diag(cosine_similarity(preds, trues)))
+# Prepare test data
+test_block = 6
+indices = [np.where(GT_label[test_block] == lbl)[0][0] for lbl in chosed_label]
+eeg_test = eegdata[test_block, indices]
+eeg_test = rearrange(eeg_test, 'b c e f -> (b c) (e f)')
+eeg_test = normalize.transform(eeg_test)
+text_test = clip_embeddings[test_block, indices].reshape(len(chosed_label) * 5, -1)
+true_flat = text_test
 
 def class_cosine(preds):
     n_class, n_clip = 10, 5
@@ -146,85 +148,43 @@ def class_cosine(preds):
     within, between = [], []
     for i in range(n_class):
         cos_within = cosine_similarity(preds[i], preds[i]).mean()
+        within.append(cos_within)
         for j in range(n_class):
             if i != j:
                 cos_between = cosine_similarity(preds[i], preds[j]).mean()
                 between.append(cos_between)
-        within.append(cos_within)
     return np.mean(within), np.mean(between)
 
-
-# ==========================================
-# Prepare test set (7th block)
-# ==========================================
-test_block = 6
-test_idx = [list(GT_label[test_block]).index(lbl) for lbl in chosed_label]
-eeg_test = eegdata[test_block][test_idx]
-clip_test = clip_embeddings[test_block][test_idx]  # (10, 5, 77, 768)
-
-eeg_test = rearrange(eeg_test, "b c e f -> (b c) (e f)")
-clip_test = clip_test.reshape(len(chosed_label) * 5, -1)
-eeg_test = scaler.transform(eeg_test)
-true_flat = clip_test.reshape(clip_test.shape[0], -1)
-
-
-# ==========================================
-# Training + periodic test evaluation
-# ==========================================
-num_epochs = 200
-for epoch in range(1, num_epochs + 1):
+for epoch in tqdm(range(1, num_epochs + 1)):
     model.train()
-    total_loss = 0.0
-    for eeg_batch, text_batch in loader:
+    epoch_loss = 0.0
+    for eeg_batch, text_batch in dataloader:
         eeg_batch = eeg_batch.float().to(device)
         text_batch = text_batch.float().to(device)
-        text_batch = F.normalize(text_batch, dim=-1)
-
         optimizer.zero_grad()
-        pred = model(eeg_batch)
-        cos_loss = 1 - F.cosine_similarity(pred, text_batch, dim=1).mean()
-        mse_loss = F.mse_loss(pred, text_batch)
-        loss = mse_loss + 0.1 * cos_loss
-
+        preds = model(eeg_batch)
+        loss = F.mse_loss(preds, text_batch)
         loss.backward()
         optimizer.step()
         scheduler.step()
-        total_loss += loss.item()
-
-    # evaluate every 10 epochs on test block
+        epoch_loss += loss.item()
     if epoch % 10 == 0:
         model.eval()
         with torch.no_grad():
             preds = model(torch.tensor(eeg_test).float().to(device)).cpu().numpy()
-            mean_cos = compute_cosine(preds, true_flat)
-            within, between = class_cosine(preds)
-        print(f"[Epoch {epoch:03d}] "
-              f"TrainLoss={total_loss:.4f} | "
-              f"EEG→CLIP={mean_cos:.4f} | "
-              f"Within={within:.4f} | Between={between:.4f} | Δ={within - between:.4f}")
-
+        pred_norm = preds / np.linalg.norm(preds, axis=1, keepdims=True)
+        true_norm = true_flat / np.linalg.norm(true_flat, axis=1, keepdims=True)
+        mean_cos = np.mean(np.diag(cosine_similarity(pred_norm, true_norm)))
+        within, between = class_cosine(pred_norm)
+        print(f"[Epoch {epoch:03d}] Loss={epoch_loss:.4f} | EEG→CLIP={mean_cos:.4f} | Within={within:.4f} | Between={between:.4f} | Δ={within-between:.4f}")
 
 # ==========================================
-# Final evaluation + saving
+# Save final model and embeddings
 # ==========================================
 model.eval()
 with torch.no_grad():
     preds = model(torch.tensor(eeg_test).float().to(device)).cpu().numpy()
-
-preds_out = preds.reshape(len(chosed_label) * 5, 77, 768)
-emb_path = os.path.join(emb_dir, "pred_embeddings_sub1_subset10.npy")
-np.save(emb_path, preds_out)
-print(f"✅ Test-set predicted embeddings saved: {preds_out.shape}")
-
-mean_cos = compute_cosine(preds, true_flat)
-within, between = class_cosine(preds)
-
-print("\n=== Final Test Set Metrics ===")
-print(f"EEG→CLIP cosine: {mean_cos:.4f}")
-print(f"Within-class cosine: {within:.4f}")
-print(f"Between-class cosine: {between:.4f}")
-print(f"Separation Δ = {within - between:.4f}")
-
-ckpt_path = os.path.join(ckpt_dir, "eeg2text_10_classes.pt")
-torch.save({"state_dict": model.state_dict()}, ckpt_path)
-print(f"✅ Model saved to {ckpt_path}")
+preds = preds.reshape(len(chosed_label)*5, 77, 768)
+np.save(os.path.join(emb_dir, "pred_embeddings_sub1_subset10.npy"), preds)
+torch.save({'state_dict': model.state_dict()}, os.path.join(ckpt_dir, "eeg2text_10_classes.pt"))
+print("✅ Training complete and outputs saved.")
