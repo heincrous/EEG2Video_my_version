@@ -41,7 +41,7 @@ LOSS_TYPE        = "mse+cosine"
 USE_VAR_REG = True
 VAR_LAMBDA  = 0.05
 
-P = 0.1 # dropout prob
+P = 0.2 # dropout prob
 
 FEATURE_PATHS = {
     "segments":    "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
