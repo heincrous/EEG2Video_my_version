@@ -194,16 +194,19 @@ if __name__ == '__main__':
     # Inference on 7th block (test)
     # ==========================================
     print("\n=== Running inference on test block (7th) ===")
+
     test_indices = [list(GT_label[6]).index(element) for element in chosed_label]
-    eeg_test = eegdata[6][test_indices, :]
-    eeg_test = rearrange(torch.from_numpy(eeg_test), 'a b c d e -> (a b c) (d e)')
+    eeg_test = eegdata[6][test_indices, :]  # shape (10, 5, 62, 5)
+    eeg_test = rearrange(torch.from_numpy(eeg_test), 'a b c d -> (a b) (c d)')  # flatten to (50, 310)
     eeg_test = normalize.transform(eeg_test)
     eeg_test = torch.from_numpy(eeg_test).float().to(device)
 
     model.eval()
     with torch.no_grad():
-        preds = model(eeg_test).cpu().numpy()
+        pred_embeddings = model(eeg_test).cpu().numpy()
 
-    out_path = '/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/pred_embeddings_sub1_classlevel.npy'
-    np.save(out_path, preds)
-    print(f"Saved predicted embeddings: {preds.shape}")
+    out_dir = '/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings'
+    os.makedirs(out_dir, exist_ok=True)
+    np.save(os.path.join(out_dir, 'pred_embeddings_sub1_classlevel.npy'), pred_embeddings)
+
+    print(f"Saved predicted embeddings: {pred_embeddings.shape}")
