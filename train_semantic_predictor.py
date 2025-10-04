@@ -25,7 +25,7 @@ WEIGHT_DECAY   = 0
 # scheduler: "cosine" or "constant"
 SCHEDULER_TYPE = "cosine"
 
-FEATURE_TYPES  = ["DE"]   # options: ["segments"], ["DE"], ["PSD"], ["windows_100"], ["windows_200"],
+FEATURE_TYPES  = ["windows_100"]   # options: ["segments"], ["DE"], ["PSD"], ["windows_100"], ["windows_200"],
                           # or fusion: ["segments","DE"], ["segments","PSD"], ["DE","PSD"], ["segments","DE","PSD"]
 
 # default is subject 1 only; set to True to use all subjects in folder
