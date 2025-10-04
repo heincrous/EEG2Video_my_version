@@ -161,7 +161,7 @@ if __name__ == '__main__':
 
     print(f"\nTraining EEG shape: {eeg.shape}, CLIP shape: {text.shape}")
     dataset = Dataset(eeg, text)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
 
     # === Prepare Test block (ALL EEG clips) ===
     test_block = 6
