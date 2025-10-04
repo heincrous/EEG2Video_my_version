@@ -1,6 +1,6 @@
 # ==========================================
 # EEG → CLIP Semantic Predictor
-# (All EEGs × All CLIPs per class + Cosine Loss + Normalized Targets + Rescaled Output)
+# (All EEGs × All CLIPs per class + Cosine Loss + Normalized Targets + Rescaled Output, float32)
 # ==========================================
 import torch
 import numpy as np
@@ -9,7 +9,6 @@ from torch.utils.data import DataLoader
 from sklearn import preprocessing
 import torch.nn.functional as F
 from tqdm import tqdm
-from einops import rearrange
 from sklearn.metrics.pairwise import cosine_similarity
 import os, random, glob
 
@@ -41,8 +40,8 @@ class CLIP(nn.Module):
 # ==========================================
 class Dataset:
     def __init__(self, eeg, text):
-        self.eeg = eeg
-        self.text = text
+        self.eeg = eeg.astype(np.float32)
+        self.text = text.astype(np.float32)
         self.len = eeg.shape[0]
 
     def __len__(self):
@@ -124,8 +123,9 @@ if __name__ == '__main__':
     os.makedirs(embed_dir, exist_ok=True)
     cleanup_old_files(ckpt_dir, embed_dir, subset_tag)
 
-    eegdata = np.load(eeg_path)
-    clip_embeddings = np.load(clip_path)
+    # === Load as float32 ===
+    eegdata = np.load(eeg_path).astype(np.float32)
+    clip_embeddings = np.load(clip_path).astype(np.float32)
 
     print("\n=== Sanity Check: EEG–CLIP Class Alignment ===")
     for blk in range(7):
@@ -141,15 +141,15 @@ if __name__ == '__main__':
     for blk in range(6):  # first 6 blocks for training
         for lbl in chosed_label:
             idx = np.where(GT_label[blk] == lbl)[0][0]
-            eeg_clips  = eegdata[blk, idx]          # shape (5, 310)
-            clip_clips = clip_embeddings[blk, idx]  # shape (5, 77, 768)
+            eeg_clips  = eegdata[blk, idx]
+            clip_clips = clip_embeddings[blk, idx]
             for eeg_clip in eeg_clips:
                 for clip_clip in clip_clips:
                     eeg.append(eeg_clip)
                     text.append(clip_clip)
 
-    eeg = np.array(eeg).reshape(len(eeg), -1)
-    text = np.array(text).reshape(len(text), -1)
+    eeg = np.array(eeg, dtype=np.float32).reshape(len(eeg), -1)
+    text = np.array(text, dtype=np.float32).reshape(len(text), -1)
 
     # === Compute CLIP mean norm + normalize for cosine loss ===
     clip_norm_mean = np.mean(np.linalg.norm(text, axis=1))
@@ -157,11 +157,11 @@ if __name__ == '__main__':
     text = text / np.linalg.norm(text, axis=1, keepdims=True)
 
     scaler = preprocessing.StandardScaler()
-    eeg = scaler.fit_transform(eeg)
+    eeg = scaler.fit_transform(eeg).astype(np.float32)
 
     print(f"\nTraining EEG shape: {eeg.shape}, CLIP shape: {text.shape}")
     dataset = Dataset(eeg, text)
-    dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=256, shuffle=True)
 
     # === Prepare Test block (ALL EEG clips) ===
     test_block = 6
@@ -171,9 +171,9 @@ if __name__ == '__main__':
         for c in range(5):
             eeg_test.append(eegdata[test_block, idx, c])
             text_test.append(clip_embeddings[test_block, idx, c])
-    eeg_test = np.array(eeg_test).reshape(-1, 310)
-    text_test = np.array(text_test).reshape(-1, 77 * 768)
-    eeg_test = scaler.transform(eeg_test)
+    eeg_test = np.array(eeg_test, dtype=np.float32).reshape(-1, 310)
+    text_test = np.array(text_test, dtype=np.float32).reshape(-1, 77 * 768)
+    eeg_test = scaler.transform(eeg_test).astype(np.float32)
 
     # === Train (cosine similarity loss) ===
     model = CLIP().to(device)
@@ -184,12 +184,13 @@ if __name__ == '__main__':
         model.train()
         total_loss = 0
         for eeg_batch, text_batch in dataloader:
-            eeg_batch = eeg_batch.float().to(device)
-            text_batch = text_batch.float().to(device)
+            eeg_batch = eeg_batch.to(device)
+            text_batch = text_batch.to(device)
             optimizer.zero_grad()
             preds = F.normalize(model(eeg_batch), dim=-1)
             text_batch = F.normalize(text_batch, dim=-1)
-            loss = 1 - (preds * text_batch).sum(dim=-1).mean()
+            cos_sim = F.cosine_similarity(preds, text_batch, dim=-1, eps=1e-8)
+            loss = 1 - cos_sim.mean()
             loss.backward()
             optimizer.step()
             scheduler.step()
@@ -198,7 +199,7 @@ if __name__ == '__main__':
         if epoch % 10 == 0:
             model.eval()
             with torch.no_grad():
-                preds_test = model(torch.tensor(eeg_test).float().to(device)).cpu().numpy()
+                preds_test = model(torch.tensor(eeg_test).to(device)).cpu().numpy()
             mean_cos, within, between = compute_cosine_metrics(preds_test, text_test)
             print(f"[Epoch {epoch}] Loss={total_loss:.4f} | Cos={mean_cos:.4f} | Within={within:.4f} | Between={between:.4f}")
 
@@ -209,9 +210,11 @@ if __name__ == '__main__':
 
     # === Save inference (rescaled to CLIP norm) ===
     with torch.no_grad():
-        preds_test = model(torch.tensor(eeg_test).float().to(device))
-        preds_test = F.normalize(preds_test, dim=-1) * clip_norm_mean  # restore CLIP scale
-        preds_test = preds_test.cpu().numpy()
+        preds_test = model(torch.tensor(eeg_test).to(device))
+        preds_test = F.normalize(preds_test, dim=-1) * clip_norm_mean
+        preds_test = preds_test.cpu().numpy().astype(np.float32)
+
     save_pred_path = os.path.join(embed_dir, f"pred_embeddings_{subset_tag}.npy")
     np.save(save_pred_path, preds_test.reshape(len(chosed_label)*5, 77, 768))
     print(f"✅ Final predictions saved: {save_pred_path}")
+    print(f"✅ Predicted embeddings rescaled by CLIP mean norm ({clip_norm_mean:.3f}) and saved in float32.")
