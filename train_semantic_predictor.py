@@ -1,6 +1,6 @@
 # ==========================================
 # EEG → CLIP Semantic Predictor
-# (Author Exact + Subset + Single .npy CLIP embeddings + Test Inference)
+# (Class-level CLIP text embeddings)
 # ==========================================
 import torch
 import numpy as np
@@ -10,8 +10,8 @@ from sklearn import preprocessing
 import torch.nn.functional as F
 from tqdm import tqdm
 from einops import rearrange
-import os
-import random
+from transformers import CLIPTokenizer, CLIPTextModel
+import os, random
 
 
 # ==========================================
@@ -84,17 +84,47 @@ device = 'cuda:0'
 
 
 # ==========================================
+# Class prompts → CLIP embeddings
+# ==========================================
+PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
+
+class_prompts = {
+    1:  "a video of a cat",
+    10: "a video of a shark swimming in the sea",
+    12: "a video of flowers blooming",
+    16: "a person dancing on stage",
+    19: "a close-up of a human face",
+    23: "a city skyline with tall buildings",
+    25: "cars driving on a road",
+    31: "a pizza being cooked in an oven",
+    34: "a person playing guitar",
+    39: "an airplane flying in the sky"
+}
+
+tokenizer = CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer")
+text_encoder = CLIPTextModel.from_pretrained(PRETRAINED_SD_PATH, subfolder="text_encoder").to(device)
+text_encoder.eval()
+
+class_embs = []
+for lbl in chosed_label:
+    text = class_prompts[lbl]
+    tokens = tokenizer([text], padding="max_length", max_length=77, return_tensors="pt").to(device)
+    with torch.no_grad():
+        emb = text_encoder(tokens.input_ids)[0].cpu().numpy()  # (1,77,768)
+    class_embs.append(emb)
+
+class_embs = np.concatenate(class_embs, axis=0)  # (10,77,768)
+print("Created CLIP text embeddings:", class_embs.shape)
+
+
+# ==========================================
 # Main
 # ==========================================
 if __name__ == '__main__':
     eegdata = np.load('/content/drive/MyDrive/EEG2Video_data/processed/DE_1per2s_authors/sub1.npy')
-    clipdata = np.load('/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings_authors/CLIP_embeddings_full.npy')
-
     print("EEG data shape:", eegdata.shape)
-    print("CLIP embedding shape:", clipdata.shape)
 
-    EEG = []
-    eeg = []
+    EEG, eeg = [], []
     for i in range(6):  # first 6 blocks for training
         indices = [list(GT_label[i]).index(element) for element in chosed_label]
         chosed_eeg = eegdata[i][indices, :]
@@ -107,15 +137,15 @@ if __name__ == '__main__':
     EEG = rearrange(EEG, 'a b c e f -> (a b c) (e f)')
     eeg = rearrange(eeg, 'a b c e f -> (a b c) (e f)')
 
+    # Build class-level CLIP text embedding targets
     Text = []
-    for i in range(6):  # training blocks
-        indices = [list(GT_label[i]).index(element) for element in chosed_label]
-        text = clipdata[i][indices, 0:1, :, :]        # first clip only
-        text = np.repeat(text, repeats=5, axis=1)     # repeat across 5 EEG clips
+    for _ in range(6):  # same number of blocks
+        text = np.repeat(class_embs[:, None, :, :], repeats=5, axis=1)  # repeat for 5 EEG clips
         text = torch.from_numpy(text)
-        text = rearrange(text, 'a b c d -> (a b) (c d)')  # flatten
+        text = rearrange(text, 'a b c d -> (a b) (c d)')
         Text.append(text)
     Text = torch.cat(Text, dim=0)
+    print("Target text shape:", Text.shape)
 
     model = CLIP().to(device)
 
@@ -154,9 +184,8 @@ if __name__ == '__main__':
     model_dict = model.state_dict()
     path = '/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints'
     os.makedirs(path, exist_ok=True)
-    torch.save({'state_dict': model_dict}, f'{path}/eeg2text_40_classes.pt')
-    print("Model saved to:", f'{path}/eeg2text_40_classes.pt')
-
+    torch.save({'state_dict': model_dict}, f'{path}/eeg2text_classlevel.pt')
+    print("Model saved to:", f'{path}/eeg2text_classlevel.pt')
 
     # ==========================================
     # Inference on 7th block (test)
@@ -166,7 +195,7 @@ if __name__ == '__main__':
     test_indices = [list(GT_label[6]).index(element) for element in chosed_label]
     eeg_test = eegdata[6][test_indices, :]
     eeg_test = torch.from_numpy(eeg_test)
-    eeg_test = rearrange(eeg_test, 'a b c d -> (a b) (c d)')
+    eeg_test = rearrange(eeg_test, 'a b c d e -> (a b c) (d e)')
     eeg_test = normalize.transform(eeg_test)
     eeg_test = torch.from_numpy(eeg_test).float().to(device)
 
@@ -176,6 +205,7 @@ if __name__ == '__main__':
 
     out_dir = '/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings'
     os.makedirs(out_dir, exist_ok=True)
-    np.save(os.path.join(out_dir, 'pred_embeddings_sub1_subset.npy'), pred_embeddings)
+    np.save(os.path.join(out_dir, 'pred_embeddings_sub1_classlevel.npy'), pred_embeddings)
 
     print(f"Saved predicted embeddings: {pred_embeddings.shape}")
+
