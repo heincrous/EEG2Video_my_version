@@ -15,7 +15,7 @@ from einops import rearrange
 # Config
 # ==========================================
 batch_size    = 32
-num_epochs    = 25
+num_epochs    = 50
 lr            = 5e-4
 run_device    = "cuda"
 
@@ -36,7 +36,7 @@ subject_name     = "sub1.npy"
 CLASS_SUBSET     = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
 
 # loss type: "mse", "cosine", "mse+cosine", "contrastive"
-LOSS_TYPE        = "mse"
+LOSS_TYPE        = "mse+cosine"
 
 USE_VAR_REG = False
 VAR_LAMBDA  = 0.01
