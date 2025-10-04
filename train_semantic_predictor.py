@@ -1,5 +1,6 @@
 # ==========================================
-# EEG → CLIP Semantic Predictor (Stabilized MSE)
+# EEG → CLIP Semantic Predictor
+# (Author Scheme + Subset + Fusion + Cosine + Cleanup)
 # ==========================================
 import os, torch, numpy as np
 from torch import nn
@@ -9,16 +10,16 @@ import torch.nn.functional as F
 
 
 # ==========================================
-# Config
+# Config (author defaults)
 # ==========================================
 batch_size    = 32
 num_epochs    = 200
 lr            = 5e-4
 run_device    = "cuda"
 
-FEATURE_TYPES = ["DE"]
+FEATURE_TYPES = ["DE"]    # choose: ["segments"], ["DE"], ["PSD"], ["windows_100"], ["windows_200"], or fusion list
 SUBJECT_NAME  = "sub1.npy"
-CLASS_SUBSET  = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
+CLASS_SUBSET  = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]  # set None for all 40
 
 FEATURE_PATHS = {
     "segments":    "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
@@ -31,11 +32,10 @@ CLIP_EMB_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embedd
 SEMANTIC_CKPT_DIR = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
 OUTPUT_DIR        = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings"
 
-TEMPORAL_MODE = "mean"
-
+TEMPORAL_MODE = "mean"   # options: "mean" or "concat"
 
 # ==========================================
-# Model
+# Model (same as authors)
 # ==========================================
 class SemanticMLP(nn.Module):
     def __init__(self, input_dim):
@@ -47,8 +47,7 @@ class SemanticMLP(nn.Module):
             nn.Linear(10000, 10000), nn.ReLU(),
             nn.Linear(10000, 77 * 768)
         )
-    def forward(self, x):
-        return self.net(x)
+    def forward(self, x): return self.net(x)
 
 
 # ==========================================
@@ -64,7 +63,7 @@ class EEGDataset(torch.utils.data.Dataset):
 
 
 # ==========================================
-# Feature loader
+# Feature loader (handles fusion)
 # ==========================================
 def load_features(subname, types):
     feats = []
@@ -72,20 +71,32 @@ def load_features(subname, types):
         arr = np.load(os.path.join(FEATURE_PATHS[t], subname))
 
         if t in ["DE", "PSD"]:
+            # (7,40,5,62,5)
             arr = arr.reshape(7, 40, 5, 62 * 5)
+
         elif t == "segments":
+            # (7,40,5,62,400)
             arr = arr.reshape(7, 40, 5, 62 * 400)
+
         elif t == "windows_100":
+            # (7,40,5,7,62,100)
             if TEMPORAL_MODE == "mean":
                 arr = arr.mean(axis=3).reshape(7, 40, 5, 62 * 100)
-            else:
+            elif TEMPORAL_MODE == "concat":
                 arr = arr.reshape(7, 40, 5, 7 * 62 * 100)
+            else:
+                raise ValueError("TEMPORAL_MODE must be 'mean' or 'concat'.")
+
         elif t == "windows_200":
+            # (7,40,5,3,62,200)
             if TEMPORAL_MODE == "mean":
                 arr = arr.mean(axis=3).reshape(7, 40, 5, 62 * 200)
-            else:
+            elif TEMPORAL_MODE == "concat":
                 arr = arr.reshape(7, 40, 5, 3 * 62 * 200)
+            else:
+                raise ValueError("TEMPORAL_MODE must be 'mean' or 'concat'.")
 
+        # flatten (7 blocks × 40 classes × 5 clips)
         arr = arr.reshape(-1, arr.shape[-1])
         feats.append(arr)
 
@@ -93,7 +104,7 @@ def load_features(subname, types):
 
 
 # ==========================================
-# Evaluation
+# Evaluation (MSE + Cosine metrics)
 # ==========================================
 def evaluate(model, loader, device):
     model.eval()
@@ -103,8 +114,6 @@ def evaluate(model, loader, device):
         for eeg, clip in loader:
             eeg, clip = eeg.to(device), clip.to(device)
             pred = model(eeg)
-            pred = F.normalize(pred, dim=-1)
-            clip = F.normalize(clip, dim=-1)
             loss = F.mse_loss(pred, clip)
             total_loss += loss.item()
             total_cos  += cos(pred, clip).mean().item()
@@ -113,7 +122,7 @@ def evaluate(model, loader, device):
 
 
 # ==========================================
-# Training
+# Training (author scheme + cosine metrics)
 # ==========================================
 def train(model, train_loader, test_loader, device):
     model.to(device)
@@ -128,8 +137,6 @@ def train(model, train_loader, test_loader, device):
             eeg, clip = eeg.to(device), clip.to(device)
             opt.zero_grad()
             pred = model(eeg)
-            pred = F.normalize(pred, dim=-1)
-            clip = F.normalize(clip, dim=-1)
             loss = F.mse_loss(pred, clip)
             loss.backward()
             opt.step()
@@ -141,14 +148,6 @@ def train(model, train_loader, test_loader, device):
         avg_loss = total_loss / count
         avg_cos  = total_cos / count
         test_loss, test_cos = evaluate(model, test_loader, device)
-
-        # variance check every 10 epochs
-        if (epoch + 1) % 10 == 0:
-            with torch.no_grad():
-                sample_eeg, _ = next(iter(train_loader))
-                sample_pred = model(sample_eeg.to(device))
-                print(f"[{epoch+1}] Var(pred)={sample_pred.var().item():.6f}")
-
         print(f"[{epoch+1}] train_loss={avg_loss:.4f} | train_cos={avg_cos:.4f} "
               f"| test_loss={test_loss:.4f} | test_cos={test_cos:.4f}")
 
@@ -166,26 +165,35 @@ if __name__ == "__main__":
     print("Loading EEG and CLIP embeddings...")
     eeg = load_features(SUBJECT_NAME, FEATURE_TYPES)
     clip = np.load(CLIP_EMB_PATH).reshape(-1, 77 * 768)
+    labels = np.tile(np.repeat(np.arange(40), 5), 7)  # 7 blocks × 40 classes × 5 clips
 
-    # (1) L2-normalize CLIP embeddings
-    clip = clip / (np.linalg.norm(clip, axis=1, keepdims=True) + 1e-8)
-
-    labels = np.tile(np.repeat(np.arange(40), 5), 7)
-
+    # subset selection
     if CLASS_SUBSET:
         mask = np.isin(labels, CLASS_SUBSET)
         eeg, clip, labels = eeg[mask], clip[mask], labels[mask]
 
-    # cleanup
+    # cleanup old checkpoints/embeddings
     subset_tag = "_subset" + "-".join(map(str, CLASS_SUBSET)) if CLASS_SUBSET else ""
     ckpt_name  = f"semantic_predictor_{'_'.join(FEATURE_TYPES)}_{SUBJECT_NAME.replace('.npy','')}{subset_tag}.pt"
     embed_name = f"embeddings_{'_'.join(FEATURE_TYPES)}_{SUBJECT_NAME.replace('.npy','')}{subset_tag}.npy"
     ckpt_path  = os.path.join(SEMANTIC_CKPT_DIR, ckpt_name)
     embed_path = os.path.join(OUTPUT_DIR, embed_name)
-    for p in [ckpt_path, embed_path]:
-        if os.path.exists(p): os.remove(p)
 
-    # 6-train / 1-test split
+    print("\nChecking for existing files to delete...")
+    found = False
+    for path in [ckpt_path, embed_path]:
+        if os.path.exists(path):
+            os.remove(path)
+            print(f"🧹 Deleted existing file: {path}")
+            found = True
+        else:
+            print(f"— No existing file found: {path}")
+    if not found:
+        print("✅ No old checkpoints or embeddings found. Fresh run will begin.")
+    else:
+        print("✅ All old matching files deleted. Fresh run will begin.\n")
+
+    # 6-train / 1-test block split
     samples_per_block = (len(CLASS_SUBSET) if CLASS_SUBSET else 40) * 5
     train_idx = np.arange(0, 6 * samples_per_block)
     test_idx  = np.arange(6 * samples_per_block, 7 * samples_per_block)
@@ -193,15 +201,15 @@ if __name__ == "__main__":
     X_train_raw, X_test_raw = eeg[train_idx], eeg[test_idx]
     Y_train, Y_test = clip[train_idx], clip[test_idx]
 
-    print("Normalizing EEG features globally...")
-    scaler = StandardScaler().fit(np.concatenate([X_train_raw, X_test_raw], axis=0))
+    print("Normalizing EEG features (fit on training data only)...")
+    scaler = StandardScaler().fit(X_train_raw)
     X_train = scaler.transform(X_train_raw)
     X_test  = scaler.transform(X_test_raw)
 
     train_loader = DataLoader(EEGDataset(X_train, Y_train), batch_size=batch_size, shuffle=True)
     test_loader  = DataLoader(EEGDataset(X_test,  Y_test),  batch_size=batch_size, shuffle=False)
 
-    print(f"Training {SUBJECT_NAME} with {FEATURE_TYPES} (stabilized MSE)...")
+    print(f"Training {SUBJECT_NAME} with {FEATURE_TYPES} (author scheme)...")
     model = SemanticMLP(eeg.shape[1])
     train(model, train_loader, test_loader, run_device)
 
@@ -209,10 +217,11 @@ if __name__ == "__main__":
     model.eval()
     with torch.no_grad():
         X_test_torch = torch.tensor(X_test, dtype=torch.float32).to(run_device)
-        preds = model(X_test_torch)
-        preds = F.normalize(preds, dim=-1).cpu().numpy()
+        preds = model(X_test_torch).cpu().numpy()
 
+    # reshape each embedding from (59136,) → (77, 768)
     preds = preds.reshape(preds.shape[0], 77, 768)
+
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     np.save(embed_path, preds)
-    print(f"Saved: {embed_path} | Shape: {preds.shape}")
+    print(f"Test-set embeddings saved: {embed_path} | Shape: {preds.shape}")
