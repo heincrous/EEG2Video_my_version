@@ -211,9 +211,14 @@ if __name__ == '__main__':
 
     # cosine similarity
     from sklearn.metrics.pairwise import cosine_similarity
-    true = text_test.numpy()
-    pred_norm = preds / np.linalg.norm(preds, axis=1, keepdims=True)
-    true_norm = true / np.linalg.norm(true, axis=1, keepdims=True)
+
+    true = text_test.numpy()   # shape (50, 77*768)
+    preds_flat = preds.reshape(preds.shape[0], -1)  # flatten to (50, 77*768)
+    true_flat  = true.reshape(true.shape[0], -1)
+
+    pred_norm = preds_flat / np.linalg.norm(preds_flat, axis=1, keepdims=True)
+    true_norm = true_flat  / np.linalg.norm(true_flat,  axis=1, keepdims=True)
+
     mean_cos = np.mean(np.diag(cosine_similarity(pred_norm, true_norm)))
     print(f"\n=== Test Block (Block 7) Cosine Similarity: {mean_cos:.4f} ===")
 
