@@ -160,7 +160,7 @@ def class_cosine(preds):
 
 
 # ==========================================
-# Training loop (with dual test evaluation)
+# Training loop (with average supervision)
 # ==========================================
 for epoch in tqdm(range(1, num_epochs + 1)):
     model.train()
@@ -174,11 +174,21 @@ for epoch in tqdm(range(1, num_epochs + 1)):
         preds_norm = F.normalize(preds, dim=-1)
         text_norm = F.normalize(text_batch, dim=-1)
 
+        # --- Base losses ---
         cos_loss = 1 - F.cosine_similarity(preds_norm, text_norm, dim=-1).mean()
         mse_loss = F.mse_loss(preds, text_batch)
         var_loss = torch.std(preds, dim=0).mean()
 
-        loss = mse_loss + 0.3 * cos_loss - 0.001 * var_loss
+        # --- Average supervision ---
+        try:
+            preds_mean = preds.view(-1, 5, preds.shape[-1]).mean(dim=1)
+            text_mean = text_batch.view(-1, 5, text_batch.shape[-1]).mean(dim=1)
+            avg_loss = F.mse_loss(preds_mean, text_mean)
+        except RuntimeError:
+            avg_loss = 0.0  # skip when batch size not multiple of 5
+
+        # --- Combined loss ---
+        loss = mse_loss + 0.3 * cos_loss - 0.001 * var_loss + 0.1 * avg_loss
         loss.backward()
         optimizer.step()
         scheduler.step()
@@ -193,7 +203,6 @@ for epoch in tqdm(range(1, num_epochs + 1)):
             # --- Full test set (50 clips) ---
             preds_full = model(torch.tensor(eeg_test).float().to(device))
             preds_full = F.normalize(preds_full, dim=-1).cpu().numpy()
-
             pred_norm = preds_full / np.linalg.norm(preds_full, axis=1, keepdims=True)
             true_norm = true_flat / np.linalg.norm(true_flat, axis=1, keepdims=True)
             mean_cos_full = np.mean(np.diag(cosine_similarity(pred_norm, true_norm)))
@@ -212,11 +221,7 @@ for epoch in tqdm(range(1, num_epochs + 1)):
             true_avg_norm = text_mean / np.linalg.norm(text_mean, axis=1, keepdims=True)
             mean_cos_avg = np.mean(np.diag(cosine_similarity(pred_avg_norm, true_avg_norm)))
 
-        print(f"[Epoch {epoch:03d}] "
-              f"Loss={epoch_loss:.4f} | "
-              f"EEG→CLIP(full)={mean_cos_full:.4f} | "
-              f"Δ_full={(within_full-between_full):.4f} | "
-              f"EEG→CLIP(avg)={mean_cos_avg:.4f}")
+        print(f"[Epoch {epoch:03d}] Loss={epoch_loss:.4f} | EEG→CLIP(full)={mean_cos_full:.4f} | Δ_full={(within_full-between_full):.4f} | EEG→CLIP(avg)={mean_cos_avg:.4f}")
 
 
 # ==========================================
