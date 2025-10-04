@@ -16,7 +16,7 @@ from einops import rearrange
 # ==========================================
 batch_size    = 32
 num_epochs    = 100
-lr            = 1e-3
+lr            = 5e-4
 run_device    = "cuda"
 
 # optimizer: "adam" or "adamw"; set WEIGHT_DECAY=0 for Adam
@@ -38,10 +38,10 @@ CLASS_SUBSET     = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
 # loss type: "mse", "cosine", "mse+cosine", "contrastive"
 LOSS_TYPE        = "contrastive"
 
-USE_VAR_REG = False
-VAR_LAMBDA  = 0.05
+USE_VAR_REG = True
+VAR_LAMBDA  = 0.1
 
-P = 0 # dropout prob 0.2
+P = 0.2 # dropout prob
 
 FEATURE_PATHS = {
     "segments":    "/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments",
@@ -88,7 +88,9 @@ class SemanticMLP(nn.Module):
             nn.Linear(2048, 77*768)
         )
     def forward(self, x):
-        return self.mlp(x)
+        out = self.head(x)
+        return F.normalize(out, dim=-1)
+
 
 # ==========================================
 # Fusion wrapper
@@ -122,12 +124,15 @@ def Get_Dataloader(features, targets, labels, istrain, batch_size):
 # ==========================================
 # Contrastive loss
 # ==========================================
-def contrastive_loss_fn(y_hat, y, margin=1.0):
+def contrastive_loss_fn(y_hat, y, margin=0.3):
     y_hat = F.normalize(y_hat, dim=-1)
-    y     = F.normalize(y, dim=-1)
-    sim_matrix = torch.matmul(y_hat, y.t())
-    pos = torch.diag(sim_matrix)
-    return torch.mean(F.relu(margin - pos[:, None] + sim_matrix))
+    y = F.normalize(y, dim=-1)
+    pos = (y_hat * y).sum(dim=-1)
+    neg = torch.matmul(y_hat, y.t())
+    neg.fill_diagonal_(0)
+    hardest_neg = neg.max(dim=-1)[0]
+    loss = F.relu(margin + hardest_neg - pos).mean()
+    return loss
 
 
 # ==========================================
@@ -141,7 +146,7 @@ def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject")
     if SCHEDULER_TYPE.lower() == "cosine":
         # slower decay: complete cosine cycle over half the training
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=max(1, num_epochs // 2)
+            optimizer, T_max=num_epochs
         )
     else:
         scheduler = None
@@ -172,7 +177,10 @@ def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject")
                 mse_part = mse_loss(y_hat, y)
                 loss = 0.3 * mse_part + 0.7 * cos_part
             elif LOSS_TYPE == "contrastive":
-                loss = contrastive_loss_fn(y_hat, y)
+                loss_con = contrastive_loss_fn(y_hat, y, margin=0.3)
+                target = torch.ones(y_hat.size(0), device=device)
+                loss_cos = cos_loss(y_hat, y, target)
+                loss = 0.7 * loss_con + 0.3 * loss_cos
             else:
                 raise ValueError(f"Unknown LOSS_TYPE {LOSS_TYPE}")
 
