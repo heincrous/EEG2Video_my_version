@@ -112,7 +112,7 @@ if __name__ == '__main__':
         indices = [list(GT_label[i]).index(element) for element in chosed_label]
         text = clipdata[i][indices, :]  # match EEG order
         text = torch.from_numpy(text)
-        text = rearrange(text, 'a b c d -> a (b c d)')
+        text = rearrange(text, 'a b c d -> (a b) (c d)')
         Text.append(text)
     Text = torch.cat(Text, dim=0)
 
