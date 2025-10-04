@@ -168,7 +168,12 @@ def train(net, train_iter, test_iter, num_epochs, lr, device, subname="subject")
                 raise ValueError(f"Unknown LOSS_TYPE {LOSS_TYPE}")
 
             if USE_VAR_REG:
-                loss -= VAR_LAMBDA * torch.var(y_hat, dim=0).mean()
+                # Encourage non-collapsed embeddings (too-low variance → penalty)
+                var = torch.var(y_hat, dim=0).mean()
+                loss += VAR_LAMBDA * (1.0 / (var + 1e-8))  # inverse to penalize collapse, not explosion
+
+            if epoch == 0:
+                print(f"[DEBUG] Mean variance: {var.item():.6f}")
 
             loss.backward()
             optimizer.step()
