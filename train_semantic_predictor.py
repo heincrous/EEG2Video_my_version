@@ -285,6 +285,23 @@ if __name__ == "__main__":
     for subname in sub_list:
         print(f"\n=== Training subject {subname} with {FEATURE_TYPES} ===")
 
+        # remove old checkpoint and embedding with same name
+        subset_tag = ""
+        if CLASS_SUBSET is not None:
+            subset_tag = "_subset" + "-".join(str(c) for c in CLASS_SUBSET)
+
+        ckpt_name = f"semantic_predictor_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.pt"
+        embed_name = f"embeddings_{'_'.join(FEATURE_TYPES)}_{subname.replace('.npy','')}{subset_tag}.npy"
+
+        ckpt_path = os.path.join(SEMANTIC_CKPT_DIR, ckpt_name)
+        embed_path = os.path.join("/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings", embed_name)
+
+        for path in [ckpt_path, embed_path]:
+            if os.path.exists(path):
+                os.remove(path)
+                print(f"🧹 Deleted existing file: {path}")
+
+        # load data
         features = load_subject_data(subname, FEATURE_TYPES)
 
         samples_per_block = 40 * 5
@@ -315,7 +332,7 @@ if __name__ == "__main__":
         Y_train, Y_test = Y[train_idx], Y[test_idx]
         L_train, L_test = L[train_idx], L[test_idx]
 
-
+        # train model
         train_iter = Get_Dataloader(X_train, Y_train, L_train, True,  batch_size)
         test_iter  = Get_Dataloader(X_test,  Y_test,  L_test,  False, batch_size)
 
