@@ -1,6 +1,6 @@
 # ==========================================
 # EEG → CLIP Semantic Predictor
-# (Handles all EEG feature shapes, keeps block–class–clip order + cosine metrics every 10 epochs)
+# (block–class–clip order + cosine metrics every 10 epochs + verified reshape + correct LR step)
 # ==========================================
 import os
 import torch
@@ -9,7 +9,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from sklearn import preprocessing
-from tqdm import tqdm
 from sklearn.metrics.pairwise import cosine_similarity
 from einops import rearrange
 
@@ -81,13 +80,9 @@ clip_data = np.load(CLIP_PATH, allow_pickle=True)
 print(f"Original EEG shape: {eeg_data.shape}")
 
 # Average feature dimension if needed
-if eeg_data.ndim == 5:  # (7, 40, 5, 62, 5)
+if eeg_data.ndim == 5:
     pass
-elif eeg_data.ndim == 6 and eeg_data.shape[3] == 2:  # (7, 40, 5, 2, 62, 5)
-    eeg_data = eeg_data.mean(axis=3)
-elif eeg_data.ndim == 6 and eeg_data.shape[3] == 7:  # (7, 40, 5, 7, 62, 100)
-    eeg_data = eeg_data.mean(axis=3)
-elif eeg_data.ndim == 6 and eeg_data.shape[3] == 3:  # (7, 40, 5, 3, 62, 200)
+elif eeg_data.ndim == 6 and eeg_data.shape[3] in [2, 3, 7]:
     eeg_data = eeg_data.mean(axis=3)
 else:
     raise ValueError(f"Unexpected EEG shape: {eeg_data.shape}")
@@ -140,30 +135,39 @@ dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
 
 model = CLIPSemanticMLP(input_dim=input_dim).to(DEVICE)
 optimizer = torch.optim.Adam(model.parameters(), lr=LR)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS * len(dataloader))
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
 
-def evaluate_cosine(model, test_eeg_flat, test_clip_flat, num_classes, clips_per_class):
+def evaluate_cosine(model, test_eeg_flat, test_clip_flat, num_classes, clips_per_class, num_blocks=1):
     model.eval()
     with torch.no_grad():
         preds = model(torch.tensor(test_eeg_flat, dtype=torch.float32, device=DEVICE)).cpu().numpy()
-    alignment = np.mean([cosine_similarity([preds[i]], [test_clip_flat[i]])[0][0] for i in range(len(preds))])
+
+    # alignment
+    alignment = np.mean([
+        cosine_similarity([preds[i]], [test_clip_flat[i]])[0][0]
+        for i in range(len(preds))
+    ])
+
+    # check reshape validity
+    assert num_blocks * num_classes * clips_per_class == preds.shape[0], \
+        "Reshape mismatch: check flattening order."
+
+    preds = preds.reshape(num_blocks, num_classes, clips_per_class, -1)
+
     intra_sims, inter_sims = [], []
-    for i in range(num_classes):
-        start_i = i * clips_per_class
-        end_i = start_i + clips_per_class
-        preds_i = preds[start_i:end_i]
-        sim_matrix = cosine_similarity(preds_i)
+    for c in range(num_classes):
+        preds_c = preds[:, c].reshape(num_blocks * clips_per_class, -1)
+        sim_matrix = cosine_similarity(preds_c)
         intra_sims.append(np.mean(sim_matrix[np.triu_indices_from(sim_matrix, k=1)]))
-        for j in range(i + 1, num_classes):
-            start_j = j * clips_per_class
-            end_j = start_j + clips_per_class
-            preds_j = preds[start_j:end_j]
+        for c2 in range(c + 1, num_classes):
+            preds_c2 = preds[:, c2].reshape(num_blocks * clips_per_class, -1)
             inter_val = cosine_similarity(
-                preds_i.mean(0).reshape(1, -1),
-                preds_j.mean(0).reshape(1, -1)
+                preds_c.mean(0).reshape(1, -1),
+                preds_c2.mean(0).reshape(1, -1)
             )[0][0]
             inter_sims.append(inter_val)
+
     return alignment, np.mean(intra_sims), np.mean(inter_sims)
 
 
@@ -178,8 +182,9 @@ for epoch in range(1, EPOCHS + 1):
         loss = F.mse_loss(pred, clip)
         loss.backward()
         optimizer.step()
-        scheduler.step()
         total_loss += loss.item()
+
+    scheduler.step()  # moved to end of epoch
 
     if epoch % 10 == 0:
         alignment, intra, inter = evaluate_cosine(
