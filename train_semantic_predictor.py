@@ -82,10 +82,9 @@ eeg_path = os.path.join(EEG_PATH_ROOT, FEATURE_TYPE, SUBJECT_NAME)
 eeg_data = np.load(eeg_path, allow_pickle=True)
 clip_data = np.load(CLIP_PATH, allow_pickle=True)
 
-if eeg_data.shape[0] == 7 and eeg_data.shape[1] == 40:
-    eeg_data = np.transpose(eeg_data, (1, 0, 2, 3, 4))
-if clip_data.shape[0] == 7 and clip_data.shape[1] == 40:
-    clip_data = np.transpose(clip_data, (1, 0, 2, 3, 4))
+# Ensure class-first format: (40, 7, 5, ...)
+eeg_data = np.transpose(eeg_data, (1, 0, 2, 3, 4))
+clip_data = np.transpose(clip_data, (1, 0, 2, 3, 4))
 
 
 print(f"Loaded EEG shape: {eeg_data.shape}, CLIP shape: {clip_data.shape}")
