@@ -144,7 +144,7 @@ if __name__ == '__main__':
     # ==========================================
     model = CLIP().to(device)
     dataset = Dataset(EEG, Text)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=512, shuffle=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(dataloader))
 
