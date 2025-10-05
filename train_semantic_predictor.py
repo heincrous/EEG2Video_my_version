@@ -101,16 +101,16 @@ device = 'cuda:0'
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 
 class_prompts = {
-    1:  "a video of a cat",
-    10: "a video of a shark swimming in the sea",
-    12: "a video of flowers blooming",
-    16: "a person dancing on stage",
-    19: "a close-up of a human face",
-    23: "a city skyline with tall buildings",
-    25: "cars driving on a road",
-    31: "a pizza being cooked in an oven",
-    34: "a person playing guitar",
-    39: "an airplane flying in the sky"
+    1:  "cat",
+    10: "shark",
+    12: "flowers",
+    16: "dancer",
+    19: "face",
+    23: "city",
+    25: "car",
+    31: "pizza",
+    34: "guitar",
+    39: "airplane"
 }
 
 tokenizer = CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer")
