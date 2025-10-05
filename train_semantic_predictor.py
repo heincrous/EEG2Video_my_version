@@ -207,6 +207,13 @@ if __name__ == '__main__':
         preds_reshaped = preds_flat.reshape(50, 77, 768)  # correct shape for video inference
 
     # ==========================================
+    # Normalize predicted embeddings to CLIP scale
+    # ==========================================
+    preds_norm = np.linalg.norm(preds_reshaped.reshape(50, -1), axis=1, keepdims=True)
+    target_norm = 250.0  # mean L2 norm of real CLIP text embeddings (≈200–260)
+    preds_reshaped = preds_reshaped * (target_norm / preds_norm)
+
+    # ==========================================
     # Save final embeddings
     # ==========================================
     out_dir = '/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings'

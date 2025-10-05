@@ -18,7 +18,7 @@ OUTPUT_DIR         = "/content/drive/MyDrive/EEG2Video_outputs/full_inference_su
 BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text_authors/BLIP_text_full.npy"
 SEM_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/pred_embeddings_sub1_classlevel.npy"
 
-NEGATIVE_MODE      = "mean_sem"   # options: "empty", "mean_sem"
+NEGATIVE_MODE      = "empty"   # options: "empty", "mean_sem"
 USE_FINETUNED      = False
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -108,7 +108,7 @@ def run_inference():
                 height=288,
                 width=512,
                 num_inference_steps=100,
-                guidance_scale=12.5,
+                guidance_scale=8,
             ).videos
 
             safe_caption = re.sub(r'[^a-zA-Z0-9_-]', '_', caption)[:120]
