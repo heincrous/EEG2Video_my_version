@@ -1,6 +1,6 @@
 # ==========================================
 # EEG → CLIP Semantic Predictor
-# (Handles all EEG feature shapes, keeps block–class–clip order)
+# (Handles all EEG feature shapes, keeps block–class–clip order + cosine metrics every 10 epochs)
 # ==========================================
 import os
 import torch
@@ -17,7 +17,7 @@ from einops import rearrange
 # ==========================================
 # Config
 # ==========================================
-FEATURE_TYPE  = "EEG_windows_100"     # EEG_DE_1per2s, EEG_DE_1per1s, EEG_DE_windows_100, etc.
+FEATURE_TYPE  = "EEG_windows_100"
 SUBJECT_NAME  = "sub1.npy"
 CLASS_SUBSET  = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID     = "1"
@@ -76,13 +76,11 @@ class EEGTextDataset:
 # ==========================================
 print(f"Loading EEG features from: {FEATURE_TYPE}/{SUBJECT_NAME}")
 eeg_path = os.path.join(EEG_PATH_ROOT, FEATURE_TYPE, SUBJECT_NAME)
-eeg_data = np.load(eeg_path, allow_pickle=True)  # (7, 40, 5, ...)
-clip_data = np.load(CLIP_PATH, allow_pickle=True)  # (7, 40, 5, 77, 768)
+eeg_data = np.load(eeg_path, allow_pickle=True)
+clip_data = np.load(CLIP_PATH, allow_pickle=True)
 print(f"Original EEG shape: {eeg_data.shape}")
 
-# ==========================================
-# Average over correct dimension depending on feature type
-# ==========================================
+# Average feature dimension if needed
 if eeg_data.ndim == 5:  # (7, 40, 5, 62, 5)
     pass
 elif eeg_data.ndim == 6 and eeg_data.shape[3] == 2:  # (7, 40, 5, 2, 62, 5)
@@ -103,7 +101,6 @@ print(f"CLIP shape: {clip_data.shape}")
 # ==========================================
 train_eeg, test_eeg = eeg_data[:6], eeg_data[6:]
 train_clip, test_clip = clip_data[:6], clip_data[6:]
-print(f"Train EEG: {train_eeg.shape}, Test EEG: {test_eeg.shape}")
 
 
 # ==========================================
@@ -124,7 +121,6 @@ train_clip_flat = rearrange(train_clip, "b c s tok dim -> (b c s) (tok dim)")
 test_clip_flat  = rearrange(test_clip,  "b c s tok dim -> (b c s) (tok dim)")
 
 input_dim = train_eeg_flat.shape[1]
-print(f"Flattened EEG dim: {input_dim}")
 
 
 # ==========================================
@@ -146,6 +142,31 @@ model = CLIPSemanticMLP(input_dim=input_dim).to(DEVICE)
 optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS * len(dataloader))
 
+
+def evaluate_cosine(model, test_eeg_flat, test_clip_flat, num_classes, clips_per_class):
+    model.eval()
+    with torch.no_grad():
+        preds = model(torch.tensor(test_eeg_flat, dtype=torch.float32, device=DEVICE)).cpu().numpy()
+    alignment = np.mean([cosine_similarity([preds[i]], [test_clip_flat[i]])[0][0] for i in range(len(preds))])
+    intra_sims, inter_sims = [], []
+    for i in range(num_classes):
+        start_i = i * clips_per_class
+        end_i = start_i + clips_per_class
+        preds_i = preds[start_i:end_i]
+        sim_matrix = cosine_similarity(preds_i)
+        intra_sims.append(np.mean(sim_matrix[np.triu_indices_from(sim_matrix, k=1)]))
+        for j in range(i + 1, num_classes):
+            start_j = j * clips_per_class
+            end_j = start_j + clips_per_class
+            preds_j = preds[start_j:end_j]
+            inter_val = cosine_similarity(
+                preds_i.mean(0).reshape(1, -1),
+                preds_j.mean(0).reshape(1, -1)
+            )[0][0]
+            inter_sims.append(inter_val)
+    return alignment, np.mean(intra_sims), np.mean(inter_sims)
+
+
 print("Starting training...")
 for epoch in range(1, EPOCHS + 1):
     model.train()
@@ -159,45 +180,27 @@ for epoch in range(1, EPOCHS + 1):
         optimizer.step()
         scheduler.step()
         total_loss += loss.item()
+
     if epoch % 10 == 0:
-        print(f"[Epoch {epoch}] Training Loss: {total_loss:.6f}")
+        alignment, intra, inter = evaluate_cosine(
+            model, test_eeg_flat, test_clip_flat,
+            len(CLASS_SUBSET), test_eeg.shape[2]
+        )
+        print(f"[Epoch {epoch}] Loss: {total_loss:.6f} | Align: {alignment:.4f} | Intra: {intra:.4f} | Inter: {inter:.4f}")
 
 
 # ==========================================
-# Evaluation
+# Final evaluation + save
 # ==========================================
-print("\nEvaluating...")
-model.eval()
+alignment, intra, inter = evaluate_cosine(
+    model, test_eeg_flat, test_clip_flat,
+    len(CLASS_SUBSET), test_eeg.shape[2]
+)
+print(f"\nFinal Metrics → Align: {alignment:.4f} | Intra: {intra:.4f} | Inter: {inter:.4f}")
+
 with torch.no_grad():
     preds = model(torch.tensor(test_eeg_flat, dtype=torch.float32, device=DEVICE)).cpu().numpy()
 
-alignment = np.mean([cosine_similarity([preds[i]], [test_clip_flat[i]])[0][0] for i in range(len(preds))])
-
-num_classes = len(CLASS_SUBSET)
-clips_per_class = test_eeg.shape[2]
-intra_sims, inter_sims = [], []
-for i in range(num_classes):
-    start_i = i * clips_per_class
-    end_i   = start_i + clips_per_class
-    preds_i = preds[start_i:end_i]
-    sim_matrix = cosine_similarity(preds_i)
-    intra_sims.append(np.mean(sim_matrix[np.triu_indices_from(sim_matrix, k=1)]))
-    for j in range(i + 1, num_classes):
-        start_j = j * clips_per_class
-        end_j   = start_j + clips_per_class
-        preds_j = preds[start_j:end_j]
-        inter_val = cosine_similarity(preds_i.mean(0).reshape(1, -1),
-                                      preds_j.mean(0).reshape(1, -1))[0][0]
-        inter_sims.append(inter_val)
-
-print(f"Alignment cosine: {alignment:.4f}")
-print(f"Intra-class cosine: {np.mean(intra_sims):.4f}")
-print(f"Inter-class cosine: {np.mean(inter_sims):.4f}")
-
-
-# ==========================================
-# Save outputs
-# ==========================================
 ckpt_name = f"semantic_predictor_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt"
 emb_name  = f"pred_embeddings_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy"
 torch.save({'state_dict': model.state_dict()}, os.path.join(CKPT_SAVE_PATH, ckpt_name))
@@ -205,4 +208,3 @@ np.save(os.path.join(EMB_SAVE_PATH, emb_name), preds)
 
 print(f"Saved → {ckpt_name}")
 print(f"Saved → {emb_name}")
-print("Done.")
