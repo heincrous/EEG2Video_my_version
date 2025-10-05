@@ -17,7 +17,7 @@ from einops import rearrange
 # ==========================================
 # Config
 # ==========================================
-FEATURE_TYPE  = "EEG_DE_1per2s"     # EEG_DE_1per2s, EEG_DE_1per1s, EEG_DE_windows_100, etc.
+FEATURE_TYPE  = "EEG_windows_100"     # EEG_DE_1per2s, EEG_DE_1per1s, EEG_DE_windows_100, etc.
 SUBJECT_NAME  = "sub1.npy"
 CLASS_SUBSET  = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID     = "1"
