@@ -1,6 +1,6 @@
 # ==========================================
 # EEG → CLIP Semantic Predictor
-# (Class-level CLIP text embeddings + Cleanup)
+# (All EEG×All CLIP per Class–Block + Cleanup + Test Inference)
 # ==========================================
 import torch
 import numpy as np
@@ -10,23 +10,7 @@ from sklearn import preprocessing
 import torch.nn.functional as F
 from tqdm import tqdm
 from einops import rearrange
-from transformers import CLIPTokenizer, CLIPTextModel
-import os, random, glob
-
-
-# ==========================================
-# Cleanup old checkpoints and embeddings
-# ==========================================
-def cleanup():
-    ckpt_dir = '/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints'
-    out_dir  = '/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings'
-    for folder in [ckpt_dir, out_dir]:
-        os.makedirs(folder, exist_ok=True)
-        old_files = glob.glob(os.path.join(folder, '*classlevel*'))
-        for f in old_files:
-            os.remove(f)
-            print(f"🧹 Deleted old file: {f}")
-cleanup()
+import os, glob, random
 
 
 # ==========================================
@@ -51,7 +35,10 @@ class CLIP(nn.Module):
         return self.mlp(eeg)
 
 
-class Dataset():
+# ==========================================
+# Dataset
+# ==========================================
+class Dataset:
     def __init__(self, eeg, text):
         self.eeg = eeg
         self.text = text
@@ -65,7 +52,7 @@ class Dataset():
 
 
 # ==========================================
-# Label order (authors)
+# Author block–class order
 # ==========================================
 GT_label = np.array([
 [23,22,9,6,18,14,5,36,25,19,28,35,3,16,24,40,15,27,38,33,34,4,39,17,1,26,20,29,13,32,37,2,11,12,30,31,8,21,7,10],
@@ -82,97 +69,93 @@ chosed_label = [1, 10, 12, 16, 19, 23, 25, 31, 34, 39]
 # ==========================================
 # Utility setup
 # ==========================================
-def seed_everything(seed=0, cudnn_deterministic=True):
+def seed_everything(seed=0):
     random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    if cudnn_deterministic:
-        torch.backends.cudnn.deterministic = True
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    torch.backends.cudnn.deterministic = True
 seed_everything(114514)
 device = 'cuda:0'
 
 
-# ==========================================
-# Class prompts → CLIP embeddings
-# ==========================================
-PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
-
-class_prompts = {
-    1:  "cat",
-    10: "shark",
-    12: "flowers",
-    16: "dancer",
-    19: "face",
-    23: "city",
-    25: "car",
-    31: "pizza",
-    34: "guitar",
-    39: "airplane"
-}
-
-tokenizer = CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer")
-text_encoder = CLIPTextModel.from_pretrained(PRETRAINED_SD_PATH, subfolder="text_encoder").to(device)
-text_encoder.eval()
-
-class_embs = []
-for lbl in chosed_label:
-    tokens = tokenizer([class_prompts[lbl]], padding="max_length", max_length=77, return_tensors="pt").to(device)
-    with torch.no_grad():
-        emb = text_encoder(tokens.input_ids)[0].cpu().numpy()  # (1,77,768)
-    class_embs.append(emb)
-class_embs = np.concatenate(class_embs, axis=0)  # (10,77,768)
-print("Created CLIP text embeddings:", class_embs.shape)
+def cleanup():
+    ckpt_dir = '/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints'
+    out_dir  = '/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings'
+    for d in [ckpt_dir, out_dir]:
+        os.makedirs(d, exist_ok=True)
+        old_files = glob.glob(os.path.join(d, '*allpairs*')) + glob.glob(os.path.join(d, '*classlevel*'))
+        for f in old_files:
+            os.remove(f)
+            print(f"🧹 Deleted old file: {f}")
+    return ckpt_dir, out_dir
 
 
 # ==========================================
 # Main
 # ==========================================
 if __name__ == '__main__':
+    ckpt_path, out_dir = cleanup()
+
     eegdata = np.load('/content/drive/MyDrive/EEG2Video_data/processed/DE_1per2s_authors/sub1.npy')
+    clipdata = np.load('/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings_authors/CLIP_embeddings_full.npy')
+
     print("EEG data shape:", eegdata.shape)
+    print("CLIP embedding shape:", clipdata.shape)
 
-    eeg = []
-    for i in range(6):  # first 6 blocks for training
-        indices = [list(GT_label[i]).index(element) for element in chosed_label]
-        eeg.append(eegdata[i][indices, :])
-    eeg = np.stack(eeg, axis=0)
-    eeg = torch.from_numpy(eeg)
-    eeg = rearrange(eeg, 'a b c d e -> (a b c) (d e)')
+    # ==========================================
+    # Build training pairs (all EEG×all CLIP per class per block)
+    # ==========================================
+    EEG_list, Text_list = [], []
+    for i in range(6):  # training blocks
+        indices = [list(GT_label[i]).index(e) for e in chosed_label]
+        eeg_block = eegdata[i][indices]       # (10, 5, 62, 5)
+        clip_block = clipdata[i][indices]     # (10, 5, 77, 768)
 
-    # Build class-level CLIP text embedding targets
-    Text = []
-    for _ in range(6):  # same number of blocks
-        text = np.repeat(class_embs[:, None, :, :], repeats=5, axis=1)
-        text = torch.from_numpy(text)
-        text = rearrange(text, 'a b c d -> (a b) (c d)')
-        Text.append(text)
-    Text = torch.cat(Text, dim=0)
-    print("Target text shape:", Text.shape)
+        eeg_pairs, clip_pairs = [], []
+        for c in range(len(indices)):
+            eeg_c = eeg_block[c]               # (5, 62, 5)
+            clip_c = clip_block[c]             # (5, 77, 768)
+            eeg_c = np.repeat(eeg_c, 5, axis=0)     # 25
+            clip_c = np.tile(clip_c, (5, 1, 1))      # 25
+            eeg_pairs.append(eeg_c)
+            clip_pairs.append(clip_c)
 
-    # Normalization
-    normalize = preprocessing.StandardScaler()
-    normalize.fit(eeg)
-    eeg = normalize.transform(eeg)
-    print("EEG normalized shape:", eeg.shape)
+        eeg_pairs = np.concatenate(eeg_pairs, 0)
+        clip_pairs = np.concatenate(clip_pairs, 0)
 
-    dataset = Dataset(eeg, Text)
-    dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
+        eeg_pairs = torch.from_numpy(eeg_pairs)
+        clip_pairs = torch.from_numpy(clip_pairs)
+        eeg_pairs = rearrange(eeg_pairs, 'a b c -> a (b c)')
+        clip_pairs = rearrange(clip_pairs, 'a b c -> a (b c)')
 
+        EEG_list.append(eeg_pairs)
+        Text_list.append(clip_pairs)
+
+    EEG = torch.cat(EEG_list, 0)
+    Text = torch.cat(Text_list, 0)
+    print(f"Training EEG shape: {EEG.shape}, Text shape: {Text.shape}")
+
+    # Normalize
+    scaler = preprocessing.StandardScaler()
+    scaler.fit(EEG)
+    EEG = torch.from_numpy(scaler.transform(EEG)).float()
+
+    # ==========================================
+    # Model + Training
+    # ==========================================
     model = CLIP().to(device)
+    dataset = Dataset(EEG, Text)
+    dataloader = DataLoader(dataset, batch_size=512, shuffle=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50 * len(dataloader))
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(dataloader))
 
-    # ==========================================
-    # Training
-    # ==========================================
     for epoch in tqdm(range(50)):
         model.train()
         epoch_loss = 0
         for eeg_batch, text_batch in dataloader:
-            eeg_batch = eeg_batch.float().to(device)
+            eeg_batch = eeg_batch.to(device)
             text_batch = text_batch.float().to(device)
             optimizer.zero_grad()
             pred = model(eeg_batch)
@@ -183,48 +166,36 @@ if __name__ == '__main__':
             epoch_loss += loss.item()
         print(f"[Epoch {epoch+1}] Loss: {epoch_loss:.6f}")
 
-    # ==========================================
-    # Save model and predicted embeddings
-    # ==========================================
-    ckpt_path = '/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints/eeg2text_classlevel.pt'
-    torch.save({'state_dict': model.state_dict()}, ckpt_path)
-    print(f"Model saved to: {ckpt_path}")
+    ckpt_file = os.path.join(ckpt_path, 'semantic_predictor_allpairs_sub1.pt')
+    torch.save({'state_dict': model.state_dict()}, ckpt_file)
+    print("✅ Model saved to:", ckpt_file)
 
     # ==========================================
-    # Inference on 7th block (test)
+    # Inference (7th block)
     # ==========================================
     print("\n=== Running inference on test block (7th) ===")
+    test_indices = [list(GT_label[6]).index(e) for e in chosed_label]
+    eeg_test = eegdata[6][test_indices]
+    clip_test = clipdata[6][test_indices]
 
-    test_indices = [list(GT_label[6]).index(element) for element in chosed_label]
-    eeg_test = eegdata[6][test_indices, :]  # shape (10, 5, 62, 5)
-    eeg_test = rearrange(torch.from_numpy(eeg_test), 'a b c d -> (a b) (c d)')  # (50, 310)
-    eeg_test = normalize.transform(eeg_test)
-    eeg_test = torch.from_numpy(eeg_test).float().to(device)
+    eeg_all, clip_all = [], []
+    for c in range(len(test_indices)):
+        eeg_c = eeg_test[c]
+        clip_c = clip_test[c]
+        eeg_c = np.repeat(eeg_c, 5, axis=0)
+        clip_c = np.tile(clip_c, (5, 1, 1))
+        eeg_all.append(eeg_c)
+        clip_all.append(clip_c)
+
+    eeg_all = np.concatenate(eeg_all, 0)
+    clip_all = np.concatenate(clip_all, 0)
+    eeg_all = rearrange(torch.from_numpy(eeg_all), 'a b c -> a (b c)')
+    eeg_all = torch.from_numpy(scaler.transform(eeg_all)).float().to(device)
 
     model.eval()
     with torch.no_grad():
-        preds_flat = model(eeg_test).cpu().numpy()        # (50, 77*768)
-    print("preds_flat shape:", preds_flat.shape)           # sanity check
+        preds = model(eeg_all).cpu().numpy()
 
-    # Reshape correctly
-    preds_reshaped = preds_flat.reshape(50, 77, 768)
-    print("preds_reshaped shape:", preds_reshaped.shape)   # should be (50,77,768)
-
-    # ==========================================
-    # Normalize predicted embeddings to CLIP scale (fixed)
-    # ==========================================
-    preds_reshaped = np.asarray(preds_reshaped)  # ensure NumPy array
-    preds_norm = np.linalg.norm(preds_reshaped.reshape(50, -1), axis=1, keepdims=True)  # (50,1)
-    target_norm = 250.0  # mean L2 norm of true CLIP embeddings
-    scale = (target_norm / preds_norm).reshape(50, 1, 1)   # explicitly shape (50,1,1)
-    preds_reshaped = preds_reshaped * scale
-    print("Normalized embedding shape:", preds_reshaped.shape)  # should be (50,77,768)
-
-    # ==========================================
-    # Save final embeddings
-    # ==========================================
-    out_dir = '/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings'
-    os.makedirs(out_dir, exist_ok=True)
-    save_path = os.path.join(out_dir, 'pred_embeddings_sub1_classlevel.npy')
-    np.save(save_path, preds_reshaped)
-    print(f"Saved predicted embeddings: {preds_reshaped.shape} → {save_path}")
+    out_file = os.path.join(out_dir, 'pred_embeddings_sub1_allpairs.npy')
+    np.save(out_file, preds)
+    print(f"✅ Saved predicted embeddings: {preds.shape}")
