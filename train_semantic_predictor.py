@@ -138,33 +138,36 @@ scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 # ==========================================
 # Evaluation (correct grouping: 1 test block × N classes × 5 clips)
 # ==========================================
+# ==========================================
+# Evaluation (correct grouping: 1 test block × N classes × 5 clips)
+# ==========================================
 def evaluate_cosine(model, test_eeg_flat, test_clip_flat, device=DEVICE):
     model.eval()
     with torch.no_grad():
         preds = model(torch.tensor(test_eeg_flat, dtype=torch.float32, device=device)).cpu().numpy()
 
-    # Normalize embeddings for cosine consistency
-    preds /= np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8
-    test_clip_flat /= np.linalg.norm(test_clip_flat, axis=1, keepdims=True) + 1e-8
+    # Normalize embeddings for cosine consistency (non-destructive)
+    preds_norm = preds / (np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8)
+    clip_norm  = test_clip_flat / (np.linalg.norm(test_clip_flat, axis=1, keepdims=True) + 1e-8)
 
     # Alignment (1-to-1 cosine)
     alignment = np.mean([
-        np.dot(preds[i], test_clip_flat[i]) for i in range(len(preds))
+        np.dot(preds_norm[i], clip_norm[i]) for i in range(len(preds_norm))
     ])
 
     # Reshape to (class, 5, embed)
     num_classes = len(CLASS_SUBSET)
-    preds = preds.reshape(num_classes, 5, -1)
+    preds_norm = preds_norm.reshape(num_classes, 5, -1)
 
     intra_sims, inter_sims = [], []
     for c in range(num_classes):
-        preds_c = preds[c]
+        preds_c = preds_norm[c]  # (5, embed)
         sim_matrix = preds_c @ preds_c.T
         np.fill_diagonal(sim_matrix, 0)
         intra_sims.append(sim_matrix.sum() / (5 * (5 - 1)))
 
         for c2 in range(c + 1, num_classes):
-            preds_c2 = preds[c2]
+            preds_c2 = preds_norm[c2]
             inter_val = np.dot(preds_c.mean(0), preds_c2.mean(0))
             inter_sims.append(inter_val)
 
