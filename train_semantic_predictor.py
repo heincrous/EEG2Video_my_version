@@ -19,7 +19,7 @@ from einops import rearrange
 # ==========================================
 FEATURE_TYPE  = "EEG_DE_1per2s"     # EEG_DE_1per2s, EEG_DE_1per1s, EEG_PSD_1per2s, EEG_PSD_1per1s, EEG_segments, EEG_windows_100, EEG_windows_200
 SUBJECT_NAME  = "sub1.npy"
-CLASS_SUBSET  = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
+CLASS_SUBSET  = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID     = "1"
 
 EPOCHS        = 200
@@ -81,6 +81,12 @@ print(f"Loading EEG features from: {FEATURE_TYPE}/{SUBJECT_NAME}")
 eeg_path = os.path.join(EEG_PATH_ROOT, FEATURE_TYPE, SUBJECT_NAME)
 eeg_data = np.load(eeg_path, allow_pickle=True)
 clip_data = np.load(CLIP_PATH, allow_pickle=True)
+
+if eeg_data.shape[0] == 7 and eeg_data.shape[1] == 40:
+    eeg_data = np.transpose(eeg_data, (1, 0, 2, 3, 4))
+if clip_data.shape[0] == 7 and clip_data.shape[1] == 40:
+    clip_data = np.transpose(clip_data, (1, 0, 2, 3, 4))
+
 
 print(f"Loaded EEG shape: {eeg_data.shape}, CLIP shape: {clip_data.shape}")
 
