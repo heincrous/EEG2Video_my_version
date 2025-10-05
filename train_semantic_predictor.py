@@ -168,7 +168,7 @@ if __name__ == '__main__':
     # ==========================================
     # Training
     # ==========================================
-    for epoch in tqdm(range(25)):
+    for epoch in tqdm(range(40)):
         model.train()
         epoch_loss = 0
         for eeg_batch, text_batch in dataloader:
@@ -197,16 +197,20 @@ if __name__ == '__main__':
 
     test_indices = [list(GT_label[6]).index(element) for element in chosed_label]
     eeg_test = eegdata[6][test_indices, :]  # shape (10, 5, 62, 5)
-    eeg_test = rearrange(torch.from_numpy(eeg_test), 'a b c d -> (a b) (c d)')  # flatten to (50, 310)
+    eeg_test = rearrange(torch.from_numpy(eeg_test), 'a b c d -> (a b) (c d)')  # (50, 310)
     eeg_test = normalize.transform(eeg_test)
     eeg_test = torch.from_numpy(eeg_test).float().to(device)
 
     model.eval()
     with torch.no_grad():
-        pred_embeddings = model(eeg_test).cpu().numpy()
+        preds_flat = model(eeg_test).cpu().numpy()     # (50, 77*768)
+        preds_reshaped = preds_flat.reshape(50, 77, 768)  # correct shape for video inference
 
+    # ==========================================
+    # Save final embeddings
+    # ==========================================
     out_dir = '/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings'
     os.makedirs(out_dir, exist_ok=True)
-    np.save(os.path.join(out_dir, 'pred_embeddings_sub1_classlevel.npy'), pred_embeddings)
-
-    print(f"Saved predicted embeddings: {pred_embeddings.shape}")
+    save_path = os.path.join(out_dir, 'pred_embeddings_sub1_classlevel.npy')
+    np.save(save_path, preds_reshaped)
+    print(f"Saved predicted embeddings: {preds_reshaped.shape} → {save_path}")
