@@ -143,27 +143,29 @@ def evaluate_cosine(model, test_eeg_flat, test_clip_flat, device=DEVICE):
     with torch.no_grad():
         preds = model(torch.tensor(test_eeg_flat, dtype=torch.float32, device=device)).cpu().numpy()
 
-    # one-to-one alignment cosine
+    # Normalize embeddings for cosine consistency
+    preds /= np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8
+    test_clip_flat /= np.linalg.norm(test_clip_flat, axis=1, keepdims=True) + 1e-8
+
+    # Alignment (1-to-1 cosine)
     alignment = np.mean([
-        cosine_similarity([preds[i]], [test_clip_flat[i]])[0][0]
-        for i in range(len(preds))
+        np.dot(preds[i], test_clip_flat[i]) for i in range(len(preds))
     ])
 
+    # Reshape to (class, 5, embed)
     num_classes = len(CLASS_SUBSET)
-    preds = preds.reshape(1, num_classes, 5, -1)  # (block, class, clip, embed)
+    preds = preds.reshape(num_classes, 5, -1)
 
     intra_sims, inter_sims = [], []
     for c in range(num_classes):
-        preds_c = preds[0, c]  # shape (5, embed)
-        sim_matrix = cosine_similarity(preds_c)
-        intra_sims.append(np.mean(sim_matrix[np.triu_indices_from(sim_matrix, k=1)]))
+        preds_c = preds[c]
+        sim_matrix = preds_c @ preds_c.T
+        np.fill_diagonal(sim_matrix, 0)
+        intra_sims.append(sim_matrix.sum() / (5 * (5 - 1)))
 
         for c2 in range(c + 1, num_classes):
-            preds_c2 = preds[0, c2]
-            inter_val = cosine_similarity(
-                preds_c.mean(axis=0, keepdims=True),
-                preds_c2.mean(axis=0, keepdims=True)
-            )[0][0]
+            preds_c2 = preds[c2]
+            inter_val = np.dot(preds_c.mean(0), preds_c2.mean(0))
             inter_sims.append(inter_val)
 
     return alignment, np.mean(intra_sims), np.mean(inter_sims)
