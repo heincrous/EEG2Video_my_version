@@ -159,7 +159,7 @@ if __name__ == '__main__':
     print("EEG normalized shape:", eeg.shape)
 
     dataset = Dataset(eeg, Text)
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
 
     model = CLIP().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
@@ -168,7 +168,7 @@ if __name__ == '__main__':
     # ==========================================
     # Training
     # ==========================================
-    for epoch in tqdm(range(60)):
+    for epoch in tqdm(range(100)):
         model.train()
         epoch_loss = 0
         for eeg_batch, text_batch in dataloader:
@@ -209,9 +209,10 @@ if __name__ == '__main__':
     # ==========================================
     # Normalize predicted embeddings to CLIP scale
     # ==========================================
-    preds_norm = np.linalg.norm(preds_reshaped.reshape(50, -1), axis=1, keepdims=True)
+    preds_norm = np.linalg.norm(preds_reshaped.reshape(50, -1), axis=1, keepdims=True)  # (50,1)
     target_norm = 250.0  # mean L2 norm of real CLIP text embeddings (≈200–260)
-    preds_reshaped = preds_reshaped * (target_norm / preds_norm)
+    scale = (target_norm / preds_norm)[:, None, None]  # reshape for broadcasting (50,1,1)
+    preds_reshaped = preds_reshaped * scale
 
     # ==========================================
     # Save final embeddings
