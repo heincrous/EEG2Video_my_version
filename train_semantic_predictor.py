@@ -1,6 +1,6 @@
 # ==========================================
 # EEG → CLIP Semantic Predictor
-# (Corrected shaping + 6/1 split + subset + cosine evaluation)
+# (Exact shaping + 6/1 split + subset + cosine evaluation)
 # ==========================================
 import os
 import torch
@@ -17,7 +17,7 @@ from einops import rearrange
 # ==========================================
 # Config
 # ==========================================
-FEATURE_TYPE  = "EEG_DE_1per2s"
+FEATURE_TYPE  = "EEG_DE_1per2s"     # EEG_DE_1per2s, EEG_PSD_1per2s, etc.
 SUBJECT_NAME  = "sub1.npy"
 CLASS_SUBSET  = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID     = "1"
@@ -75,35 +75,17 @@ class EEGTextDataset:
 
 
 # ==========================================
-# Load and format data
+# Load data
 # ==========================================
 print(f"Loading EEG features from: {FEATURE_TYPE}/{SUBJECT_NAME}")
 eeg_path = os.path.join(EEG_PATH_ROOT, FEATURE_TYPE, SUBJECT_NAME)
 eeg_data = np.load(eeg_path, allow_pickle=True)
 clip_data = np.load(CLIP_PATH, allow_pickle=True)
 
-# Transpose from (7, 40, 5, …) to (40, 7, 5, …)
-eeg_data = np.transpose(eeg_data, (1, 0, 2, 3, 4))
-clip_data = np.transpose(clip_data, (1, 0, 2, 3, 4))
+# Both EEG and CLIP are (7, 40, 5, ...)
+eeg_data = np.transpose(eeg_data, (1, 0, 2, 3, 4))   # (40, 7, 5, 62, 5)
+clip_data = np.transpose(clip_data, (1, 0, 2, 3, 4)) # (40, 7, 5, 77, 768)
 print(f"Loaded EEG shape: {eeg_data.shape}, CLIP shape: {clip_data.shape}")
-
-
-# ==========================================
-# Average temporal axes where applicable
-# ==========================================
-if FEATURE_TYPE in ["EEG_DE_1per1s", "EEG_PSD_1per1s"]:
-    eeg_data = eeg_data.mean(axis=2)  # average across 2 freq bands
-elif FEATURE_TYPE == "EEG_windows_100":
-    eeg_data = eeg_data.mean(axis=2)  # average across 7 windows
-elif FEATURE_TYPE == "EEG_windows_200":
-    eeg_data = eeg_data.mean(axis=2)  # average across 3 windows
-eeg_data = np.squeeze(eeg_data)
-
-# Handle any extra trailing singleton dimension
-while eeg_data.ndim > 5:
-    eeg_data = eeg_data.mean(axis=-1)
-
-print(f"EEG after averaging: {eeg_data.shape}")
 
 
 # ==========================================
@@ -124,18 +106,19 @@ test_clip  = test_clip[CLASS_SUBSET]
 
 
 # ==========================================
-# Flatten properly
+# Flatten (EXACT according to your shapes)
 # ==========================================
-# EEG: (c, b, s, ch, t) → (c*b*s, ch*t)
+# EEG (c, b, s, 62, 5) -> (c*b*s, 310)
 train_eeg_flat = rearrange(train_eeg, "c b s ch t -> (c b s) (ch t)")
 test_eeg_flat  = rearrange(test_eeg,  "c b s ch t -> (c b s) (ch t)")
 
-# CLIP: (c, b, s, 77, 768) → (c*b*s, 77*768)
+# CLIP (c, b, s, 77, 768) -> (c*b*s, 77*768)
 train_clip_flat = rearrange(train_clip, "c b s tok dim -> (c b s) (tok dim)")
 test_clip_flat  = rearrange(test_clip,  "c b s tok dim -> (c b s) (tok dim)")
 
+print(f"EEG flattened shape: {train_eeg_flat.shape}, CLIP flattened shape: {train_clip_flat.shape}")
 input_dim = train_eeg_flat.shape[1]
-print(f"Flattened input dimension: {input_dim}")
+print(f"Flattened EEG feature dimension: {input_dim}")
 
 
 # ==========================================
