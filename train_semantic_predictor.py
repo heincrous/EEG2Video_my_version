@@ -1,6 +1,6 @@
 # ==========================================
 # EEG → CLIP Semantic Predictor
-# (Simplified final version — one test block, 5 clips per class)
+# (Final corrected version — one test block, 5 clips per class)
 # ==========================================
 import os
 import torch
@@ -136,31 +136,30 @@ scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
 
 # ==========================================
-# Evaluation (fixed known structure)
+# Evaluation (correct grouping: 1 test block × N classes × 5 clips)
 # ==========================================
 def evaluate_cosine(model, test_eeg_flat, test_clip_flat, device=DEVICE):
     model.eval()
     with torch.no_grad():
         preds = model(torch.tensor(test_eeg_flat, dtype=torch.float32, device=device)).cpu().numpy()
 
-    # Alignment (per-sample cosine)
+    # one-to-one alignment cosine
     alignment = np.mean([
         cosine_similarity([preds[i]], [test_clip_flat[i]])[0][0]
         for i in range(len(preds))
     ])
 
-    # Reshape back to (class, 5, embed)
     num_classes = len(CLASS_SUBSET)
-    preds = preds.reshape(num_classes, 5, -1)
+    preds = preds.reshape(1, num_classes, 5, -1)  # (block, class, clip, embed)
 
     intra_sims, inter_sims = [], []
     for c in range(num_classes):
-        preds_c = preds[c]  # (5, embed)
+        preds_c = preds[0, c]  # shape (5, embed)
         sim_matrix = cosine_similarity(preds_c)
         intra_sims.append(np.mean(sim_matrix[np.triu_indices_from(sim_matrix, k=1)]))
 
         for c2 in range(c + 1, num_classes):
-            preds_c2 = preds[c2]
+            preds_c2 = preds[0, c2]
             inter_val = cosine_similarity(
                 preds_c.mean(axis=0, keepdims=True),
                 preds_c2.mean(axis=0, keepdims=True)
