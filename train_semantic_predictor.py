@@ -1,6 +1,6 @@
 # ==========================================
 # EEG → CLIP Semantic Predictor
-# (All EEG×All CLIP per Class–Block + Cleanup + Test Inference)
+# (All EEG×All CLIP Training + Single-Pass Inference + Cleanup)
 # ==========================================
 import torch
 import numpy as np
@@ -43,16 +43,14 @@ class Dataset:
         self.eeg = eeg
         self.text = text
         self.len = eeg.shape[0]
-
     def __len__(self):
         return self.len
-
     def __getitem__(self, item):
         return self.eeg[item], self.text[item]
 
 
 # ==========================================
-# Author block–class order
+# Label order (authors)
 # ==========================================
 GT_label = np.array([
 [23,22,9,6,18,14,5,36,25,19,28,35,3,16,24,40,15,27,38,33,34,4,39,17,1,26,20,29,13,32,37,2,11,12,30,31,8,21,7,10],
@@ -85,8 +83,7 @@ def cleanup():
     out_dir  = '/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings'
     for d in [ckpt_dir, out_dir]:
         os.makedirs(d, exist_ok=True)
-        old_files = glob.glob(os.path.join(d, '*allpairs*')) + glob.glob(os.path.join(d, '*classlevel*'))
-        for f in old_files:
+        for f in glob.glob(os.path.join(d, '*allpairs*')) + glob.glob(os.path.join(d, '*classlevel*')):
             os.remove(f)
             print(f"🧹 Deleted old file: {f}")
     return ckpt_dir, out_dir
@@ -115,10 +112,10 @@ if __name__ == '__main__':
 
         eeg_pairs, clip_pairs = [], []
         for c in range(len(indices)):
-            eeg_c = eeg_block[c]               # (5, 62, 5)
-            clip_c = clip_block[c]             # (5, 77, 768)
-            eeg_c = np.repeat(eeg_c, 5, axis=0)     # 25
-            clip_c = np.tile(clip_c, (5, 1, 1))      # 25
+            eeg_c = eeg_block[c]
+            clip_c = clip_block[c]
+            eeg_c = np.repeat(eeg_c, 5, axis=0)     # repeat each EEG 5×
+            clip_c = np.tile(clip_c, (5, 1, 1))     # all CLIPs
             eeg_pairs.append(eeg_c)
             clip_pairs.append(clip_c)
 
@@ -137,7 +134,7 @@ if __name__ == '__main__':
     Text = torch.cat(Text_list, 0)
     print(f"Training EEG shape: {EEG.shape}, Text shape: {Text.shape}")
 
-    # Normalize
+    # Normalization
     scaler = preprocessing.StandardScaler()
     scaler.fit(EEG)
     EEG = torch.from_numpy(scaler.transform(EEG)).float()
@@ -147,7 +144,7 @@ if __name__ == '__main__':
     # ==========================================
     model = CLIP().to(device)
     dataset = Dataset(EEG, Text)
-    dataloader = DataLoader(dataset, batch_size=512, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(dataloader))
 
@@ -170,32 +167,21 @@ if __name__ == '__main__':
     torch.save({'state_dict': model.state_dict()}, ckpt_file)
     print("✅ Model saved to:", ckpt_file)
 
+
     # ==========================================
-    # Inference (7th block)
+    # Inference (7th block: one per EEG)
     # ==========================================
     print("\n=== Running inference on test block (7th) ===")
     test_indices = [list(GT_label[6]).index(e) for e in chosed_label]
-    eeg_test = eegdata[6][test_indices]
-    clip_test = clipdata[6][test_indices]
-
-    eeg_all, clip_all = [], []
-    for c in range(len(test_indices)):
-        eeg_c = eeg_test[c]
-        clip_c = clip_test[c]
-        eeg_c = np.repeat(eeg_c, 5, axis=0)
-        clip_c = np.tile(clip_c, (5, 1, 1))
-        eeg_all.append(eeg_c)
-        clip_all.append(clip_c)
-
-    eeg_all = np.concatenate(eeg_all, 0)
-    clip_all = np.concatenate(clip_all, 0)
-    eeg_all = rearrange(torch.from_numpy(eeg_all), 'a b c -> a (b c)')
-    eeg_all = torch.from_numpy(scaler.transform(eeg_all)).float().to(device)
+    eeg_test = eegdata[6][test_indices]   # (10, 5, 62, 5)
+    eeg_test = rearrange(torch.from_numpy(eeg_test), 'a b c d -> (a b) (c d)')  # 50×310
+    eeg_test = torch.from_numpy(scaler.transform(eeg_test)).float().to(device)
 
     model.eval()
     with torch.no_grad():
-        preds = model(eeg_all).cpu().numpy()
+        preds = model(eeg_test).cpu().numpy()
 
+    preds = preds.reshape(10 * 5, 77, 768)  # (50, 77, 768)
     out_file = os.path.join(out_dir, 'pred_embeddings_sub1_allpairs.npy')
     np.save(out_file, preds)
     print(f"✅ Saved predicted embeddings: {preds.shape}")
