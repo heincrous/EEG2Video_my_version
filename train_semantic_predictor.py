@@ -159,11 +159,11 @@ if __name__ == '__main__':
     print("EEG normalized shape:", eeg.shape)
 
     dataset = Dataset(eeg, Text)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
 
     model = CLIP().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=25 * len(dataloader))
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=60 * len(dataloader))
 
     # ==========================================
     # Training
