@@ -126,8 +126,8 @@ test_clip  = test_clip[CLASS_SUBSET]
 # ==========================================
 train_eeg_flat = rearrange(train_eeg, "c b ... -> (c b) (...)")
 test_eeg_flat  = rearrange(test_eeg, "c b ... -> (c b) (...)")
-train_clip_flat = rearrange(train_clip, "c b s d -> (c b) (s d)")
-test_clip_flat  = rearrange(test_clip, "c b s d -> (c b) (s d)")
+train_clip_flat = rearrange(train_clip, "c b s d e -> (c b s) (d e)")
+test_clip_flat  = rearrange(test_clip, "c b s d e -> (c b s) (d e)")
 
 input_dim = train_eeg_flat.shape[1]
 print(f"Flattened input dimension: {input_dim}")
