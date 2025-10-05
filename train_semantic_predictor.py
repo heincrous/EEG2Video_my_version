@@ -163,7 +163,7 @@ if __name__ == '__main__':
 
     model = CLIP().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=60 * len(dataloader))
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100 * len(dataloader))
 
     # ==========================================
     # Training
@@ -203,16 +203,22 @@ if __name__ == '__main__':
 
     model.eval()
     with torch.no_grad():
-        preds_flat = model(eeg_test).cpu().numpy()     # (50, 77*768)
-        preds_reshaped = preds_flat.reshape(50, 77, 768)  # correct shape for video inference
+        preds_flat = model(eeg_test).cpu().numpy()        # (50, 77*768)
+    print("preds_flat shape:", preds_flat.shape)           # sanity check
+
+    # Reshape correctly
+    preds_reshaped = preds_flat.reshape(50, 77, 768)
+    print("preds_reshaped shape:", preds_reshaped.shape)   # should be (50,77,768)
 
     # ==========================================
     # Normalize predicted embeddings to CLIP scale
     # ==========================================
+    preds_reshaped = np.asarray(preds_reshaped)            # ensure NumPy array
     preds_norm = np.linalg.norm(preds_reshaped.reshape(50, -1), axis=1, keepdims=True)  # (50,1)
-    target_norm = 250.0  # mean L2 norm of real CLIP text embeddings (≈200–260)
-    scale = (target_norm / preds_norm)[:, None, None]  # reshape for broadcasting (50,1,1)
+    target_norm = 250.0
+    scale = (target_norm / preds_norm)[:, None, None]      # (50,1,1)
     preds_reshaped = preds_reshaped * scale
+    print("Normalized embedding shape:", preds_reshaped.shape)  # should still be (50,77,768)
 
     # ==========================================
     # Save final embeddings
