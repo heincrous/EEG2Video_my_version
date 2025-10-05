@@ -1,6 +1,6 @@
 # ==========================================
 # EEG → CLIP Semantic Predictor
-# (Unified all-feature trainer + 6/1 block split + cosine evaluation)
+# (Corrected shaping + 6/1 split + subset + cosine evaluation)
 # ==========================================
 import os
 import torch
@@ -17,7 +17,7 @@ from einops import rearrange
 # ==========================================
 # Config
 # ==========================================
-FEATURE_TYPE  = "EEG_DE_1per2s"     # EEG_DE_1per2s, EEG_DE_1per1s, EEG_PSD_1per2s, EEG_PSD_1per1s, EEG_segments, EEG_windows_100, EEG_windows_200
+FEATURE_TYPE  = "EEG_DE_1per2s"
 SUBJECT_NAME  = "sub1.npy"
 CLASS_SUBSET  = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID     = "1"
@@ -75,37 +75,39 @@ class EEGTextDataset:
 
 
 # ==========================================
-# Load data
+# Load and format data
 # ==========================================
 print(f"Loading EEG features from: {FEATURE_TYPE}/{SUBJECT_NAME}")
 eeg_path = os.path.join(EEG_PATH_ROOT, FEATURE_TYPE, SUBJECT_NAME)
 eeg_data = np.load(eeg_path, allow_pickle=True)
 clip_data = np.load(CLIP_PATH, allow_pickle=True)
 
-# Ensure class-first format: (40, 7, 5, ...)
+# Transpose from (7, 40, 5, …) to (40, 7, 5, …)
 eeg_data = np.transpose(eeg_data, (1, 0, 2, 3, 4))
 clip_data = np.transpose(clip_data, (1, 0, 2, 3, 4))
-
-
 print(f"Loaded EEG shape: {eeg_data.shape}, CLIP shape: {clip_data.shape}")
 
 
 # ==========================================
-# Preprocess EEG (average temporal axes)
+# Average temporal axes where applicable
 # ==========================================
 if FEATURE_TYPE in ["EEG_DE_1per1s", "EEG_PSD_1per1s"]:
-    eeg_data = eeg_data.mean(axis=2)  # average across 2 frequency bands
+    eeg_data = eeg_data.mean(axis=2)  # average across 2 freq bands
 elif FEATURE_TYPE == "EEG_windows_100":
     eeg_data = eeg_data.mean(axis=2)  # average across 7 windows
 elif FEATURE_TYPE == "EEG_windows_200":
     eeg_data = eeg_data.mean(axis=2)  # average across 3 windows
-
 eeg_data = np.squeeze(eeg_data)
+
+# Handle any extra trailing singleton dimension
+while eeg_data.ndim > 5:
+    eeg_data = eeg_data.mean(axis=-1)
+
 print(f"EEG after averaging: {eeg_data.shape}")
 
 
 # ==========================================
-# Train/test split: first 6 blocks → train, last block → test
+# Split: first 6 blocks train, last block test
 # ==========================================
 train_eeg, test_eeg = eeg_data[:, :6], eeg_data[:, 6:]
 train_clip, test_clip = clip_data[:, :6], clip_data[:, 6:]
@@ -113,7 +115,7 @@ print(f"Train EEG: {train_eeg.shape}, Test EEG: {test_eeg.shape}")
 
 
 # ==========================================
-# Subset selection
+# Apply subset (class selection)
 # ==========================================
 train_eeg  = train_eeg[CLASS_SUBSET]
 test_eeg   = test_eeg[CLASS_SUBSET]
@@ -122,19 +124,22 @@ test_clip  = test_clip[CLASS_SUBSET]
 
 
 # ==========================================
-# Flatten
+# Flatten properly
 # ==========================================
-train_eeg_flat = rearrange(train_eeg, "c b ... -> (c b) (...)")
-test_eeg_flat  = rearrange(test_eeg, "c b ... -> (c b) (...)")
-train_clip_flat = rearrange(train_clip, "c b s d e -> (c b s) (d e)")
-test_clip_flat  = rearrange(test_clip, "c b s d e -> (c b s) (d e)")
+# EEG: (c, b, s, ch, t) → (c*b*s, ch*t)
+train_eeg_flat = rearrange(train_eeg, "c b s ch t -> (c b s) (ch t)")
+test_eeg_flat  = rearrange(test_eeg,  "c b s ch t -> (c b s) (ch t)")
+
+# CLIP: (c, b, s, 77, 768) → (c*b*s, 77*768)
+train_clip_flat = rearrange(train_clip, "c b s tok dim -> (c b s) (tok dim)")
+test_clip_flat  = rearrange(test_clip,  "c b s tok dim -> (c b s) (tok dim)")
 
 input_dim = train_eeg_flat.shape[1]
 print(f"Flattened input dimension: {input_dim}")
 
 
 # ==========================================
-# Normalization (fit only on training EEG)
+# Normalize (fit only on training EEG)
 # ==========================================
 scaler = preprocessing.StandardScaler()
 scaler.fit(train_eeg_flat)
@@ -145,7 +150,7 @@ test_eeg_flat  = scaler.transform(test_eeg_flat)
 # ==========================================
 # Training setup
 # ==========================================
-dataset    = EEGTextDataset(train_eeg_flat, train_clip_flat)
+dataset = EEGTextDataset(train_eeg_flat, train_clip_flat)
 dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
 
 model = CLIPSemanticMLP(input_dim=input_dim).to(DEVICE)
@@ -178,34 +183,29 @@ for epoch in range(1, EPOCHS + 1):
 
 
 # ==========================================
-# Evaluation (on last block)
+# Evaluation (on test block)
 # ==========================================
 print("\nEvaluating on test set...")
 model.eval()
 with torch.no_grad():
     preds = model(torch.tensor(test_eeg_flat, dtype=torch.float32, device=DEVICE)).cpu().numpy()
 
-# Mean alignment cosine between predicted and GT CLIP
+# Alignment cosine (Pred↔GT CLIP)
 alignment = np.mean([cosine_similarity([preds[i]], [test_clip_flat[i]])[0][0] for i in range(len(preds))])
 
-# Intra- and inter-class cosine similarities
+# Intra/inter-class cosine
 num_classes = len(CLASS_SUBSET)
-samples_per_class = test_eeg.shape[1]
+samples_per_class = test_eeg.shape[2]  # 5 clips
 
 intra_sims, inter_sims = [], []
-
 for i in range(num_classes):
     start_i = i * samples_per_class
     end_i   = start_i + samples_per_class
     preds_i = preds[start_i:end_i]
-
-    # Intra-class: mean cosine among this class's predictions
     if len(preds_i) > 1:
         sim_matrix = cosine_similarity(preds_i)
         upper_tri = sim_matrix[np.triu_indices_from(sim_matrix, k=1)]
         intra_sims.append(np.mean(upper_tri))
-
-    # Inter-class: cosine vs other classes
     for j in range(i + 1, num_classes):
         start_j = j * samples_per_class
         end_j   = start_j + samples_per_class
@@ -214,12 +214,9 @@ for i in range(num_classes):
                                       preds_j.mean(axis=0).reshape(1, -1))[0][0]
         inter_sims.append(inter_val)
 
-intra_mean = np.mean(intra_sims)
-inter_mean = np.mean(inter_sims)
-
 print(f"Alignment cosine (Pred↔Real): {alignment:.4f}")
-print(f"Intra-class cosine (same class): {intra_mean:.4f}")
-print(f"Inter-class cosine (different classes): {inter_mean:.4f}")
+print(f"Intra-class cosine: {np.mean(intra_sims):.4f}")
+print(f"Inter-class cosine: {np.mean(inter_sims):.4f}")
 
 
 # ==========================================
@@ -227,7 +224,6 @@ print(f"Inter-class cosine (different classes): {inter_mean:.4f}")
 # ==========================================
 ckpt_name = f"semantic_predictor_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt"
 emb_name  = f"pred_embeddings_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy"
-
 torch.save({'state_dict': model.state_dict()}, os.path.join(CKPT_SAVE_PATH, ckpt_name))
 np.save(os.path.join(EMB_SAVE_PATH, emb_name), preds)
 
