@@ -163,12 +163,12 @@ if __name__ == '__main__':
 
     model = CLIP().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100 * len(dataloader))
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50 * len(dataloader))
 
     # ==========================================
     # Training
     # ==========================================
-    for epoch in tqdm(range(100)):
+    for epoch in tqdm(range(50)):
         model.train()
         epoch_loss = 0
         for eeg_batch, text_batch in dataloader:
@@ -211,14 +211,14 @@ if __name__ == '__main__':
     print("preds_reshaped shape:", preds_reshaped.shape)   # should be (50,77,768)
 
     # ==========================================
-    # Normalize predicted embeddings to CLIP scale
+    # Normalize predicted embeddings to CLIP scale (fixed)
     # ==========================================
-    preds_reshaped = np.asarray(preds_reshaped)            # ensure NumPy array
+    preds_reshaped = np.asarray(preds_reshaped)  # ensure NumPy array
     preds_norm = np.linalg.norm(preds_reshaped.reshape(50, -1), axis=1, keepdims=True)  # (50,1)
-    target_norm = 250.0
-    scale = (target_norm / preds_norm)[:, None, None]      # (50,1,1)
+    target_norm = 250.0  # mean L2 norm of true CLIP embeddings
+    scale = (target_norm / preds_norm).reshape(50, 1, 1)   # explicitly shape (50,1,1)
     preds_reshaped = preds_reshaped * scale
-    print("Normalized embedding shape:", preds_reshaped.shape)  # should still be (50,77,768)
+    print("Normalized embedding shape:", preds_reshaped.shape)  # should be (50,77,768)
 
     # ==========================================
     # Save final embeddings
