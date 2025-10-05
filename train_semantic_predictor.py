@@ -168,7 +168,7 @@ if __name__ == '__main__':
     # ==========================================
     # Training
     # ==========================================
-    for epoch in tqdm(range(40)):
+    for epoch in tqdm(range(100)):
         model.train()
         epoch_loss = 0
         for eeg_batch, text_batch in dataloader:
