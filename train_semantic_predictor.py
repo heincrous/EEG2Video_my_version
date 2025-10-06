@@ -76,7 +76,7 @@ class EEGTextDataset:
 
 
 # ==========================================
-# Utility Functions
+# Clean-up Utility
 # ==========================================
 def cleanup_previous_run():
     prefix_ckpt = f"semantic_predictor_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}"
@@ -96,6 +96,9 @@ def cleanup_previous_run():
     print(f"🧹 Deleted {deleted} old file(s) for subset {SUBSET_ID} ({FEATURE_TYPE}).")
 
 
+# ==========================================
+# Data Loading Utility
+# ==========================================
 def load_data():
     print(f"Loading EEG features from: {FEATURE_TYPE}/{SUBJECT_NAME}")
     eeg_path = os.path.join(EEG_PATH_ROOT, FEATURE_TYPE, SUBJECT_NAME)
@@ -113,6 +116,9 @@ def load_data():
     return eeg_data, clip_data
 
 
+# ==========================================
+# Data Shaping Utility
+# ==========================================
 def prepare_data(eeg_data, clip_data):
     train_eeg, test_eeg = eeg_data[:6], eeg_data[6:]
     train_clip, test_clip = clip_data[:6], clip_data[6:]
@@ -135,58 +141,69 @@ def prepare_data(eeg_data, clip_data):
     return train_eeg_flat, test_eeg_flat, train_clip_flat, test_clip_flat
 
 
+# ==========================================
+# Evaluation Utility
+# ==========================================
 def evaluate_model(model, test_eeg_flat, test_clip_flat):
     model.eval()
     with torch.no_grad():
-        test_preds = model(torch.tensor(test_eeg_flat, dtype=torch.float32, device=DEVICE)).cpu().numpy()
+        test_preds = model(
+            torch.tensor(test_eeg_flat, dtype=torch.float32, device=DEVICE)
+        ).cpu().numpy()
         gt = test_clip_flat
 
-    # --- 1. Average cosine similarity (pred vs ground truth) ---
-    cos_sim = np.sum(test_preds * gt, axis=1) / (
-        np.linalg.norm(test_preds, axis=1) * np.linalg.norm(gt, axis=1) + 1e-8
-    )
-    avg_cosine = np.mean(cos_sim)
+    # === Normalize predicted and GT embeddings ===
+    preds = test_preds / (np.linalg.norm(test_preds, axis=1, keepdims=True) + 1e-8)
+    gt_norm = gt / (np.linalg.norm(gt, axis=1, keepdims=True) + 1e-8)
 
-    # --- 2. Pairwise cosine similarities for within/between classes ---
     num_classes = len(CLASS_SUBSET)
     samples_per_class = 5
     labels = np.repeat(np.arange(num_classes), samples_per_class)
 
-    # Normalize predictions
-    norm_preds = test_preds / (np.linalg.norm(test_preds, axis=1, keepdims=True) + 1e-8)
+    # === 1. Average cosine similarity (pred vs ground truth) ===
+    avg_cosine = np.mean(np.sum(preds * gt_norm, axis=1))
 
-    # Full cosine similarity matrix
-    sim_matrix = np.dot(norm_preds, norm_preds.T)
-
-    # Masks
-    mask_self    = np.eye(sim_matrix.shape[0], dtype=bool)
-    mask_within  = labels[:, None] == labels[None, :]
-    mask_between = labels[:, None] != labels[None, :]
-
-    # Extract valid entries
-    within_sims  = sim_matrix[mask_within & ~mask_self]
-    between_sims = sim_matrix[mask_between]
-
-    avg_within_class  = np.mean(within_sims)
-    avg_between_class = np.mean(between_sims)
-
-    # --- 3. Fisher Score (class separability, normalized) ---
-    preds_reshaped = test_preds.reshape(num_classes, samples_per_class, -1)
-    preds_reshaped = preds_reshaped / (np.linalg.norm(preds_reshaped, axis=2, keepdims=True) + 1e-8)
-
-    global_mean = preds_reshaped.reshape(-1, preds_reshaped.shape[-1]).mean(axis=0)
-    numerator = 0.0
-    denominator = 0.0
+    # === 2. Compute per-class means ===
+    class_means = np.zeros((num_classes, preds.shape[1]))
     for c in range(num_classes):
-        class_mean = preds_reshaped[c].mean(axis=0)
-        numerator += preds_reshaped[c].shape[0] * np.sum((class_mean - global_mean) ** 2)
-        denominator += np.sum((preds_reshaped[c] - class_mean) ** 2)
+        class_means[c] = preds[labels == c].mean(axis=0)
+        class_means[c] /= np.linalg.norm(class_means[c]) + 1e-8
+
+    # === 3. Within-class similarity ===
+    within_scores = []
+    for i, p in enumerate(preds):
+        c = labels[i]
+        sim = np.dot(p, class_means[c])
+        within_scores.append(sim)
+    avg_within = np.mean(within_scores)
+
+    # === 4. Between-class similarity ===
+    between_scores = []
+    for i, p in enumerate(preds):
+        c = labels[i]
+        sims = np.dot(class_means[np.arange(num_classes) != c], p)
+        between_scores.extend(sims)
+    avg_between = np.mean(between_scores)
+
+    # === 5. Fisher-style class separability (optional) ===
+    global_mean = class_means.mean(axis=0)
+    numerator = np.sum([np.sum((m - global_mean) ** 2) for m in class_means])
+    denominator = np.sum([
+        np.sum((preds[labels == c] - class_means[c]) ** 2)
+        for c in range(num_classes)
+    ])
     fisher_score = numerator / (denominator + 1e-8)
 
-    print(f"[Eval] Avg cosine: {avg_cosine:.4f} | Within-class: {avg_within_class:.4f} | "
-          f"Between-class: {avg_between_class:.4f} | Fisher Score: {fisher_score:.4f}")
+    print(
+        f"[Eval] Avg cosine(pred,gt): {avg_cosine:.4f} | "
+        f"Within-class: {avg_within:.4f} | Between-class: {avg_between:.4f} | "
+        f"Fisher Score: {fisher_score:.4f} | Δ: {(avg_within - avg_between):.4f}"
+    )
 
 
+# ==========================================
+# Training Utility
+# ==========================================
 def train_model(model, dataloader, optimizer, scheduler, test_eeg_flat, test_clip_flat):
     print("Starting training...")
     for epoch in tqdm(range(1, EPOCHS + 1)):
@@ -207,6 +224,9 @@ def train_model(model, dataloader, optimizer, scheduler, test_eeg_flat, test_cli
             evaluate_model(model, test_eeg_flat, test_clip_flat)
 
 
+# ==========================================
+# Saving Utility
+# ==========================================
 def save_outputs(model, test_eeg_flat):
     with torch.no_grad():
         preds = model(torch.tensor(test_eeg_flat, dtype=torch.float32, device=DEVICE)).cpu().numpy()
