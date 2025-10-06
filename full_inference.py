@@ -1,7 +1,7 @@
 # ==========================================
 # Full Inference (Video generation using semantic predictor embeddings)
 # ==========================================
-import os, gc, torch, numpy as np, re
+import os, gc, torch, numpy as np, re, shutil
 from diffusers import AutoencoderKL, DDIMScheduler
 from transformers import CLIPTokenizer, CLIPTextModel
 from core.unet import UNet3DConditionModel
@@ -11,6 +11,7 @@ from core.util import save_videos_grid
 # ==========================================
 # Config
 # ==========================================
+FEATURE_TYPE       = "EEG_windows_100"
 CLASS_SUBSET       = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
 SUBSET_ID          = "1"
 
@@ -19,8 +20,8 @@ FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_che
 OUTPUT_ROOT        = "/content/drive/MyDrive/EEG2Video_outputs/full_inference"
 BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
 
-# Semantic predictor outputs (automatically selected by subset)
-SEM_PATH = f"/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/pred_embeddings_sub1_subset{SUBSET_ID}.npy"
+# Semantic predictor outputs (identified by feature type and subset)
+SEM_PATH = f"/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/pred_embeddings_{FEATURE_TYPE}_sub1_subset{SUBSET_ID}.npy"
 
 # Negative embedding toggle: "empty" or "mean_sem"
 NEGATIVE_MODE      = "mean_sem"
@@ -28,16 +29,36 @@ NEGATIVE_MODE      = "mean_sem"
 # Toggle between vanilla or finetuned diffusion
 USE_FINETUNED = False
 
-# Output directory aligned to subset
-OUTPUT_DIR = os.path.join(OUTPUT_ROOT, f"subset_{SUBSET_ID}")
+# Output directory includes both feature type and subset
+OUTPUT_DIR = os.path.join(OUTPUT_ROOT, f"{FEATURE_TYPE}_subset_{SUBSET_ID}")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# === MEMORY CONFIG ===
+# ==========================================
+# Cleanup Utility
+# ==========================================
+def cleanup_previous_outputs():
+    deleted = 0
+    for f in os.listdir(OUTPUT_DIR):
+        path = os.path.join(OUTPUT_DIR, f)
+        if os.path.isfile(path) or os.path.islink(path):
+            os.remove(path)
+            deleted += 1
+        elif os.path.isdir(path):
+            shutil.rmtree(path)
+            deleted += 1
+    print(f"🧹 Deleted {deleted} previous generation file(s) from {OUTPUT_DIR}.")
+
+# ==========================================
+# Memory Config
+# ==========================================
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 gc.collect(); torch.cuda.empty_cache()
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# === Load captions + semantic predictor embeddings ===
+# ==========================================
+# Load captions + semantic predictor embeddings
+# ==========================================
+print(f"Loading embeddings from {SEM_PATH}")
 blip_text      = np.load(BLIP_TEXT_PATH, allow_pickle=True)   # (7,40,5)
 sem_preds_all  = np.load(SEM_PATH)                           # (N,77,768)
 num_classes    = len(CLASS_SUBSET)
@@ -81,7 +102,7 @@ pipe.unet.to(torch.float16)
 pipe.enable_vae_slicing()
 
 # ==========================================
-# Inference function
+# Inference Function
 # ==========================================
 def run_inference():
     video_length, fps = 6, 3
@@ -115,5 +136,6 @@ def run_inference():
 # Main
 # ==========================================
 if __name__ == "__main__":
-    print(f"Running inference for subset {SUBSET_ID}...")
+    print(f"Running inference for {FEATURE_TYPE}, subset {SUBSET_ID}...")
+    cleanup_previous_outputs()
     run_inference()

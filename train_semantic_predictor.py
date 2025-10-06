@@ -22,12 +22,12 @@ from tqdm import tqdm
 # ==========================================
 # Config
 # ==========================================
-FEATURE_TYPE  = "EEG_windows_100"
+FEATURE_TYPE  = "EEG_DE_1Pper2s"
 SUBJECT_NAME  = "sub1.npy"
 CLASS_SUBSET  = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID     = "1"
 
-EPOCHS        = 200
+EPOCHS        = 50
 BATCH_SIZE    = 32
 LR            = 5e-4
 DEVICE        = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -79,8 +79,8 @@ class EEGTextDataset:
 # Clean-up Utility
 # ==========================================
 def cleanup_previous_run():
-    prefix_ckpt = f"semantic_predictor_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}"
-    prefix_emb  = f"pred_embeddings_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}"
+    prefix_ckpt = f"semantic_predictor_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}"
+    prefix_emb  = f"pred_embeddings_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}"
 
     deleted = 0
     for root, _, files in os.walk(CKPT_SAVE_PATH):
@@ -207,7 +207,7 @@ def evaluate_model(model, test_eeg_flat, test_clip_flat):
 # Training Utility
 # ==========================================
 def train_model(model, dataloader, optimizer, scheduler, test_eeg_flat, test_clip_flat):
-    print("Starting training...")
+    print(f"Starting training for {FEATURE_TYPE} on subset {SUBSET_ID}...")
     for epoch in tqdm(range(1, EPOCHS + 1)):
         model.train()
         epoch_loss = 0
@@ -238,8 +238,8 @@ def save_outputs(model, test_eeg_flat):
         preds = model(torch.tensor(test_eeg_flat, dtype=torch.float32, device=DEVICE)).cpu().numpy()
     preds = preds.reshape(-1, 77, 768)  # store true token×embedding structure
 
-    ckpt_name = f"semantic_predictor_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt"
-    emb_name  = f"pred_embeddings_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy"
+    ckpt_name = f"semantic_predictor_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt"
+    emb_name  = f"pred_embeddings_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy"
 
     torch.save({'state_dict': model.state_dict()}, os.path.join(CKPT_SAVE_PATH, ckpt_name))
     np.save(os.path.join(EMB_SAVE_PATH, emb_name), preds)
