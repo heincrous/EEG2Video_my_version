@@ -14,7 +14,7 @@ from einops import rearrange
 # Config
 # ==========================================
 FEATURE_FUSION     = []  # leave empty for single feature
-SEM_FEATURE_TYPE   = "EEG_windows_100"  # fallback single feature if fusion empty
+SEM_FEATURE_TYPE   = "EEG_DE_1per2s"  # fallback single feature if fusion empty
 SUBJECT_NAME       = "sub1.npy"
 CLASS_SUBSET       = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID          = "1"
@@ -160,7 +160,7 @@ def run_inference():
                 height=288,
                 width=512,
                 num_inference_steps=50,
-                guidance_scale=25,  # 20–30 typical
+                guidance_scale=25,  # 12.5
             ).videos
 
             safe_caption = re.sub(r"[^a-zA-Z0-9_-]", "_", caption)
