@@ -183,64 +183,58 @@ def load_data():
 
 
 def prepare_data(eeg_data, latent_data):
-    # Split 6 training blocks and 1 test block
+    # Split
     train_eeg, test_eeg = eeg_data[:6], eeg_data[6:]
     train_lat, test_lat = latent_data[:6], latent_data[6:]
+    print(f"Split done: train_eeg {train_eeg.shape}, test_eeg {test_eeg.shape}")
+    print(f"Split done: train_lat {train_lat.shape}, test_lat {test_lat.shape}")
 
-    print("Before subset:")
-    print(f"  train_eeg {train_eeg.shape}, test_eeg {test_eeg.shape}")
-    print(f"  train_lat {train_lat.shape}, test_lat {test_lat.shape}")
-
-    # Apply class subset
+    # Subset
     if CLASS_SUBSET:
         train_eeg = train_eeg[:, CLASS_SUBSET]
         test_eeg  = test_eeg[:, CLASS_SUBSET]
         train_lat = train_lat[:, CLASS_SUBSET]
         test_lat  = test_lat[:, CLASS_SUBSET]
+        print(f"Applied subset: {len(CLASS_SUBSET)} classes")
 
-    print("After subset:")
-    print(f"  train_eeg {train_eeg.shape}, test_eeg {test_eeg.shape}")
-    print(f"  train_lat {train_lat.shape}, test_lat {test_lat.shape}")
+    # Latent normalization
+    def normalize_latents(x):
+        mean = torch.mean(x, dim=(0, 2, 3, 4), dtype=torch.float64)
+        std = torch.std(x, dim=(0, 2, 3, 4))
+        print(f"Latent mean: {mean.tolist()}")
+        print(f"Latent std: {std.tolist()}")
+        return (x - mean.view(1, 4, 1, 1, 1)) / std.view(1, 4, 1, 1, 1)
 
-    # EEG normalization (author method)
-    print("Flattening EEG for StandardScaler...")
+    train_lat = torch.tensor(train_lat, dtype=torch.float32)
+    test_lat  = torch.tensor(test_lat, dtype=torch.float32)
+    train_lat = normalize_latents(train_lat)
+    test_lat  = normalize_latents(test_lat)
+    print(f"After latent norm: train mean={train_lat.mean():.5f}, std={train_lat.std():.5f}")
+    print(f"After latent norm: test  mean={test_lat.mean():.5f}, std={test_lat.std():.5f}")
+
+    # EEG normalization
     b, c, d, w, ch, t = train_eeg.shape
     train_eeg = rearrange(train_eeg, "b c d w ch t -> (b c d w) (ch t)")
     test_eeg  = rearrange(test_eeg,  "b c d w ch t -> (b c d w) (ch t)")
-    print(f"  train_eeg flattened: {train_eeg.shape}")
-    print(f"  test_eeg flattened:  {test_eeg.shape}")
+    print(f"EEG flattened: train {train_eeg.shape}, test {test_eeg.shape}")
 
     scaler = StandardScaler()
     scaler.fit(train_eeg)
     train_eeg = scaler.transform(train_eeg)
     test_eeg  = scaler.transform(test_eeg)
+    print(f"EEG scaler: train mean={np.mean(train_eeg):.5f}, std={np.std(train_eeg):.5f}")
+    print(f"EEG scaler: test  mean={np.mean(test_eeg):.5f}, std={np.std(test_eeg):.5f}")
 
     train_eeg = rearrange(train_eeg, "(b c d w) (ch t) -> (b c d) w ch t", b=6, c=len(CLASS_SUBSET), d=5, w=7, ch=62, t=100)
     test_eeg  = rearrange(test_eeg,  "(b c d w) (ch t) -> (b c d) w ch t",  b=1, c=len(CLASS_SUBSET), d=5, w=7, ch=62, t=100)
-
-    print("After reshape:")
-    print(f"  train_eeg: {train_eeg.shape}")
-    print(f"  test_eeg:  {test_eeg.shape}")
-
-    # Convert to tensors
     train_eeg = torch.from_numpy(train_eeg).float()
     test_eeg  = torch.from_numpy(test_eeg).float()
+    print(f"EEG reshaped: train {train_eeg.shape}, test {test_eeg.shape}")
 
-    # Latents (raw)
+    # Rearrange latents
     train_lat = rearrange(train_lat, "b c s f ch h w -> (b c s) f ch h w")
     test_lat  = rearrange(test_lat,  "b c s f ch h w -> (b c s) f ch h w")
-    print("Latent shapes after rearrange:")
-    print(f"  train_lat: {train_lat.shape}")
-    print(f"  test_lat:  {test_lat.shape}")
-
-    train_lat = torch.tensor(train_lat, dtype=torch.float32)
-    test_lat  = torch.tensor(test_lat, dtype=torch.float32)
-
-    print("Final stats:")
-    print(f"  EEG train mean={train_eeg.mean():.5f}, std={train_eeg.std():.5f}")
-    print(f"  EEG test  mean={test_eeg.mean():.5f}, std={test_eeg.std():.5f}")
-    print(f"  Latent train mean={train_lat.mean():.5f}, std={train_lat.std():.5f}")
-    print(f"  Latent test  mean={test_lat.mean():.5f}, std={test_lat.std():.5f}")
+    print(f"Latent reshaped: train {train_lat.shape}, test {test_lat.shape}")
 
     return train_eeg, test_eeg, train_lat, test_lat
 
