@@ -256,21 +256,27 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
     model.train()
     for epoch in tqdm(range(1, EPOCHS + 1)):
         epoch_loss = 0
+        total_elems = 0
         for eeg, video in dataloader:
             eeg = eeg.float().to(DEVICE)
             video = video.float().to(DEVICE)
             b, f, c, h, w = video.shape
             full_video = torch.cat((torch.zeros((b, 1, c, h, w), device=DEVICE), video), dim=1)
             optimizer.zero_grad()
+
             out = model(eeg, full_video)
-            loss = F.mse_loss(video, out[:, :-1, :])
+            loss = F.mse_loss(out[:, :-1, :], video, reduction='mean')  # standardized loss
             loss.backward()
             optimizer.step()
             scheduler.step()
-            epoch_loss += loss.item()
+
+            epoch_loss += loss.item() * b  # accumulate mean per batch
+            total_elems += b
+
+        avg_epoch_loss = epoch_loss / total_elems
         if epoch % 10 == 0:
             print("\n" + "="*65)
-            print(f"[Epoch {epoch:03d}/{EPOCHS}]  Sum Loss: {epoch_loss:.6f}")
+            print(f"[Epoch {epoch:03d}/{EPOCHS}]  Avg MSE: {avg_epoch_loss:.6f}")
             print("-"*65)
             evaluate_model(model, test_loader)
             print("="*65 + "\n")
@@ -280,6 +286,7 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
 def evaluate_model(model, test_loader):
     model.eval()
     total_loss = 0
+    total_elems = 0
     with torch.no_grad():
         for eeg, video in test_loader:
             eeg = eeg.float().to(DEVICE)
@@ -287,9 +294,11 @@ def evaluate_model(model, test_loader):
             b, f, c, h, w = video.shape
             full_video = torch.cat((torch.zeros((b, 1, c, h, w), device=DEVICE), video), dim=1)
             out = model(eeg, full_video)
-            loss = F.mse_loss(video, out[:, :-1, :])
-            total_loss += loss.item()
-    print(f"  Final Test MSE: {total_loss:.6f}\n")
+            loss = F.mse_loss(out[:, :-1, :], video, reduction='mean')
+            total_loss += loss.item() * b
+            total_elems += b
+    avg_loss = total_loss / total_elems
+    print(f"  Standardized Test MSE: {avg_loss:.6f}\n")
 
 
 # ==========================================
