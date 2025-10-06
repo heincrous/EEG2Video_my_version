@@ -85,12 +85,12 @@ def cleanup_previous_run():
     deleted = 0
     for root, _, files in os.walk(CKPT_SAVE_PATH):
         for f in files:
-            if prefix_ckpt in f and FEATURE_TYPE in root:
+            if f.startswith(prefix_ckpt):
                 os.remove(os.path.join(root, f))
                 deleted += 1
     for root, _, files in os.walk(EMB_SAVE_PATH):
         for f in files:
-            if prefix_emb in f and FEATURE_TYPE in root:
+            if f.startswith(prefix_emb):
                 os.remove(os.path.join(root, f))
                 deleted += 1
     print(f"🧹 Deleted {deleted} old file(s) for subset {SUBSET_ID} ({FEATURE_TYPE}).")
