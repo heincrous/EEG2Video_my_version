@@ -224,14 +224,18 @@ def prepare_data(eeg_data, latent_data):
     train_lat = rearrange(train_lat, "b c s f ch h w -> (b c s) f ch h w")
     test_lat  = rearrange(test_lat,  "b c s f ch h w -> (b c s) f ch h w")
 
-    train_lat = torch.tensor(train_lat, dtype=torch.float32)
-    test_lat  = torch.tensor(test_lat, dtype=torch.float32)
+    train_lat = train_lat.permute(0, 2, 1, 3, 4)  # (B, 4, 6, 36, 64)
+    test_lat  = test_lat.permute(0, 2, 1, 3, 4)
 
     train_lat_mean = torch.mean(train_lat, dim=(0, 2, 3, 4), dtype=torch.float32)
     train_lat_std  = torch.std(train_lat, dim=(0, 2, 3, 4))
-    train_lat = (train_lat - train_lat_mean.reshape(1, 6, 1, 1, 1)) / train_lat_std.reshape(1, 6, 1, 1, 1)
-    test_lat  = (test_lat  - train_lat_mean.reshape(1, 6, 1, 1, 1)) / train_lat_std.reshape(1, 6, 1, 1, 1)
 
+    train_lat = (train_lat - train_lat_mean.reshape(1, 4, 1, 1, 1)) / train_lat_std.reshape(1, 4, 1, 1, 1)
+    test_lat  = (test_lat  - train_lat_mean.reshape(1, 4, 1, 1, 1)) / train_lat_std.reshape(1, 4, 1, 1, 1)
+
+    # Return to original layout
+    train_lat = train_lat.permute(0, 2, 1, 3, 4)  # (B, 6, 4, 36, 64)
+    test_lat  = test_lat.permute(0, 2, 1, 3, 4)
 
     print(f"[Latent norm] train mean={train_lat.mean():.5f}, std={train_lat.std():.5f}")
     print(f"[Latent norm] test  mean={test_lat.mean():.5f}, std={test_lat.std():.5f}")
