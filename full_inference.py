@@ -1,5 +1,5 @@
 # ==========================================
-# Full Inference (Video generation using Semantic + Seq2Seq embeddings)
+# Full Inference (Video generation using Semantic embeddings only)
 # ==========================================
 import os, gc, re, shutil, torch, numpy as np
 from diffusers import AutoencoderKL, DDIMScheduler
@@ -13,40 +13,31 @@ from einops import rearrange
 # ==========================================
 # Config
 # ==========================================
-SEM_FEATURE_TYPE     = "EEG_DE_1per2s"          # used for semantic predictor embeddings
-SEQ2SEQ_FEATURE_TYPE = "EEG_windows_100"        # used for Seq2Seq latent features
-SUBJECT_NAME         = "sub1.npy"
-CLASS_SUBSET         = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
-SUBSET_ID            = "1"
+SEM_FEATURE_TYPE   = "EEG_DE_1per2s"
+SUBJECT_NAME       = "sub1.npy"
+CLASS_SUBSET       = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
+SUBSET_ID          = "1"
 
-USE_SEQ2SEQ          = True
-USE_DANA             = False                   # placeholder toggle for noisy latents
-
-PRETRAINED_SD_PATH   = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
-FINETUNED_SD_PATH    = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final_subset0-2-4-10-11-12-22-26-29-37_variants"
-OUTPUT_ROOT          = "/content/drive/MyDrive/EEG2Video_outputs/full_inference"
-BLIP_TEXT_PATH       = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
+PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
+FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final_subset0-2-4-10-11-12-22-26-29-37_variants"
+OUTPUT_ROOT        = "/content/drive/MyDrive/EEG2Video_outputs/full_inference"
+BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
 
 # Semantic predictor outputs
 SEM_PATH = f"/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/pred_embeddings_{SEM_FEATURE_TYPE}_sub1_subset{SUBSET_ID}.npy"
 
-# Seq2Seq latent outputs
-SEQ2SEQ_LATENT_PATH = f"/content/drive/MyDrive/EEG2Video_outputs/seq2seq_latents/latent_out_{SEQ2SEQ_FEATURE_TYPE}_sub1_subset{SUBSET_ID}.npy"
+# Negative embedding mode: "empty" or "mean_sem"
+NEGATIVE_MODE      = "empty"
 
-# Negative embedding toggle: "empty" or "mean_sem"
-NEGATIVE_MODE = "empty"
-
-# Toggle between vanilla or finetuned diffusion
-USE_FINETUNED = False
+# Toggle between vanilla or fine-tuned diffusion
+USE_FINETUNED      = False
 
 
 # ==========================================
 # Dynamic Output Directory Naming
 # ==========================================
-mode_tag = "FullModel" if USE_SEQ2SEQ else "woSeq2Seq"
-OUTPUT_DIR = os.path.join(
-    OUTPUT_ROOT, f"{SEM_FEATURE_TYPE}_sem__{SEQ2SEQ_FEATURE_TYPE}_seq2seq_subset{SUBSET_ID}_{mode_tag}"
-)
+mode_tag   = "SemanticOnly"
+OUTPUT_DIR = os.path.join(OUTPUT_ROOT, f"{SEM_FEATURE_TYPE}_subset{SUBSET_ID}_{mode_tag}")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
@@ -81,8 +72,8 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 # Load Captions + Semantic Predictor Embeddings
 # ==========================================
 print(f"Loading semantic embeddings from {SEM_PATH}")
-blip_text     = np.load(BLIP_TEXT_PATH, allow_pickle=True)   # (7, 40, 5)
-sem_preds_all = np.load(SEM_PATH)                            # (N,77,768)
+blip_text     = np.load(BLIP_TEXT_PATH, allow_pickle=True)
+sem_preds_all = np.load(SEM_PATH)
 num_classes   = len(CLASS_SUBSET)
 trials_per_class = 5
 test_block    = 6
@@ -99,12 +90,10 @@ if NEGATIVE_MODE == "empty":
         empty_emb    = text_encoder(empty_inputs.input_ids.to(device))[0]
     neg_embeddings = empty_emb.to(torch.float16).to(device)
     print("Using EMPTY STRING negative embedding.")
-
 elif NEGATIVE_MODE == "mean_sem":
     mean_sem = sem_preds_all.mean(axis=0, keepdims=True)
     neg_embeddings = torch.tensor(mean_sem, dtype=torch.float16).to(device)
     print("Using MEAN of produced semantic embeddings as negative embedding.")
-
 else:
     raise ValueError(f"Unknown NEGATIVE_MODE {NEGATIVE_MODE}")
 
@@ -122,32 +111,13 @@ pipe = TuneAVideoPipeline(
     unet=UNet3DConditionModel.from_pretrained_2d(unet_path, subfolder=unet_sub),
     scheduler=DDIMScheduler.from_pretrained(PRETRAINED_SD_PATH, subfolder="scheduler"),
 ).to(device)
+
 pipe.unet.to(torch.float16)
 pipe.enable_vae_slicing()
 
 
 # ==========================================
-# Load Seq2Seq Latents (Optional)
-# ==========================================
-if USE_SEQ2SEQ:
-    print(f"Loading Seq2Seq latents from {SEQ2SEQ_LATENT_PATH}")
-    latents_seq2seq = np.load(SEQ2SEQ_LATENT_PATH, allow_pickle=True)  # (N,6,4,36,64)
-
-    # --- Rescale to SD latent distribution ---
-    mean_pred, std_pred = latents_seq2seq.mean(), latents_seq2seq.std()
-    print(f"Before rescale → mean={mean_pred:.4f}, std={std_pred:.4f}")
-    latents_seq2seq = (latents_seq2seq - mean_pred) / (std_pred + 1e-8)  # Normalize to mean=0,std=1
-    latents_seq2seq = latents_seq2seq * 1.0  # SD latent std≈1
-    print(f"After rescale  → mean={latents_seq2seq.mean():.4f}, std={latents_seq2seq.std():.4f}")
-
-    latents_seq2seq = torch.from_numpy(latents_seq2seq).half().to(device)
-    latents_seq2seq = rearrange(latents_seq2seq, "b f c h w -> b c f h w")
-else:
-    latents_seq2seq = None
-
-
-# ==========================================
-# Inference Function
+# Inference Function (Semantic only)
 # ==========================================
 def run_inference():
     video_length, fps = 6, 3
@@ -159,17 +129,10 @@ def run_inference():
             caption = str(blip_text[test_block, class_id, trial])
             semantic_emb = torch.tensor(emb, dtype=torch.float16).unsqueeze(0).to(device)
 
-            # pick Seq2Seq latent if available
-            if USE_SEQ2SEQ:
-                idx = ci * trials_per_class + trial
-                lat_input = latents_seq2seq[idx:idx+1]
-            else:
-                lat_input = None
-
             video = pipe(
                 prompt=semantic_emb,
                 negative_prompt=neg_embeddings,
-                latents=lat_input,
+                latents=None,
                 video_length=video_length,
                 height=288,
                 width=512,
@@ -190,6 +153,6 @@ def run_inference():
 # Main
 # ==========================================
 if __name__ == "__main__":
-    print(f"Running inference for SEM={SEM_FEATURE_TYPE}, SEQ={SEQ2SEQ_FEATURE_TYPE}, subset={SUBSET_ID}")
+    print(f"Running inference for SEM={SEM_FEATURE_TYPE}, subset={SUBSET_ID} (semantic-only mode)")
     cleanup_previous_outputs()
     run_inference()

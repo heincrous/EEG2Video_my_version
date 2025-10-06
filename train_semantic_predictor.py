@@ -140,25 +140,6 @@ def prepare_data(eeg_data, clip_data):
 
     return train_eeg_flat, test_eeg_flat, train_clip_flat, test_clip_flat
 
-# def prepare_data(eeg_data, clip_data):
-#     train_eeg, test_eeg = eeg_data[:6], eeg_data[6:]
-#     train_clip, test_clip = clip_data[:6], clip_data[6:]
-
-#     train_eeg  = train_eeg[:, CLASS_SUBSET]
-#     test_eeg   = test_eeg[:, CLASS_SUBSET]
-#     train_clip = train_clip[:, CLASS_SUBSET]
-#     test_clip  = test_clip[:, CLASS_SUBSET]
-
-#     train_eeg_flat = rearrange(train_eeg, "b c s ch t -> (b c s) (ch t)")
-#     test_eeg_flat  = rearrange(test_eeg,  "b c s ch t -> (b c s) (ch t)")
-#     train_clip_flat = rearrange(train_clip, "b c s tok dim -> (b c s) (tok dim)")
-#     test_clip_flat  = rearrange(test_clip,  "b c s tok dim -> (b c s) (tok dim)")
-
-#     print(f"EEG (train) mean={train_eeg_flat.mean():.5f}, std={train_eeg_flat.std():.5f}")
-#     print(f"EEG (test)  mean={test_eeg_flat.mean():.5f}, std={test_eeg_flat.std():.5f}")
-
-#     return train_eeg_flat, test_eeg_flat, train_clip_flat, test_clip_flat
-
 
 # ==========================================
 # Evaluation Utility
