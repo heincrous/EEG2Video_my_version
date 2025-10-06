@@ -27,7 +27,7 @@ BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/
 SEM_PATH = f"/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/pred_embeddings_{SEM_FEATURE_TYPE}_sub1_subset{SUBSET_ID}.npy"
 
 # Negative embedding mode: "empty" or "mean_sem"
-NEGATIVE_MODE      = "empty"
+NEGATIVE_MODE      = "mean_sem"
 
 # Toggle between vanilla or fine-tuned diffusion
 USE_FINETUNED      = False
