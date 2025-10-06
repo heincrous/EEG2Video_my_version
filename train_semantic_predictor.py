@@ -171,6 +171,9 @@ def prepare_data(eeg_data, clip_data):
     train_clip = train_clip[:, CLASS_SUBSET]
     test_clip  = test_clip[:, CLASS_SUBSET]
 
+    train_clip = train_clip[:, :, :1, :, :].repeat(1, 1, 5, 1, 1)
+    test_clip  = test_clip[:, :, :1, :, :].repeat(1, 1, 5, 1, 1)
+
     # Flatten EEG & CLIP
     train_eeg_flat  = rearrange(train_eeg,  "b c s ch t -> (b c s) (ch t)")
     test_eeg_flat   = rearrange(test_eeg,   "b c s ch t -> (b c s) (ch t)")
