@@ -38,7 +38,7 @@ SUBSET_ID        = "1"
 EPOCHS           = 200
 BATCH_SIZE       = 32
 LR               = 5e-4          # match authors
-P                = 0.25
+P                = 0.5
 DEVICE           = "cuda" if torch.cuda.is_available() else "cpu"
 
 EEG_PATH_ROOT    = "/content/drive/MyDrive/EEG2Video_data/processed"
