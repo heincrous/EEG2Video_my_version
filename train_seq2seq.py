@@ -314,8 +314,15 @@ if __name__ == "__main__":
     eeg_data, latent_data = load_data()
     train_eeg, test_eeg, train_lat, test_lat = prepare_data(eeg_data, latent_data)
 
+    # Reshape EEG to include 7-window temporal dimension
+    train_eeg = train_eeg.reshape(-1, 7, 1, 62, 100)
+    test_eeg  = test_eeg.reshape(-1, 7, 1, 62, 100)
+    train_lat = train_lat.reshape(-1, 6, 4, 36, 64)
+    test_lat  = test_lat.reshape(-1, 6, 4, 36, 64)
+
     train_loader = DataLoader(list(zip(train_eeg, train_lat)), batch_size=BATCH_SIZE, shuffle=True)
     test_loader  = DataLoader(list(zip(test_eeg, test_lat)), batch_size=BATCH_SIZE, shuffle=False)
+
 
     model = Seq2SeqTransformer().to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
