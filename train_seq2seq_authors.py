@@ -302,8 +302,8 @@ if __name__ == "__main__":
     EEG = torch.from_numpy(EEG)
     test_eeg = torch.from_numpy(test_eeg)
 
-    train_latent = rearrange(train_latent, "b s c h w -> b c h w")
-    test_latent = rearrange(test_latent, "b s c h w -> b c h w")
+    # train_latent = rearrange(train_latent, "b s c h w -> b c h w")
+    # test_latent = rearrange(test_latent, "b s c h w -> b c h w")
 
     print("EEG:", EEG.shape)
     print("test_eeg:", test_eeg.shape)
