@@ -35,7 +35,7 @@ SUBJECT_NAME     = "sub1.npy"
 CLASS_SUBSET     = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID        = "1"
 
-EPOCHS           = 10
+EPOCHS           = 100
 BATCH_SIZE       = 32
 LR               = 5e-4          # match authors
 DEVICE           = "cuda" if torch.cuda.is_available() else "cpu"
@@ -195,13 +195,13 @@ def prepare_data(eeg_data, latent_data):
     train_eeg = torch.from_numpy(scaler.transform(train_eeg.reshape(train_eeg.shape[0], -1)).astype(np.float32)).reshape(train_eeg.shape)
     test_eeg  = torch.from_numpy(scaler.transform(test_eeg.reshape(test_eeg.shape[0], -1)).astype(np.float32)).reshape(test_eeg.shape)
 
-    # Latent normalization: only center, do NOT scale down variance
+    # Latent normalization identical to authors (per-channel mean/std)
     train_lat = torch.tensor(train_lat, dtype=torch.float32)
     test_lat  = torch.tensor(test_lat, dtype=torch.float32)
     mean = torch.mean(train_lat, dim=(0, 2, 3, 4), keepdim=True)
-    train_lat = train_lat - mean
-    test_lat  = test_lat - mean
-    std = torch.std(train_lat, dim=(0, 2, 3, 4), keepdim=True)
+    std  = torch.std(train_lat, dim=(0, 2, 3, 4), keepdim=True)
+    train_lat = (train_lat - mean) / (std + 1e-8)
+    test_lat  = (test_lat - mean) / (std + 1e-8)
 
     return train_eeg, test_eeg, train_lat, test_lat, mean, std
 
