@@ -11,8 +11,8 @@ from core.util import save_videos_grid
 # ==========================================
 # Config
 # ==========================================
-FEATURE_TYPE       = "EEG_windows_100"
-CLASS_SUBSET       = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
+FEATURE_TYPE       = "EEG_DE_1per2s"
+CLASS_SUBSET       = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID          = "1"
 
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
