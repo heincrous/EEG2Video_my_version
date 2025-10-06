@@ -266,7 +266,7 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
             optimizer.zero_grad()
 
             out = model(eeg, full_video)
-            loss = F.mse_loss(out[:, :-1, :], video, reduction='mean')  # standardized loss
+            loss = F.mse_loss(out[:, :-1, :], video, reduction='sum')
             loss.backward()
             optimizer.step()
             scheduler.step()
@@ -295,7 +295,7 @@ def evaluate_model(model, test_loader):
             b, f, c, h, w = video.shape
             full_video = torch.cat((torch.zeros((b, 1, c, h, w), device=DEVICE), video), dim=1)
             out = model(eeg, full_video)
-            loss = F.mse_loss(out[:, :-1, :], video, reduction='mean')
+            loss = F.mse_loss(out[:, :-1, :], video, reduction='sum')
             total_loss += loss.item() * b
             total_elems += b
     avg_loss = total_loss / total_elems
@@ -315,7 +315,7 @@ def run_inference(model, test_loader):
             b, f, c, h, w = vid.shape
             full_vid = torch.cat((torch.zeros((b, 1, c, h, w), device=DEVICE), vid), 1)
             out = model(eeg, full_vid)
-            preds.append(out[:, :-1, :].cpu().numpy())
+            preds.append(out[:, 1:, :].cpu().numpy())  # keep last 6 frames only
     preds = np.concatenate(preds)
     return preds, preds
 
