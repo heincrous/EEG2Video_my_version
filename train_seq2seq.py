@@ -180,6 +180,7 @@ def load_data():
     print(f"Loading EEG features from: {FEATURE_TYPE}/{SUBJECT_NAME}")
     eeg_data = np.load(eeg_path, allow_pickle=True)
     latent_data = np.load(LATENT_PATH, allow_pickle=True)
+    print("[RAW latent stats] mean =", latent_data.mean(), "std =", latent_data.std())
     print(f"EEG shape: {eeg_data.shape}, Latent shape: {latent_data.shape}")
     return eeg_data, latent_data
 
