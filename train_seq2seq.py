@@ -38,6 +38,7 @@ SUBSET_ID        = "1"
 EPOCHS           = 100
 BATCH_SIZE       = 32
 LR               = 5e-4          # match authors
+P                = 0.25
 DEVICE           = "cuda" if torch.cuda.is_available() else "cpu"
 
 EEG_PATH_ROOT    = "/content/drive/MyDrive/EEG2Video_data/processed"
@@ -77,7 +78,7 @@ def cleanup_previous_run():
 class MyEEGNet_embedding(nn.Module):
     def __init__(self, d_model=128, C=62, T=100, F1=16, D=4, F2=16):
         super(MyEEGNet_embedding, self).__init__()
-        drop_out = 0.5
+        drop_out = P
         self.block_1 = nn.Sequential(
             nn.ZeroPad2d((31, 32, 0, 0)),
             nn.Conv2d(1, F1, (1, 64), bias=False),
