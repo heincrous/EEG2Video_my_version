@@ -1,11 +1,9 @@
 # ==========================================
 # Full Inference (Video generation using semantic predictor embeddings)
 # ==========================================
-import os, gc, torch, numpy as np
+import os, gc, torch, numpy as np, re
 from diffusers import AutoencoderKL, DDIMScheduler
 from transformers import CLIPTokenizer, CLIPTextModel
-import re
-
 from core.unet import UNet3DConditionModel
 from pipelines.my_pipeline import TuneAVideoPipeline
 from core.util import save_videos_grid
@@ -14,19 +12,24 @@ from core.util import save_videos_grid
 # Config
 # ==========================================
 CLASS_SUBSET       = [0, 2, 4, 10, 11, 12, 22, 26, 29, 37]
+SUBSET_ID          = "1"
+
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 FINETUNED_SD_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/diffusion_checkpoints/pipeline_final_subset0-2-4-10-11-12-22-26-29-37_variants"
-OUTPUT_DIR         = "/content/drive/MyDrive/EEG2Video_outputs/full_inference"
+OUTPUT_ROOT        = "/content/drive/MyDrive/EEG2Video_outputs/full_inference"
 BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
-SEM_PATH           = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/embeddings_DE_sub1_subset0-2-4-10-11-12-22-26-29-37.npy"
-NEG_SEM_PATH       = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/embeddings_windows_100_sub1_subset0-2-4-10-11-12-22-26-29-37_negative.npy"
 
-# Negative embedding toggle: "empty", "mean_eeg", "mean_sem"
+# Semantic predictor outputs (automatically selected by subset)
+SEM_PATH = f"/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/pred_embeddings_sub1_subset{SUBSET_ID}.npy"
+
+# Negative embedding toggle: "empty" or "mean_sem"
 NEGATIVE_MODE      = "mean_sem"
 
 # Toggle between vanilla or finetuned diffusion
 USE_FINETUNED = False
 
+# Output directory aligned to subset
+OUTPUT_DIR = os.path.join(OUTPUT_ROOT, f"subset_{SUBSET_ID}")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # === MEMORY CONFIG ===
@@ -53,13 +56,6 @@ if NEGATIVE_MODE == "empty":
     neg_embeddings = empty_emb.to(torch.float16).to(device)
     print("Using EMPTY STRING negative embedding.")
 
-elif NEGATIVE_MODE == "mean_eeg":
-    if not os.path.exists(NEG_SEM_PATH):
-        raise FileNotFoundError(f"Mean-EEG negative embedding not found at {NEG_SEM_PATH}")
-    neg_pred = np.load(NEG_SEM_PATH)   # shape (1,77,768)
-    neg_embeddings = torch.tensor(neg_pred, dtype=torch.float16).to(device)
-    print("Using MEAN EEG → semantic predictor negative embedding.")
-
 elif NEGATIVE_MODE == "mean_sem":
     mean_sem = sem_preds_all.mean(axis=0, keepdims=True)   # (1,77,768)
     neg_embeddings = torch.tensor(mean_sem, dtype=torch.float16).to(device)
@@ -68,7 +64,9 @@ elif NEGATIVE_MODE == "mean_sem":
 else:
     raise ValueError(f"Unknown NEGATIVE_MODE {NEGATIVE_MODE}")
 
-# === Load pipeline ===
+# ==========================================
+# Load diffusion pipeline
+# ==========================================
 unet_path = FINETUNED_SD_PATH if USE_FINETUNED else PRETRAINED_SD_PATH
 unet_sub  = "unet" if USE_FINETUNED else "unet"
 
@@ -83,7 +81,7 @@ pipe.unet.to(torch.float16)
 pipe.enable_vae_slicing()
 
 # ==========================================
-# Run inference over semantic embeddings
+# Inference function
 # ==========================================
 def run_inference():
     video_length, fps = 6, 3
@@ -113,4 +111,9 @@ def run_inference():
             save_videos_grid(video, out_gif, fps=fps)
             print(f"Saved: {out_gif}")
 
-run_inference()
+# ==========================================
+# Main
+# ==========================================
+if __name__ == "__main__":
+    print(f"Running inference for subset {SUBSET_ID}...")
+    run_inference()
