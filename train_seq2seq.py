@@ -183,58 +183,55 @@ def load_data():
 
 
 def prepare_data(eeg_data, latent_data):
-    # Split
+    # === Train/test split ===
     train_eeg, test_eeg = eeg_data[:6], eeg_data[6:]
     train_lat, test_lat = latent_data[:6], latent_data[6:]
-    print(f"Split done: train_eeg {train_eeg.shape}, test_eeg {test_eeg.shape}")
-    print(f"Split done: train_lat {train_lat.shape}, test_lat {test_lat.shape}")
+    print(f"Split done → train_eeg {train_eeg.shape}, test_eeg {test_eeg.shape}")
+    print(f"Split done → train_lat {train_lat.shape}, test_lat {test_lat.shape}")
 
-    # Subset
+    # === Subset selection ===
     if CLASS_SUBSET:
         train_eeg = train_eeg[:, CLASS_SUBSET]
         test_eeg  = test_eeg[:, CLASS_SUBSET]
         train_lat = train_lat[:, CLASS_SUBSET]
         test_lat  = test_lat[:, CLASS_SUBSET]
-        print(f"Applied subset: {len(CLASS_SUBSET)} classes")
+        print(f"Applied class subset ({len(CLASS_SUBSET)} classes).")
 
-    # Latent normalization
+    # === Latent normalization (same as authors' 'normalizetion' function) ===
     def normalize_latents(x):
+        x = torch.tensor(x, dtype=torch.float32)
         mean = torch.mean(x, dim=(0, 2, 3, 4), dtype=torch.float64)
-        std = torch.std(x, dim=(0, 2, 3, 4))
-        print(f"Latent mean: {mean.tolist()}")
-        print(f"Latent std: {std.tolist()}")
-        return (x - mean.view(1, 4, 1, 1, 1)) / std.view(1, 4, 1, 1, 1)
+        std  = torch.std(x, dim=(0, 2, 3, 4))
+        normalized = (x - mean.view(1, 4, 1, 1, 1)) / std.view(1, 4, 1, 1, 1)
+        return normalized
 
-    train_lat = torch.tensor(train_lat, dtype=torch.float32)
-    test_lat  = torch.tensor(test_lat, dtype=torch.float32)
     train_lat = normalize_latents(train_lat)
     test_lat  = normalize_latents(test_lat)
-    print(f"After latent norm: train mean={train_lat.mean():.5f}, std={train_lat.std():.5f}")
-    print(f"After latent norm: test  mean={test_lat.mean():.5f}, std={test_lat.std():.5f}")
+    print(f"After latent norm → train mean={train_lat.mean():.5f}, std={train_lat.std():.5f}")
+    print(f"After latent norm → test  mean={test_lat.mean():.5f}, std={test_lat.std():.5f}")
 
-    # EEG normalization
+    # === EEG normalization (identical logic to authors) ===
+    # Flatten windows and normalize across time dimension
     b, c, d, w, ch, t = train_eeg.shape
     train_eeg = rearrange(train_eeg, "b c d w ch t -> (b c d w) (ch t)")
     test_eeg  = rearrange(test_eeg,  "b c d w ch t -> (b c d w) (ch t)")
-    print(f"EEG flattened: train {train_eeg.shape}, test {test_eeg.shape}")
-
-    scaler = StandardScaler()
-    scaler.fit(train_eeg)
+    scaler = StandardScaler().fit(train_eeg)
     train_eeg = scaler.transform(train_eeg)
     test_eeg  = scaler.transform(test_eeg)
-    print(f"EEG scaler: train mean={np.mean(train_eeg):.5f}, std={np.std(train_eeg):.5f}")
-    print(f"EEG scaler: test  mean={np.mean(test_eeg):.5f}, std={np.std(test_eeg):.5f}")
+    print(f"EEG scaler → train mean={np.mean(train_eeg):.6f}, std={np.std(train_eeg):.6f}")
+    print(f"EEG scaler → test  mean={np.mean(test_eeg):.6f}, std={np.std(test_eeg):.6f}")
 
-    train_eeg = rearrange(train_eeg, "(b c d w) (ch t) -> (b c d) w ch t", b=6, c=len(CLASS_SUBSET), d=5, w=7, ch=62, t=100)
-    test_eeg  = rearrange(test_eeg,  "(b c d w) (ch t) -> (b c d) w ch t",  b=1, c=len(CLASS_SUBSET), d=5, w=7, ch=62, t=100)
+    # === Reshape EEG back to (samples, 1, 62, 100)
+    train_eeg = rearrange(train_eeg, "(b c d w) (ch t) -> (b c d w) 1 ch t", b=6, c=len(CLASS_SUBSET), d=5, w=7, ch=62, t=100)
+    test_eeg  = rearrange(test_eeg,  "(b c d w) (ch t) -> (b c d w) 1 ch t",  b=1, c=len(CLASS_SUBSET), d=5, w=7, ch=62, t=100)
     train_eeg = torch.from_numpy(train_eeg).float()
     test_eeg  = torch.from_numpy(test_eeg).float()
-    print(f"EEG reshaped: train {train_eeg.shape}, test {test_eeg.shape}")
+    print(f"EEG final shape → train {train_eeg.shape}, test {test_eeg.shape}")
 
-    # Rearrange latents
+    # === Reshape latents to (samples, frames, 4, 36, 64)
     train_lat = rearrange(train_lat, "b c s f ch h w -> (b c s) f ch h w")
     test_lat  = rearrange(test_lat,  "b c s f ch h w -> (b c s) f ch h w")
-    print(f"Latent reshaped: train {train_lat.shape}, test {test_lat.shape}")
+    print(f"Latent final shape → train {train_lat.shape}, test {test_lat.shape}")
 
     return train_eeg, test_eeg, train_lat, test_lat
 
@@ -243,55 +240,50 @@ def prepare_data(eeg_data, latent_data):
 # Training and Evaluation Utility
 # ==========================================
 def train_model(model, dataloader, optimizer, scheduler, test_loader):
-    criterion = nn.MSELoss(reduction='sum')
+    criterion = nn.MSELoss()  # mean reduction, same as authors
     model.train()
     for epoch in tqdm(range(1, EPOCHS + 1)):
-        epoch_loss = 0
+        epoch_loss = 0.0
         for eeg, video in dataloader:
             eeg = eeg.float().to(DEVICE)
             video = video.float().to(DEVICE)
             b, f, c, h, w = video.shape
 
-            # prepend zero frame
-            full_video = torch.cat((torch.zeros((b, 1, c, h, w), device=DEVICE), video), dim=1)
+            # prepend zero frame like authors
+            padded = torch.zeros((b, 1, c, h, w), device=DEVICE)
+            full_video = torch.cat((padded, video), dim=1)
 
             optimizer.zero_grad()
-            out = model(eeg, full_video)
-
-            # match author logic: predict 6 frames to reconstruct the 6 video frames
-            loss = criterion(out[:, :-1], video)
-
+            out = model(eeg, full_video)  # your model only returns latents
+            loss = criterion(out[:, :-1], video)  # predict 6 frames
             loss.backward()
             optimizer.step()
-            scheduler.step()
+
             epoch_loss += loss.item()
 
+        scheduler.step()  # once per epoch
         if epoch % 10 == 0:
-            print("\n" + "=" * 65)
-            print(f"[Epoch {epoch:03d}/{EPOCHS}]  Sum Loss: {epoch_loss:.6f}")
-            print("-" * 65)
+            print(f"\n[Epoch {epoch:03d}/{EPOCHS}] Mean Loss: {epoch_loss:.6f}")
             evaluate_model(model, test_loader)
-            print("=" * 65 + "\n")
-    return model
+
 
 
 def evaluate_model(model, test_loader):
-    criterion = nn.MSELoss(reduction='sum')
+    criterion = nn.MSELoss()
     model.eval()
-    total_loss = 0
+    total_loss = 0.0
     with torch.no_grad():
         for eeg, video in test_loader:
             eeg = eeg.float().to(DEVICE)
             video = video.float().to(DEVICE)
             b, f, c, h, w = video.shape
+            padded = torch.zeros((b, 1, c, h, w), device=DEVICE)
+            full_video = torch.cat((padded, video), dim=1)
 
-            full_video = torch.cat((torch.zeros((b, 1, c, h, w), device=DEVICE), video), dim=1)
             out = model(eeg, full_video)
-
             total_loss += criterion(out[:, :-1], video).item()
 
-    print(f"  Test MSE (sum): {total_loss:.6f}\n")
-
+    print(f"  Test MSE (mean): {total_loss:.6f}\n")
 
 
 # ==========================================
