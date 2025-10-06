@@ -35,7 +35,7 @@ SUBJECT_NAME     = "sub1.npy"
 CLASS_SUBSET     = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID        = "1"
 
-EPOCHS           = 100
+EPOCHS           = 200
 BATCH_SIZE       = 32
 LR               = 5e-4          # match authors
 P                = 0.25
@@ -177,6 +177,7 @@ def load_data():
     eeg_path = os.path.join(EEG_PATH_ROOT, FEATURE_TYPE, SUBJECT_NAME)
     print(f"Loading EEG features from: {FEATURE_TYPE}/{SUBJECT_NAME}")
     eeg_data = np.load(eeg_path, allow_pickle=True)
+    eeg_data = eeg_data * 1e3
     latent_data = np.load(LATENT_PATH, allow_pickle=True)
     print(f"EEG shape: {eeg_data.shape}, Latent shape: {latent_data.shape}")
     return eeg_data, latent_data
@@ -196,9 +197,20 @@ def prepare_data(eeg_data, latent_data):
     train_eeg = rearrange(train_eeg, "b c s w ch t -> (b c s) w ch t")
     test_eeg  = rearrange(test_eeg,  "b c s w ch t -> (b c s) w ch t")
 
-    print(f"EEG (train) mean={train_eeg.mean():.5f}, std={train_eeg.std():.5f}")
-    print(f"EEG (test)  mean={test_eeg.mean():.5f}, std={test_eeg.std():.5f}")
+    # Reshape for z-score normalization
+    train_eeg_flat = train_eeg.reshape(-1, 62 * 100)
+    test_eeg_flat  = test_eeg.reshape(-1, 62 * 100)
 
+    # Standardize (mean 0, std 1) using authors' approach
+    scaler = StandardScaler()
+    scaler.fit(train_eeg_flat)
+    train_eeg = scaler.transform(train_eeg_flat).reshape(train_eeg.shape)
+    test_eeg  = scaler.transform(test_eeg_flat).reshape(test_eeg.shape)
+
+    print(f"[EEG scaler] train mean={train_eeg.mean():.5f}, std={train_eeg.std():.5f}")
+    print(f"[EEG scaler] test  mean={test_eeg.mean():.5f}, std={test_eeg.std():.5f}")
+    
+    # convert to tensors
     train_eeg = torch.from_numpy(train_eeg).float()
     test_eeg  = torch.from_numpy(test_eeg).float()
 
@@ -209,21 +221,7 @@ def prepare_data(eeg_data, latent_data):
     train_lat = torch.tensor(train_lat, dtype=torch.float32)
     test_lat  = torch.tensor(test_lat, dtype=torch.float32)
 
-    # ==========================================
-    # Normalize latents (match authors)
-    # ==========================================
-    mean = train_lat.mean(dim=(0, 2, 3, 4), keepdim=True)
-    std  = train_lat.std(dim=(0, 2, 3, 4), keepdim=True)
-    print(f"[Before norm] Train latent mean={mean.mean().item():.4f}, std={std.mean().item():.4f}")
-
-    train_lat = (train_lat - mean) / (std + 1e-8)
-    test_lat  = (test_lat - mean) / (std + 1e-8)
-
-    # Sanity check
-    print(f"[After norm]  Train latent mean={train_lat.mean():.4f}, std={train_lat.std():.4f}")
-    print(f"[After norm]  Test  latent mean={test_lat.mean():.4f}, std={test_lat.std():.4f}")
-
-    return train_eeg, test_eeg, train_lat, test_lat, mean, std
+    return train_eeg, test_eeg, train_lat, test_lat
 
 
 # ==========================================
@@ -294,9 +292,7 @@ def run_inference(model, test_loader):
 if __name__ == "__main__":
     cleanup_previous_run()
     eeg_data, latent_data = load_data()
-
-    # Get normalization stats too
-    train_eeg, test_eeg, train_lat, test_lat, mean, std = prepare_data(eeg_data, latent_data)
+    train_eeg, test_eeg, train_lat, test_lat = prepare_data(eeg_data, latent_data)
 
     train_loader = DataLoader(list(zip(train_eeg, train_lat)), batch_size=BATCH_SIZE, shuffle=True)
     test_loader  = DataLoader(list(zip(test_eeg, test_lat)), batch_size=BATCH_SIZE, shuffle=False)
@@ -310,47 +306,22 @@ if __name__ == "__main__":
     print("✅ Training complete.\n")
     evaluate_model(model, test_loader)
 
-    # ==========================================
-    # Inference and Normalization Checks
-    # ==========================================
-    latent_out_norm, _ = run_inference(model, test_loader)
-    latent_out_norm = torch.tensor(latent_out_norm)
-    print(f"\n[Predicted (normalized)] mean={latent_out_norm.mean():.4f}, std={latent_out_norm.std():.4f}")
+    latent_out_norm, latent_out_denorm = run_inference(model, test_loader)
 
-    # Denormalize to original latent space
-    latent_out_denorm = latent_out_norm * std + mean
-    latent_out_denorm = latent_out_denorm.numpy()
-    print(f"[Denormalized] mean={latent_out_denorm.mean():.4f}, std={latent_out_denorm.std():.4f}")
+    mean_val = latent_out_denorm.mean()
+    std_val  = latent_out_denorm.std()
 
-    # ==========================================
-    # Save Model + Outputs + Normalization Stats
-    # ==========================================
-    np.save(
-        os.path.join(
-            EMB_SAVE_PATH,
-            f"latent_out_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy"
-        ),
-        latent_out_denorm
-    )
+    np.save(os.path.join(EMB_SAVE_PATH,
+            f"latent_out_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy"),
+            latent_out_denorm)
 
-    torch.save(
-        {
-            "state_dict": model.state_dict(),
-            "mean": mean.cpu(),
-            "std": std.cpu(),
-        },
-        os.path.join(
-            CKPT_SAVE_PATH,
-            f"seq2seq_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt"
-        )
-    )
+    torch.save({"state_dict": model.state_dict()},
+            os.path.join(CKPT_SAVE_PATH,
+            f"seq2seq_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt"))
 
-    print(f"\n✅ Saved:")
-    print(f"   → Model checkpoint: seq2seq_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt")
-    print(f"   → Latent file: latent_out_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy")
-    print(f"   → Latent shape: {latent_out_denorm.shape}")
-    print(f"   → Final latent mean/std: {latent_out_denorm.mean():.4f}, {latent_out_denorm.std():.4f}")
-
+    print(f"Saved → seq2seq_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt")
+    print(f"Saved → latent_out_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy (shape: {latent_out_denorm.shape})")
+    print(f"Latent stats → mean: {mean_val:.5f}, std: {std_val:.5f}")
 
 
 
