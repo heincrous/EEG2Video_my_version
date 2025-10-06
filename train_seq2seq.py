@@ -255,6 +255,7 @@ def prepare_data(eeg_data, latent_data):
 # ==========================================
 def train_model(model, dataloader, optimizer, scheduler, test_loader):
     model.train()
+    num_samples = len(dataloader.dataset)
     for epoch in tqdm(range(1, EPOCHS + 1)):
         epoch_loss = 0
         for eeg, video in dataloader:
@@ -272,9 +273,10 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
 
             epoch_loss += loss.item()
 
+        avg_epoch_loss = epoch_loss / num_samples
         if epoch % 10 == 0:
             print("\n" + "="*65)
-            print(f"[Epoch {epoch:03d}/{EPOCHS}]  Sum MSE: {epoch_loss:.6f}")
+            print(f"[Epoch {epoch:03d}/{EPOCHS}]  Avg MSE per sample: {avg_epoch_loss:.6f}")
             print("-"*65)
             evaluate_model(model, test_loader)
             print("="*65 + "\n")
@@ -284,6 +286,7 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
 def evaluate_model(model, test_loader):
     model.eval()
     total_loss = 0
+    total_samples = len(test_loader.dataset)
     with torch.no_grad():
         for eeg, video in test_loader:
             eeg = eeg.float().to(DEVICE)
@@ -293,7 +296,9 @@ def evaluate_model(model, test_loader):
             out = model(eeg, full_video)
             loss = F.mse_loss(out[:, :-1, :], video, reduction='sum')
             total_loss += loss.item()
-    print(f"  Standardized Test Sum MSE: {total_loss:.6f}\n")
+
+    avg_test_loss = total_loss / total_samples
+    print(f"Test Avg MSE per sample: {avg_test_loss:.6f}\n")
 
 
 # ==========================================
