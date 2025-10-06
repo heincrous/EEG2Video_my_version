@@ -35,7 +35,7 @@ USE_FINETUNED      = False
 # ==========================================
 # Inference Enhancements (toggles)
 # ==========================================
-USE_NORMALIZATION       = True     # normalize semantic embeddings to unit norm
+USE_NORMALIZATION       = False     # normalize semantic embeddings to unit norm
 USE_TEMPERATURE_SCALING = False     # rescale embeddings to sharpen distribution
 TEMPERATURE_VALUE       = 0.7      # lower → sharper (0.5–0.9 typical)
 USE_PROTOTYPE_BLENDING  = False     # blend with per-class mean
