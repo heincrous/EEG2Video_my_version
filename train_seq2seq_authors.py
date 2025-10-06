@@ -322,13 +322,14 @@ if __name__ == "__main__":
         epoch_loss = 0
         for eeg, video in train_dataloader:
             eeg = eeg.float().cuda()
+            video = video.float().cuda()
             b, _, c, w, h = video.shape
             padded_video = torch.zeros((b, 1, c, w, h)).float().cuda()
             full_video = torch.cat((padded_video, video), dim=1)
 
             optimizer.zero_grad()
             txt_label, out = model(eeg, full_video)
-            loss_val = loss(video.cuda(), out[:, :-1, :])
+            loss_val = loss(video, out[:, :-1, :])
             loss_val.backward()
             optimizer.step()
             scheduler.step()
