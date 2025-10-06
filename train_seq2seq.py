@@ -209,7 +209,7 @@ def prepare_data(eeg_data, latent_data):
     scaler = StandardScaler()
     scaler.fit(train_flat)
     train_eeg = scaler.transform(train_flat).reshape(b, w, ch, t)
-    test_eeg  = scaler.transform(test_flat).reshape(test_eeg.shape[0] // w, w, ch, t)
+    test_eeg  = scaler.transform(test_flat).reshape(test_eeg.shape[0], w, ch, t)
 
     print(f"[EEG scaler] train mean={train_eeg.mean():.5f}, std={train_eeg.std():.5f}")
     print(f"[EEG scaler] test  mean={test_eeg.mean():.5f}, std={test_eeg.std():.5f}")
