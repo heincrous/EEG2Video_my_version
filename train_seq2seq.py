@@ -35,7 +35,7 @@ SUBJECT_NAME     = "sub1.npy"
 CLASS_SUBSET     = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID        = "1"
 
-EPOCHS           = 200
+EPOCHS           = 100
 BATCH_SIZE       = 32
 LR               = 5e-4          # match authors
 DEVICE           = "cuda" if torch.cuda.is_available() else "cpu"
@@ -191,33 +191,13 @@ def prepare_data(eeg_data, latent_data):
         train_lat = train_lat[:, CLASS_SUBSET]
         test_lat  = test_lat[:, CLASS_SUBSET]
 
-    # flatten windows for scaler
+    # flatten windows (no scaling)
     train_eeg = rearrange(train_eeg, "b c s w ch t -> (b c s) w ch t")
     test_eeg  = rearrange(test_eeg,  "b c s w ch t -> (b c s) w ch t")
 
-    b, w, c, t = train_eeg.shape  # (samples, 7, 62, 100)
-
-    # before normalization
-    print(f"EEG (train) before norm: mean={train_eeg.mean():.5f}, std={train_eeg.std():.5f}")
-    print(f"EEG (test)  before norm: mean={test_eeg.mean():.5f}, std={test_eeg.std():.5f}")
-
-    # flatten for scaler
-    train_eeg_flat = train_eeg.reshape(b, -1)
-    test_eeg_flat  = test_eeg.reshape(test_eeg.shape[0], -1)
-
-    # fit scaler on train only
-    scaler = StandardScaler()
-    scaler.fit(train_eeg_flat)
-    train_eeg_flat = scaler.transform(train_eeg_flat)
-    test_eeg_flat  = scaler.transform(test_eeg_flat)
-
-    # restore to (batch, 7, 62, 100)
-    train_eeg = rearrange(train_eeg_flat, "b (w c f) -> b w c f", w=7, c=62, f=100)
-    test_eeg  = rearrange(test_eeg_flat,  "b (w c f) -> b w c f", w=7, c=62, f=100)
-
-    # after normalization
-    print(f"EEG (train) after norm:  mean={train_eeg.mean():.5f}, std={train_eeg.std():.5f}")
-    print(f"EEG (test)  after norm:  mean={test_eeg.mean():.5f}, std={test_eeg.std():.5f}")
+    # print statistics before training
+    print(f"EEG (train) mean={train_eeg.mean():.5f}, std={train_eeg.std():.5f}")
+    print(f"EEG (test)  mean={test_eeg.mean():.5f}, std={test_eeg.std():.5f}")
 
     # convert to tensors
     train_eeg = torch.from_numpy(train_eeg).float()
