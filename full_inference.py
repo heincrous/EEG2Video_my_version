@@ -13,7 +13,7 @@ from einops import rearrange
 # ==========================================
 # Config
 # ==========================================
-FEATURE_FUSION     = ["EEG_DE_1per2s", "EEG_PSD_1per2s", "EEG_windows_100"]  # leave empty for single feature
+FEATURE_FUSION     = []  # leave empty for single feature
 SEM_FEATURE_TYPE   = "EEG_windows_100"  # fallback single feature if fusion empty
 SUBJECT_NAME       = "sub1.npy"
 CLASS_SUBSET       = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
