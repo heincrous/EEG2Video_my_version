@@ -195,9 +195,11 @@ def evaluate_model(model, test_eeg_flat, test_clip_flat):
     fisher_score = numerator / (denominator + 1e-8)
 
     print(
-        f"[Eval] Avg cosine(pred,gt): {avg_cosine:.4f} | "
-        f"Within-class: {avg_within:.4f} | Between-class: {avg_between:.4f} | "
-        f"Fisher Score: {fisher_score:.4f} | Δ: {(avg_within - avg_between):.4f}"
+        f"  Avg cosine(pred,gt): {avg_cosine:.4f}\n"
+        f"  Within-class cosine: {avg_within:.4f}\n"
+        f"  Between-class cosine: {avg_between:.4f}\n"
+        f"  Fisher Score: {fisher_score:.4f}\n"
+        f"  Δ (Within−Between): {avg_within - avg_between:.4f}"
     )
 
 
@@ -220,8 +222,12 @@ def train_model(model, dataloader, optimizer, scheduler, test_eeg_flat, test_cli
             epoch_loss += loss.item()
 
         if epoch % 10 == 0:
-            print(f"[Epoch {epoch}] Avg Loss: {epoch_loss:.6f}")
+            avg_loss = epoch_loss / len(dataloader)
+            print("\n" + "="*65)
+            print(f"[Epoch {epoch:03d}/{EPOCHS}]  Avg Loss: {avg_loss:.6f}")
+            print("-"*65)
             evaluate_model(model, test_eeg_flat, test_clip_flat)
+            print("="*65 + "\n")
 
 
 # ==========================================
