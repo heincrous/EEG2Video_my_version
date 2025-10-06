@@ -22,6 +22,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from torch.utils.data import TensorDataset
 from sklearn.preprocessing import StandardScaler
 from einops import rearrange
 from tqdm import tqdm
@@ -234,7 +235,7 @@ def prepare_data(eeg_data, latent_data):
     train_lat = train_lat.permute(0, 2, 1, 3, 4)  # (B, 4, 6, 36, 64)
     test_lat  = test_lat.permute(0, 2, 1, 3, 4)
 
-    train_lat_mean = torch.mean(train_lat, dim=(0, 2, 3, 4), dtype=torch.float32)
+    train_lat_mean = torch.mean(train_lat, dim=(0, 2, 3, 4))
     train_lat_std  = torch.std(train_lat, dim=(0, 2, 3, 4))
 
     train_lat = (train_lat - train_lat_mean.reshape(1, 4, 1, 1, 1)) / train_lat_std.reshape(1, 4, 1, 1, 1)
@@ -254,29 +255,32 @@ def prepare_data(eeg_data, latent_data):
 # Training and Evaluation Utility
 # ==========================================
 def train_model(model, dataloader, optimizer, scheduler, test_loader):
-    model.train()
-    num_samples = len(dataloader.dataset)
     for epoch in tqdm(range(1, EPOCHS + 1)):
-        epoch_loss = 0
+        model.train()
+        epoch_loss = 0.0
+
         for eeg, video in dataloader:
-            eeg = eeg.float().to(DEVICE)
-            video = video.float().to(DEVICE)
+            eeg   = eeg.to(DEVICE, dtype=torch.float32)
+            video = video.to(DEVICE, dtype=torch.float32)
+
             b, f, c, h, w = video.shape
             full_video = torch.cat((torch.zeros((b, 1, c, h, w), device=DEVICE), video), dim=1)
-            optimizer.zero_grad()
 
+            optimizer.zero_grad()
             out = model(eeg, full_video)
-            loss = F.mse_loss(out[:, :-1, :], video, reduction='sum')
+
+            # Mean MSE per batch
+            loss = F.mse_loss(out[:, :-1, :], video, reduction='mean')
             loss.backward()
             optimizer.step()
             scheduler.step()
 
             epoch_loss += loss.item()
 
-        avg_epoch_loss = epoch_loss / num_samples
+        avg_epoch_loss = epoch_loss / len(dataloader)  # mean of batch MSEs
         if epoch % 10 == 0:
             print("\n" + "="*65)
-            print(f"[Epoch {epoch:03d}/{EPOCHS}]  Avg MSE per sample: {avg_epoch_loss:.6f}")
+            print(f"[Epoch {epoch:03d}/{EPOCHS}]  Avg MSE (batch mean): {avg_epoch_loss:.6f}")
             print("-"*65)
             evaluate_model(model, test_loader)
             print("="*65 + "\n")
@@ -285,17 +289,22 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
 
 def evaluate_model(model, test_loader):
     model.eval()
-    total_loss = 0
-    total_samples = len(test_loader.dataset)
+    total_loss = 0.0
+    total_samples = 0
+
     with torch.no_grad():
         for eeg, video in test_loader:
-            eeg = eeg.float().to(DEVICE)
-            video = video.float().to(DEVICE)
+            eeg   = eeg.to(DEVICE, dtype=torch.float32)
+            video = video.to(DEVICE, dtype=torch.float32)
             b, f, c, h, w = video.shape
+            total_samples += b
+
             full_video = torch.cat((torch.zeros((b, 1, c, h, w), device=DEVICE), video), dim=1)
             out = model(eeg, full_video)
-            loss = F.mse_loss(out[:, :-1, :], video, reduction='sum')
-            total_loss += loss.item()
+
+            # Mean MSE per batch → scale back by batch size to compute global mean
+            loss = F.mse_loss(out[:, :-1, :], video, reduction='mean')
+            total_loss += loss.item() * b
 
     avg_test_loss = total_loss / total_samples
     print(f"Test Avg MSE per sample: {avg_test_loss:.6f}\n")
@@ -316,7 +325,7 @@ def run_inference(model, test_loader):
             out = model(eeg, full_vid)
             preds.append(out[:, 1:, :].cpu().numpy())  # keep last 6 frames only
     preds = np.concatenate(preds)
-    return preds, preds
+    return preds
 
 
 # ==========================================
@@ -327,8 +336,8 @@ if __name__ == "__main__":
     eeg_data, latent_data = load_data()
     train_eeg, test_eeg, train_lat, test_lat = prepare_data(eeg_data, latent_data)
 
-    train_loader = DataLoader(list(zip(train_eeg, train_lat)), batch_size=BATCH_SIZE, shuffle=True)
-    test_loader  = DataLoader(list(zip(test_eeg, test_lat)), batch_size=BATCH_SIZE, shuffle=False)
+    train_loader = DataLoader(TensorDataset(train_eeg, train_lat), batch_size=BATCH_SIZE, shuffle=True)
+    test_loader  = DataLoader(TensorDataset(test_eeg, test_lat), batch_size=BATCH_SIZE, shuffle=False)
 
     model = Seq2SeqTransformer().to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
@@ -339,22 +348,21 @@ if __name__ == "__main__":
     print("✅ Training complete.\n")
     evaluate_model(model, test_loader)
 
-    latent_out_norm, latent_out_denorm = run_inference(model, test_loader)
-
-    mean_val = latent_out_denorm.mean()
-    std_val  = latent_out_denorm.std()
+    latent_out = run_inference(model, test_loader)
+    mean_val, std_val = latent_out.mean(), latent_out.std()
 
     np.save(os.path.join(EMB_SAVE_PATH,
             f"latent_out_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy"),
-            latent_out_denorm)
+            latent_out)
 
     torch.save({"state_dict": model.state_dict()},
             os.path.join(CKPT_SAVE_PATH,
             f"seq2seq_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt"))
 
     print(f"Saved → seq2seq_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt")
-    print(f"Saved → latent_out_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy (shape: {latent_out_denorm.shape})")
+    print(f"Saved → latent_out_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy (shape: {latent_out.shape})")
     print(f"Latent stats → mean: {mean_val:.5f}, std: {std_val:.5f}")
+
 
 
 
