@@ -200,9 +200,11 @@ def prepare_data(eeg_data, latent_data):
     # === Latent normalization (same as authors' 'normalizetion' function) ===
     def normalize_latents(x):
         x = torch.tensor(x, dtype=torch.float32)
-        mean = torch.mean(x, dim=(0, 2, 3, 4), dtype=torch.float64)
-        std  = torch.std(x, dim=(0, 2, 3, 4))
-        normalized = (x - mean.view(1, 4, 1, 1, 1)) / std.view(1, 4, 1, 1, 1)
+        # x shape: (6, 40, 5, 6, 4, 36, 64)
+        # Mean and std over (batch, concept, sample, frame, height, width)
+        mean = torch.mean(x, dim=(0, 1, 2, 3, 5, 6), dtype=torch.float64)  # keep per-channel mean
+        std  = torch.std(x, dim=(0, 1, 2, 3, 5, 6))                        # keep per-channel std
+        normalized = (x - mean.view(1, 1, 1, 1, 4, 1, 1)) / std.view(1, 1, 1, 1, 4, 1, 1)
         return normalized
 
     train_lat = normalize_latents(train_lat)
