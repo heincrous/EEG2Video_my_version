@@ -35,7 +35,7 @@ SUBJECT_NAME     = "sub1.npy"
 CLASS_SUBSET     = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID        = "1"
 
-EPOCHS           = 200
+EPOCHS           = 100
 BATCH_SIZE       = 32
 LR               = 5e-4          # match authors
 P                = 0.25
@@ -209,7 +209,7 @@ def prepare_data(eeg_data, latent_data):
 
     print(f"[EEG scaler] train mean={train_eeg.mean():.5f}, std={train_eeg.std():.5f}")
     print(f"[EEG scaler] test  mean={test_eeg.mean():.5f}, std={test_eeg.std():.5f}")
-    
+
     # convert to tensors
     train_eeg = torch.from_numpy(train_eeg).float()
     test_eeg  = torch.from_numpy(test_eeg).float()
