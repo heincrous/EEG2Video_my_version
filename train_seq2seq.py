@@ -32,10 +32,10 @@ from tqdm import tqdm
 # ==========================================
 FEATURE_TYPE     = "EEG_windows_100"
 SUBJECT_NAME     = "sub1.npy"
-CLASS_SUBSET     = None
+CLASS_SUBSET     = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID        = "1"
 
-EPOCHS           = 100
+EPOCHS           = 200
 BATCH_SIZE       = 32
 LR               = 5e-4          # match authors
 P                = 0.25

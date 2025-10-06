@@ -132,6 +132,14 @@ pipe.enable_vae_slicing()
 if USE_SEQ2SEQ:
     print(f"Loading Seq2Seq latents from {SEQ2SEQ_LATENT_PATH}")
     latents_seq2seq = np.load(SEQ2SEQ_LATENT_PATH, allow_pickle=True)  # (N,6,4,36,64)
+
+    # --- Rescale to SD latent distribution ---
+    mean_pred, std_pred = latents_seq2seq.mean(), latents_seq2seq.std()
+    print(f"Before rescale → mean={mean_pred:.4f}, std={std_pred:.4f}")
+    latents_seq2seq = (latents_seq2seq - mean_pred) / (std_pred + 1e-8)  # Normalize to mean=0,std=1
+    latents_seq2seq = latents_seq2seq * 1.0  # SD latent std≈1
+    print(f"After rescale  → mean={latents_seq2seq.mean():.4f}, std={latents_seq2seq.std():.4f}")
+
     latents_seq2seq = torch.from_numpy(latents_seq2seq).half().to(device)
     latents_seq2seq = rearrange(latents_seq2seq, "b f c h w -> b c f h w")
 else:
