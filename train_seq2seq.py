@@ -197,9 +197,22 @@ def prepare_data(eeg_data, latent_data):
     test_lat  = rearrange(test_lat,  "b c s f ch h w -> (b c s) f ch h w")
 
     # EEG normalization same as authors (StandardScaler)
-    scaler = StandardScaler().fit(train_eeg.reshape(train_eeg.shape[0], -1))
-    train_eeg = torch.from_numpy(scaler.transform(train_eeg.reshape(train_eeg.shape[0], -1)).astype(np.float32)).reshape(train_eeg.shape)
-    test_eeg  = torch.from_numpy(scaler.transform(test_eeg.reshape(test_eeg.shape[0], -1)).astype(np.float32)).reshape(test_eeg.shape)
+    b, w, c, t = train_eeg.shape  # (samples, 7, 62, 100)
+    train_eeg = train_eeg.reshape(b, -1)
+    test_eeg  = test_eeg.reshape(test_eeg.shape[0], -1)
+
+    scaler = StandardScaler()
+    scaler.fit(train_eeg)
+
+    train_eeg = scaler.transform(train_eeg)
+    test_eeg  = scaler.transform(test_eeg)
+
+    # Restore to [b, c, l, f] then reorder to [b, f, c, l] (authors' convention)
+    train_eeg = rearrange(train_eeg, 'b (c l f) -> b f c l', c=62, l=1, f=100)
+    test_eeg  = rearrange(test_eeg,  'b (c l f) -> b f c l', c=62, l=1, f=100)
+
+    train_eeg = torch.from_numpy(train_eeg).float()
+    test_eeg  = torch.from_numpy(test_eeg).float()
 
     train_lat = torch.tensor(train_lat, dtype=torch.float32)
     test_lat  = torch.tensor(test_lat, dtype=torch.float32)
