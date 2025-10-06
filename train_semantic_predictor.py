@@ -135,9 +135,18 @@ def load_data():
         eeg_list.append(eeg)
         print(f"  {ftype}: shape {eeg.shape}")
 
-    # Align temporal dimension
-    min_t = min(eeg.shape[-1] for eeg in eeg_list)
-    eeg_list = [eeg[..., :min_t] for eeg in eeg_list]
+    # Align temporal dimension (pad to longest)
+    max_t = max(eeg.shape[-1] for eeg in eeg_list)
+    padded_list = []
+    for eeg in eeg_list:
+        t = eeg.shape[-1]
+        if t < max_t:
+            pad_width = [(0,0)] * eeg.ndim
+            pad_width[-1] = (0, max_t - t)
+            eeg = np.pad(eeg, pad_width, mode='constant')
+        padded_list.append(eeg)
+    eeg_list = padded_list
+    print(f"Padded feature lengths: {[e.shape[-1] for e in eeg_list]}")
 
     # Concatenate along last axis
     eeg_data = np.concatenate(eeg_list, axis=-1)
@@ -263,7 +272,8 @@ def evaluate_model(model, test_eeg_flat, test_clip_flat):
 # Training Utility
 # ==========================================
 def train_model(model, dataloader, optimizer, scheduler, test_eeg_flat, test_clip_flat):
-    print(f"Starting training for {FEATURE_TYPE} on subset {SUBSET_ID}...")
+    tag = "_".join(FEATURE_FUSION) if FEATURE_FUSION else FEATURE_TYPE
+    print(f"Starting training for {tag} on subset {SUBSET_ID}...")
     for epoch in tqdm(range(1, EPOCHS + 1)):
         model.train()
         epoch_loss = 0
