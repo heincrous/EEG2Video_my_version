@@ -172,15 +172,6 @@ class Seq2SeqTransformer(nn.Module):
 # ==========================================
 # Data Loading and Shaping Utility
 # ==========================================
-def load_data():
-    eeg_path = os.path.join(EEG_PATH_ROOT, FEATURE_TYPE, SUBJECT_NAME)
-    print(f"Loading EEG features from: {FEATURE_TYPE}/{SUBJECT_NAME}")
-    eeg_data = np.load(eeg_path, allow_pickle=True)
-    latent_data = np.load(LATENT_PATH, allow_pickle=True)
-    print(f"EEG shape: {eeg_data.shape}, Latent shape: {latent_data.shape}")
-    return eeg_data, latent_data
-
-
 def prepare_data(eeg_data, latent_data):
     train_eeg, test_eeg = eeg_data[:6], eeg_data[6:]
     train_lat, test_lat = latent_data[:6], latent_data[6:]
@@ -191,28 +182,28 @@ def prepare_data(eeg_data, latent_data):
         train_lat = train_lat[:, CLASS_SUBSET]
         test_lat  = test_lat[:, CLASS_SUBSET]
 
+    # flatten windows for scaler
     train_eeg = rearrange(train_eeg, "b c s w ch t -> (b c s) w ch t")
     test_eeg  = rearrange(test_eeg,  "b c s w ch t -> (b c s) w ch t")
-    train_lat = rearrange(train_lat, "b c s f ch h w -> (b c s) f ch h w")
-    test_lat  = rearrange(test_lat,  "b c s f ch h w -> (b c s) f ch h w")
 
-    # EEG normalization same as authors (StandardScaler)
-    b, w, c, t = train_eeg.shape  # (samples, 7, 62, 100)
+    b, w, c, t = train_eeg.shape        # (samples, 7, 62, 100)
     train_eeg = train_eeg.reshape(b, -1)
     test_eeg  = test_eeg.reshape(test_eeg.shape[0], -1)
 
     scaler = StandardScaler()
     scaler.fit(train_eeg)
-
     train_eeg = scaler.transform(train_eeg)
     test_eeg  = scaler.transform(test_eeg)
 
-    # Restore to [b, c, l, f] then reorder to [b, f, c, l] (authors' convention)
-    train_eeg = rearrange(train_eeg, 'b (c l f) -> b f c l', c=62, l=1, f=100)
-    test_eeg  = rearrange(test_eeg,  'b (c l f) -> b f c l', c=62, l=1, f=100)
+    # restore to (batch, 7, 62, 100)
+    train_eeg = rearrange(train_eeg, "b (w c f) -> b w c f", w=7, c=62, f=100)
+    test_eeg  = rearrange(test_eeg,  "b (w c f) -> b w c f", w=7, c=62, f=100)
 
     train_eeg = torch.from_numpy(train_eeg).float()
     test_eeg  = torch.from_numpy(test_eeg).float()
+
+    train_lat = rearrange(train_lat, "b c s f ch h w -> (b c s) f ch h w")
+    test_lat  = rearrange(test_lat,  "b c s f ch h w -> (b c s) f ch h w")
 
     train_lat = torch.tensor(train_lat, dtype=torch.float32)
     test_lat  = torch.tensor(test_lat, dtype=torch.float32)
