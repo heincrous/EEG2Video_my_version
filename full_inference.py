@@ -1,5 +1,5 @@
 # ==========================================
-# Full Inference (Video generation using Semantic embeddings only)
+# Full Inference (Video generation using Semantic embeddings)
 # ==========================================
 import os, gc, re, shutil, torch, numpy as np
 from diffusers import AutoencoderKL, DDIMScheduler
@@ -38,10 +38,9 @@ USE_FINETUNED      = False
 
 
 # ==========================================
-# Dynamic Output Directory Naming
+# Output Directory
 # ==========================================
-mode_tag   = "SemanticOnly"
-OUTPUT_DIR = os.path.join(OUTPUT_ROOT, f"{SEM_TAG}_subset{SUBSET_ID}_{mode_tag}")
+OUTPUT_DIR = os.path.join(OUTPUT_ROOT, f"{SEM_TAG}_subset{SUBSET_ID}")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
@@ -128,7 +127,7 @@ pipe.enable_vae_slicing()
 
 
 # ==========================================
-# Inference Function (Semantic-only)
+# Inference Function
 # ==========================================
 def run_inference():
     video_length, fps = 6, 3
@@ -148,7 +147,7 @@ def run_inference():
                 height=288,
                 width=512,
                 num_inference_steps=50,
-                guidance_scale=30,  # can adjust (12.5–30)
+                guidance_scale=30,
             ).videos
 
             safe_caption = re.sub(r"[^a-zA-Z0-9_-]", "_", caption)
@@ -164,6 +163,6 @@ def run_inference():
 # Main
 # ==========================================
 if __name__ == "__main__":
-    print(f"Running inference for SEM={SEM_TAG}, subset={SUBSET_ID} (semantic-only mode)")
+    print(f"Running inference for SEM={SEM_TAG}, subset={SUBSET_ID}")
     cleanup_previous_outputs()
     run_inference()
