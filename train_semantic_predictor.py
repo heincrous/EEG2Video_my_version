@@ -173,6 +173,7 @@ def prepare_data(eeg_data, clip_data):
 
     train_clip = train_clip[:, :, :1, :, :].repeat(1, 1, 5, 1, 1)
     test_clip  = test_clip[:, :, :1, :, :].repeat(1, 1, 5, 1, 1)
+    print("Applied authors' scheme: repeated first clip embedding 5× per class.")
 
     # Flatten EEG & CLIP
     train_eeg_flat  = rearrange(train_eeg,  "b c s ch t -> (b c s) (ch t)")
