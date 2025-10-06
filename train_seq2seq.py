@@ -172,6 +172,15 @@ class Seq2SeqTransformer(nn.Module):
 # ==========================================
 # Data Loading and Shaping Utility
 # ==========================================
+def load_data():
+    eeg_path = os.path.join(EEG_PATH_ROOT, FEATURE_TYPE, SUBJECT_NAME)
+    print(f"Loading EEG features from: {FEATURE_TYPE}/{SUBJECT_NAME}")
+    eeg_data = np.load(eeg_path, allow_pickle=True)
+    latent_data = np.load(LATENT_PATH, allow_pickle=True)
+    print(f"EEG shape: {eeg_data.shape}, Latent shape: {latent_data.shape}")
+    return eeg_data, latent_data
+
+
 def prepare_data(eeg_data, latent_data):
     train_eeg, test_eeg = eeg_data[:6], eeg_data[6:]
     train_lat, test_lat = latent_data[:6], latent_data[6:]
