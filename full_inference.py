@@ -144,7 +144,7 @@
 # Full Inference (Video generation using semantic predictor embeddings)
 # ==========================================
 import os, gc, torch, numpy as np, re, shutil
-from diffusers import AutoencoderKL, DDIMScheduler
+from diffusers import AutoencoderKL, PNDMScheduler
 from transformers import CLIPTokenizer, CLIPTextModel
 from core.unet import UNet3DConditionModel
 from pipelines.my_pipeline import TuneAVideoPipeline
@@ -165,7 +165,6 @@ BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/
 SEM_PATH = f"/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/pred_embeddings_{FEATURE_TYPE}_sub1_subset{SUBSET_ID}.npy"
 
 USE_FINETUNED = False
-
 OUTPUT_DIR = os.path.join(OUTPUT_ROOT, f"{FEATURE_TYPE}_subset_{SUBSET_ID}")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -195,8 +194,8 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 # Load captions + semantic predictor embeddings
 # ==========================================
 print(f"Loading embeddings from {SEM_PATH}")
-blip_text      = np.load(BLIP_TEXT_PATH, allow_pickle=True)   # (7,40,5)
-sem_preds_all  = np.load(SEM_PATH)                            # (N,77,768)
+blip_text      = np.load(BLIP_TEXT_PATH, allow_pickle=True)
+sem_preds_all  = np.load(SEM_PATH)
 num_classes    = len(CLASS_SUBSET)
 trials_per_class = 5
 test_block     = 6
@@ -212,14 +211,14 @@ pipe = TuneAVideoPipeline(
     text_encoder=CLIPTextModel.from_pretrained(PRETRAINED_SD_PATH, subfolder="text_encoder", torch_dtype=torch.float16),
     tokenizer=CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer"),
     unet=UNet3DConditionModel.from_pretrained_2d(unet_path, subfolder=unet_sub),
-    scheduler=DDIMScheduler.from_pretrained(PRETRAINED_SD_PATH, subfolder="scheduler"),
+    scheduler=PNDMScheduler.from_pretrained(PRETRAINED_SD_PATH, subfolder="scheduler"),
 ).to(device)
 pipe.unet.to(torch.float16)
 pipe.vae.to(torch.float16)
 pipe.enable_vae_slicing()
 
 # ==========================================
-# Inference Function (biasing + stability fixes)
+# Inference Function (biasing + temporal stabilization)
 # ==========================================
 def run_inference():
     video_length, fps = 8, 3
@@ -257,6 +256,9 @@ def run_inference():
 
             alpha = 0.15
             semantic_emb = (1 - alpha) * emb_t + alpha * bias_emb
+
+            # Small jitter to prevent temporal collapse
+            semantic_emb = semantic_emb + 0.02 * torch.randn_like(semantic_emb)
             semantic_emb = semantic_emb.unsqueeze(0)
 
             # ==========================================
@@ -269,13 +271,13 @@ def run_inference():
             neg_embeddings = neg_class_mean.unsqueeze(0)
 
             # ==========================================
-            # Adaptive guidance based on confidence (clamped)
+            # Adaptive guidance (clamped)
             # ==========================================
             conf = sims.max().item()
             guidance_scale = max(7.0, min(8.0 + 8.0 * conf, 10.0))
 
             # ==========================================
-            # Diffusion generation (reduced steps)
+            # Diffusion generation (shorter steps)
             # ==========================================
             video = pipe(
                 prompt=semantic_emb,
@@ -283,9 +285,12 @@ def run_inference():
                 video_length=video_length,
                 height=288,
                 width=512,
-                num_inference_steps=40,
+                num_inference_steps=25,
                 guidance_scale=guidance_scale,
             ).videos
+
+            # Post-noise refresh to reintroduce slight motion texture
+            video = video + 0.03 * torch.randn_like(video)
 
             # ==========================================
             # Save output
@@ -293,7 +298,6 @@ def run_inference():
             safe_caption = re.sub(r'[^a-zA-Z0-9_-]', '_', caption)
             if len(safe_caption) > 120:
                 safe_caption = safe_caption[:120]
-
             out_gif = os.path.join(OUTPUT_DIR, f"{safe_caption}.gif")
             save_videos_grid(video, out_gif, fps=fps)
             print(f"Saved: {out_gif}")
