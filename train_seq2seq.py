@@ -228,8 +228,9 @@ def prepare_data(eeg_data, latent_data):
     # === Latent normalization (authors’ method) ===
     train_lat_mean = torch.mean(train_lat, dim=(0, 2, 3, 4), dtype=torch.float64)
     train_lat_std  = torch.std(train_lat, dim=(0, 2, 3, 4))
-    train_lat = (train_lat - train_lat_mean.reshape(1, 4, 1, 1, 1)) / train_lat_std.reshape(1, 4, 1, 1, 1)
-    test_lat  = (test_lat - train_lat_mean.reshape(1, 4, 1, 1, 1)) / train_lat_std.reshape(1, 4, 1, 1, 1)
+    train_lat = (train_lat - train_lat_mean.reshape(1, 6, 1, 1, 1)) / train_lat_std.reshape(1, 6, 1, 1, 1)
+    test_lat  = (test_lat - train_lat_mean.reshape(1, 6, 1, 1, 1)) / train_lat_std.reshape(1, 6, 1, 1, 1)
+
 
     print(f"[Latent norm] mean={train_lat.mean():.5f}, std={train_lat.std():.5f}")
 
