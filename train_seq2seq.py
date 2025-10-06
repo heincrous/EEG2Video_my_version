@@ -168,7 +168,7 @@ class Seq2SeqTransformer(nn.Module):
 # ==========================================
 def load_data():
     eeg_path = os.path.join(EEG_PATH_ROOT, FEATURE_TYPE, SUBJECT_NAME)
-    print(f"Loading EEG from: {eeg_path}")
+    print(f"Loading EEG features from: {FEATURE_TYPE}/{SUBJECT_NAME}")
     eeg_data = np.load(eeg_path, allow_pickle=True)
     latent_data = np.load(LATENT_PATH, allow_pickle=True)
     print(f"EEG shape: {eeg_data.shape}, Latent shape: {latent_data.shape}")
@@ -203,13 +203,13 @@ def prepare_data(eeg_data, latent_data):
     train_lat = (train_lat - mean) / (std + 1e-8)
     test_lat  = (test_lat - mean) / (std + 1e-8)
 
-    return train_eeg, test_eeg, train_lat, test_lat
+    return train_eeg, test_eeg, train_lat, test_lat, mean, std
 
 
 # ==========================================
 # Training and Evaluation Utility
 # ==========================================
-def train_model(model, dataloader, optimizer, scheduler):
+def train_model(model, dataloader, optimizer, scheduler, test_loader):
     model.train()
     for epoch in tqdm(range(1, EPOCHS + 1)):
         epoch_loss = 0
@@ -226,7 +226,12 @@ def train_model(model, dataloader, optimizer, scheduler):
             scheduler.step()
             epoch_loss += loss.item()
         if epoch % 10 == 0:
-            print(f"[Epoch {epoch}/{EPOCHS}] Avg Loss: {epoch_loss / len(dataloader):.6f}")
+            avg_loss = epoch_loss / len(dataloader)
+            print("\n" + "="*65)
+            print(f"[Epoch {epoch:03d}/{EPOCHS}]  Avg Loss: {avg_loss:.6f}")
+            print("-"*65)
+            evaluate_model(model, test_loader)
+            print("="*65 + "\n")
     return model
 
 
@@ -242,13 +247,13 @@ def evaluate_model(model, test_loader):
             out = model(eeg, full_video)
             loss = F.mse_loss(out[:, :-1], video)
             total_loss += loss.item()
-    print(f"Final Test MSE: {total_loss / len(test_loader):.6f}")
+    print(f"  Final Test MSE: {total_loss / len(test_loader):.6f}\n")
 
 
 # ==========================================
 # Inference and Saving Utility
 # ==========================================
-def run_inference(model, test_loader):
+def run_inference(model, test_loader, mean, std):
     model.eval()
     preds = []
     with torch.no_grad():
@@ -259,7 +264,11 @@ def run_inference(model, test_loader):
             full_vid = torch.cat((torch.zeros((b, 1, c, h, w), device=DEVICE), vid), 1)
             out = model(eeg, full_vid)
             preds.append(out[:, :-1].cpu().numpy())
-    return np.concatenate(preds)
+    preds = np.concatenate(preds)
+    
+    # Denormalize to match diffusion latent space
+    preds_denorm = preds * std.cpu().numpy() + mean.cpu().numpy()
+    return preds, preds_denorm
 
 
 # ==========================================
@@ -268,7 +277,7 @@ def run_inference(model, test_loader):
 if __name__ == "__main__":
     cleanup_previous_run()
     eeg_data, latent_data = load_data()
-    train_eeg, test_eeg, train_lat, test_lat = prepare_data(eeg_data, latent_data)
+    train_eeg, test_eeg, train_lat, test_lat, mean, std = prepare_data(eeg_data, latent_data)
 
     train_loader = DataLoader(list(zip(train_eeg, train_lat)), batch_size=BATCH_SIZE, shuffle=True)
     test_loader  = DataLoader(list(zip(test_eeg, test_lat)), batch_size=BATCH_SIZE, shuffle=False)
@@ -277,13 +286,15 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS * len(train_loader))
 
-    print(f"🚀 Starting author-matched training for {EPOCHS} epochs...")
-    model = train_model(model, train_loader, optimizer, scheduler)
-    print("✅ Training complete.")
+    print(f"Starting training for {FEATURE_TYPE} on subset {SUBSET_ID}...")
+    model = train_model(model, train_loader, optimizer, scheduler, test_loader)
+    print("✅ Training complete.\n")
     evaluate_model(model, test_loader)
 
-    latent_out = run_inference(model, test_loader)
-    np.save(os.path.join(EMB_SAVE_PATH, f"latent_out_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy"), latent_out)
+    latent_out_norm, latent_out_denorm = run_inference(model, test_loader, mean, std)
+    np.save(os.path.join(EMB_SAVE_PATH, f"latent_out_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy"), latent_out_denorm)
     torch.save({"state_dict": model.state_dict()},
                os.path.join(CKPT_SAVE_PATH, f"seq2seq_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt"))
-    print("💾 Final checkpoint and latent outputs saved.")
+    print(f"Saved → seq2seq_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt")
+    print(f"Saved → latent_out_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy (shape: {latent_out_denorm.shape})")
+
