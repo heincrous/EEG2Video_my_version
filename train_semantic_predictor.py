@@ -22,7 +22,7 @@ from tqdm import tqdm
 # ==========================================
 # Config
 # ==========================================
-FEATURE_TYPE  = "EEG_DE_1per2s"
+FEATURE_TYPE  = "EEG_windows_100"
 SUBJECT_NAME  = "sub1.npy"
 CLASS_SUBSET  = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID     = "1"
