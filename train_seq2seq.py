@@ -254,24 +254,30 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
     for epoch in tqdm(range(1, EPOCHS + 1)):
         epoch_loss = 0
         for eeg, video in dataloader:
-            eeg = eeg.double().to(DEVICE)
-            video = video.double().to(DEVICE)
+            eeg = eeg.float().to(DEVICE)
+            video = video.float().to(DEVICE)
             b, f, c, h, w = video.shape
-            full_video = torch.cat((torch.zeros((b, 1, c, h, w), device=DEVICE, dtype=torch.float64), video), dim=1)
+
+            # prepend zero frame
+            full_video = torch.cat((torch.zeros((b, 1, c, h, w), device=DEVICE), video), dim=1)
+
             optimizer.zero_grad()
             out = model(eeg, full_video)
-            loss = criterion(video, out[:, :-1, :])
+
+            # match author logic: predict 6 frames to reconstruct the 6 video frames
+            loss = criterion(out[:, :-1], video)
+
             loss.backward()
             optimizer.step()
             scheduler.step()
             epoch_loss += loss.item()
 
         if epoch % 10 == 0:
-            print("\n" + "="*65)
+            print("\n" + "=" * 65)
             print(f"[Epoch {epoch:03d}/{EPOCHS}]  Sum Loss: {epoch_loss:.6f}")
-            print("-"*65)
+            print("-" * 65)
             evaluate_model(model, test_loader)
-            print("="*65 + "\n")
+            print("=" * 65 + "\n")
     return model
 
 
@@ -281,12 +287,15 @@ def evaluate_model(model, test_loader):
     total_loss = 0
     with torch.no_grad():
         for eeg, video in test_loader:
-            eeg = eeg.double().to(DEVICE)
-            video = video.double().to(DEVICE)
+            eeg = eeg.float().to(DEVICE)
+            video = video.float().to(DEVICE)
             b, f, c, h, w = video.shape
-            full_video = torch.cat((torch.zeros((b, 1, c, h, w), device=DEVICE, dtype=torch.float64), video), dim=1)
+
+            full_video = torch.cat((torch.zeros((b, 1, c, h, w), device=DEVICE), video), dim=1)
             out = model(eeg, full_video)
-            total_loss += criterion(video, out[:, :-1, :]).item()
+
+            total_loss += criterion(out[:, :-1], video).item()
+
     print(f"  Test MSE (sum): {total_loss:.6f}\n")
 
 
