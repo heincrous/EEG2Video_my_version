@@ -236,6 +236,7 @@ def train_model(model, dataloader, optimizer, scheduler, test_eeg_flat, test_cli
 def save_outputs(model, test_eeg_flat):
     with torch.no_grad():
         preds = model(torch.tensor(test_eeg_flat, dtype=torch.float32, device=DEVICE)).cpu().numpy()
+    preds = preds.reshape(-1, 77, 768)  # store true token×embedding structure
 
     ckpt_name = f"semantic_predictor_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt"
     emb_name  = f"pred_embeddings_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy"
@@ -244,7 +245,7 @@ def save_outputs(model, test_eeg_flat):
     np.save(os.path.join(EMB_SAVE_PATH, emb_name), preds)
 
     print(f"Saved → {ckpt_name}")
-    print(f"Saved → {emb_name}")
+    print(f"Saved → {emb_name} (shape: {preds.shape})")
 
 
 # ==========================================
