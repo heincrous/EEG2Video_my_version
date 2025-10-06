@@ -186,19 +186,22 @@ def load_data():
 
 
 def prepare_data(eeg_data, latent_data):
+    # Split subjects (7 total)
     train_eeg, test_eeg = eeg_data[:6], eeg_data[6:]
     train_lat, test_lat = latent_data[:6], latent_data[6:]
 
+    # Apply class subset if specified
     if CLASS_SUBSET:
         train_eeg = train_eeg[:, CLASS_SUBSET]
         test_eeg  = test_eeg[:, CLASS_SUBSET]
         train_lat = train_lat[:, CLASS_SUBSET]
         test_lat  = test_lat[:, CLASS_SUBSET]
 
-    # flatten windows (no scaling)
+    # Flatten EEG window hierarchy
     train_eeg = rearrange(train_eeg, "b c s w ch t -> (b c s) w ch t")
     test_eeg  = rearrange(test_eeg,  "b c s w ch t -> (b c s) w ch t")
 
+    # === EEG normalization (authors’ flatten → normalize → reshape) ===
     b, w, ch, t = train_eeg.shape
     train_flat = train_eeg.reshape(-1, ch * t)
     test_flat  = test_eeg.reshape(-1, ch * t)
@@ -211,16 +214,24 @@ def prepare_data(eeg_data, latent_data):
     print(f"[EEG scaler] train mean={train_eeg.mean():.5f}, std={train_eeg.std():.5f}")
     print(f"[EEG scaler] test  mean={test_eeg.mean():.5f}, std={test_eeg.std():.5f}")
 
-    # convert to tensors
+    # Convert to tensors
     train_eeg = torch.from_numpy(train_eeg).float()
     test_eeg  = torch.from_numpy(test_eeg).float()
 
-    # reshape latents
+    # === Latent reshaping ===
     train_lat = rearrange(train_lat, "b c s f ch h w -> (b c s) f ch h w")
     test_lat  = rearrange(test_lat,  "b c s f ch h w -> (b c s) f ch h w")
 
     train_lat = torch.tensor(train_lat, dtype=torch.float32)
     test_lat  = torch.tensor(test_lat, dtype=torch.float32)
+
+    # === Latent normalization (authors’ method) ===
+    train_lat_mean = torch.mean(train_lat, dim=(0, 2, 3, 4), dtype=torch.float64)
+    train_lat_std  = torch.std(train_lat, dim=(0, 2, 3, 4))
+    train_lat = (train_lat - train_lat_mean.reshape(1, 4, 1, 1, 1)) / train_lat_std.reshape(1, 4, 1, 1, 1)
+    test_lat  = (test_lat - train_lat_mean.reshape(1, 4, 1, 1, 1)) / train_lat_std.reshape(1, 4, 1, 1, 1)
+
+    print(f"[Latent norm] mean={train_lat.mean():.5f}, std={train_lat.std():.5f}")
 
     return train_eeg, test_eeg, train_lat, test_lat
 
