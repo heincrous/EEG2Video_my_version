@@ -136,8 +136,8 @@ def run_inference():
                 video_length=video_length,
                 height=288,
                 width=512,
-                num_inference_steps=100,
-                guidance_scale=12.5,
+                num_inference_steps=50,
+                guidance_scale=8, # was 12.5
             ).videos
 
             safe_caption = re.sub(r"[^a-zA-Z0-9_-]", "_", caption)
