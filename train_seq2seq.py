@@ -254,7 +254,7 @@ def evaluate_model(model, test_loader):
 # ==========================================
 # Inference and Saving Utility
 # ==========================================
-def run_inference(model, test_loader, mean, std):
+def run_inference(model, test_loader):
     model.eval()
     preds = []
     with torch.no_grad():
@@ -266,7 +266,6 @@ def run_inference(model, test_loader, mean, std):
             out = model(eeg, full_vid)
             preds.append(out[:, :-1].cpu().numpy())
     preds = np.concatenate(preds)
-    
     return preds, preds
 
 
@@ -291,11 +290,21 @@ if __name__ == "__main__":
     evaluate_model(model, test_loader)
 
     latent_out_norm, latent_out_denorm = run_inference(model, test_loader)
-    np.save(os.path.join(EMB_SAVE_PATH, f"latent_out_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy"), latent_out_denorm)
+
+    mean_val = latent_out_denorm.mean()
+    std_val  = latent_out_denorm.std()
+
+    np.save(os.path.join(EMB_SAVE_PATH,
+            f"latent_out_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy"),
+            latent_out_denorm)
+
     torch.save({"state_dict": model.state_dict()},
-               os.path.join(CKPT_SAVE_PATH, f"seq2seq_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt"))
+            os.path.join(CKPT_SAVE_PATH,
+            f"seq2seq_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt"))
+
     print(f"Saved → seq2seq_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt")
     print(f"Saved → latent_out_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy (shape: {latent_out_denorm.shape})")
-    print(f"Latent stats → mean: {latent_out_denorm.mean():.5f}, std: {latent_out_denorm.std():.5f}")
+    print(f"Latent stats → mean: {mean_val:.5f}, std: {std_val:.5f}")
+
 
 
