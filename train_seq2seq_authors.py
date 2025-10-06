@@ -257,7 +257,7 @@ def normalizetion(data):
 
 if __name__ == "__main__":
     eegdata = np.load('/content/drive/MyDrive/EEG2Video_data/processed/EEG_segments/sub1.npy')  # shape: (7, 40, 5, 62, 400)
-    latent_data = np.load('/content/drive/MyDrive/EEG2Video_data/processed/Video_latents.npy')  # shape: (7, 40, 5, 6, 4, 36, 64)
+    latent_data = np.load('/content/drive/MyDrive/EEG2Video_data/processed/Video_latents/Video_latents.npy')  # shape: (7, 40, 5, 6, 4, 36, 64)
 
     new_eeg = eegdata  # already aligned to GT label
 
