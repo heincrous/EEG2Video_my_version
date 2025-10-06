@@ -203,6 +203,11 @@ def prepare_data(eeg_data, clip_data):
         train_eeg_flat = np.concatenate(scaled_train_parts, axis=1)
         test_eeg_flat  = np.concatenate(scaled_test_parts, axis=1)
 
+    # ===== Scaling sanity checks =====
+    print(f"[EEG scaler] train mean={np.mean(train_eeg_flat):.5f}, std={np.std(train_eeg_flat):.5f}")
+    print(f"[EEG scaler] test  mean={np.mean(test_eeg_flat):.5f}, std={np.std(test_eeg_flat):.5f}")
+    print(f"[CLIP check]  train mean={np.mean(train_clip_flat):.5f}, std={np.std(train_clip_flat):.5f}")
+
     return train_eeg_flat, test_eeg_flat, train_clip_flat, test_clip_flat
 
 
