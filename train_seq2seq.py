@@ -147,19 +147,25 @@ class Seq2SeqTransformer(nn.Module):
         self.predictor = nn.Linear(d_model, 4 * 36 * 64)
 
     def forward(self, src, tgt):
-        # reorder so window (100) is last, matching author EEGNet input
-        src = rearrange(src, "b w ch t -> b ch t w")
-        src = self.eeg_embedding(src.reshape(src.shape[0] * src.shape[-1], 1, 62, 100))
-        src = src.reshape(-1, 7, src.shape[-1])  # restore temporal order
-        tgt = self.img_embedding(tgt.reshape(tgt.shape[0], tgt.shape[1], -1))
+        # Encode EEG sequence
+        src = self.eeg_embedding(src.reshape(src.shape[0] * src.shape[1], 1, 62, 100)).reshape(src.shape[0], 7, -1)
+
+        # Encode target latent sequence
+        tgt = tgt.reshape(tgt.shape[0], tgt.shape[1], -1)
+        tgt = self.img_embedding(tgt)
+
+        # Apply positional encoding
         src = self.pos_enc(src)
         tgt = self.pos_enc(tgt)
-        tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt.size(1)).to(tgt.device)
+
+        # Transformer encoder–decoder
+        tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt.size(-2)).to(tgt.device)
         encoder_output = self.encoder(src)
-        new_tgt = torch.zeros((tgt.shape[0], 1, tgt.shape[2])).to(tgt.device)
+        new_tgt = torch.zeros((tgt.shape[0], 1, tgt.shape[2]), device=tgt.device)
         for i in range(6):
             decoder_output = self.decoder(new_tgt, encoder_output, tgt_mask=tgt_mask[:i+1, :i+1])
             new_tgt = torch.cat((new_tgt, decoder_output[:, -1:, :]), dim=1)
+
         return self.predictor(new_tgt).reshape(new_tgt.shape[0], new_tgt.shape[1], 4, 36, 64)
 
 
@@ -195,15 +201,10 @@ def prepare_data(eeg_data, latent_data):
     train_eeg = torch.from_numpy(scaler.transform(train_eeg.reshape(train_eeg.shape[0], -1)).astype(np.float32)).reshape(train_eeg.shape)
     test_eeg  = torch.from_numpy(scaler.transform(test_eeg.reshape(test_eeg.shape[0], -1)).astype(np.float32)).reshape(test_eeg.shape)
 
-    # Latent normalization identical to authors (per-channel mean/std)
     train_lat = torch.tensor(train_lat, dtype=torch.float32)
     test_lat  = torch.tensor(test_lat, dtype=torch.float32)
-    mean = torch.mean(train_lat, dim=(0, 2, 3, 4), keepdim=True)
-    std  = torch.std(train_lat, dim=(0, 2, 3, 4), keepdim=True)
-    train_lat = (train_lat - mean) / (std + 1e-8)
-    test_lat  = (test_lat - mean) / (std + 1e-8)
 
-    return train_eeg, test_eeg, train_lat, test_lat, mean, std
+    return train_eeg, test_eeg, train_lat, test_lat
 
 
 # ==========================================
@@ -266,10 +267,7 @@ def run_inference(model, test_loader, mean, std):
             preds.append(out[:, :-1].cpu().numpy())
     preds = np.concatenate(preds)
     
-    # Denormalize to match diffusion latent space
-    preds_denorm = (preds * std.cpu().numpy() + mean.cpu().numpy()) * 0.18215
-    print(f"Applied 0.18215 scaling to match Stable Diffusion latent space.")
-    return preds, preds_denorm
+    return preds, preds
 
 
 # ==========================================
@@ -278,7 +276,7 @@ def run_inference(model, test_loader, mean, std):
 if __name__ == "__main__":
     cleanup_previous_run()
     eeg_data, latent_data = load_data()
-    train_eeg, test_eeg, train_lat, test_lat, mean, std = prepare_data(eeg_data, latent_data)
+    train_eeg, test_eeg, train_lat, test_lat = prepare_data(eeg_data, latent_data)
 
     train_loader = DataLoader(list(zip(train_eeg, train_lat)), batch_size=BATCH_SIZE, shuffle=True)
     test_loader  = DataLoader(list(zip(test_eeg, test_lat)), batch_size=BATCH_SIZE, shuffle=False)
@@ -292,7 +290,7 @@ if __name__ == "__main__":
     print("✅ Training complete.\n")
     evaluate_model(model, test_loader)
 
-    latent_out_norm, latent_out_denorm = run_inference(model, test_loader, mean, std)
+    latent_out_norm, latent_out_denorm = run_inference(model, test_loader)
     np.save(os.path.join(EMB_SAVE_PATH, f"latent_out_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy"), latent_out_denorm)
     torch.save({"state_dict": model.state_dict()},
                os.path.join(CKPT_SAVE_PATH, f"seq2seq_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt"))
