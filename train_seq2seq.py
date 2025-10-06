@@ -267,7 +267,8 @@ def run_inference(model, test_loader, mean, std):
     preds = np.concatenate(preds)
     
     # Denormalize to match diffusion latent space
-    preds_denorm = preds * std.cpu().numpy() + mean.cpu().numpy()
+    preds_denorm = (preds * std.cpu().numpy() + mean.cpu().numpy()) * 0.18215
+    print(f"Applied 0.18215 scaling to match Stable Diffusion latent space.")
     return preds, preds_denorm
 
 
@@ -297,4 +298,6 @@ if __name__ == "__main__":
                os.path.join(CKPT_SAVE_PATH, f"seq2seq_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt"))
     print(f"Saved → seq2seq_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt")
     print(f"Saved → latent_out_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy (shape: {latent_out_denorm.shape})")
+    print(f"Latent stats → mean: {latent_out_denorm.mean():.5f}, std: {latent_out_denorm.std():.5f}")
+
 
