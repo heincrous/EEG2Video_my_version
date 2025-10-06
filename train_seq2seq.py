@@ -224,6 +224,12 @@ def prepare_data(eeg_data, latent_data):
     train_lat = rearrange(train_lat, "b c s f ch h w -> (b c s) f ch h w")
     test_lat  = rearrange(test_lat,  "b c s f ch h w -> (b c s) f ch h w")
 
+    # Convert to tensors before permuting
+    train_lat = torch.tensor(train_lat, dtype=torch.float32)
+    test_lat  = torch.tensor(test_lat, dtype=torch.float32)
+
+    # === Latent normalization (authors’ method, per-channel not per-frame) ===
+    # Our layout: (B, F=6, C=4, H=36, W=64)
     train_lat = train_lat.permute(0, 2, 1, 3, 4)  # (B, 4, 6, 36, 64)
     test_lat  = test_lat.permute(0, 2, 1, 3, 4)
 
@@ -239,7 +245,6 @@ def prepare_data(eeg_data, latent_data):
 
     print(f"[Latent norm] train mean={train_lat.mean():.5f}, std={train_lat.std():.5f}")
     print(f"[Latent norm] test  mean={test_lat.mean():.5f}, std={test_lat.std():.5f}")
-
 
     return train_eeg, test_eeg, train_lat, test_lat
 
