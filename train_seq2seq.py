@@ -211,7 +211,7 @@ def prepare_data(eeg_data, latent_data):
     test_eeg  = scaler.transform(test_flat)
 
     train_eeg = train_eeg.reshape(b, w, ch, t)
-    test_eeg  = test_eeg.reshape(test_eeg.shape[0], w, ch, t)
+    test_eeg  = test_eeg.reshape(-1, w, ch, t)
 
     print(f"[EEG scaler] train mean={train_eeg.mean():.5f}, std={train_eeg.std():.5f}")
     print(f"[EEG scaler] test  mean={test_eeg.mean():.5f}, std={test_eeg.std():.5f}")
@@ -227,14 +227,11 @@ def prepare_data(eeg_data, latent_data):
     train_lat = torch.tensor(train_lat, dtype=torch.float32)
     test_lat  = torch.tensor(test_lat, dtype=torch.float32)
 
-    # === Latent normalization (authors’ method adapted to our 6↔4 swap) ===
-    # Our layout: (batch, frames=6, channels=4, height=36, width=64)
-    train_lat_mean = torch.mean(train_lat, dim=(0, 1, 3, 4), dtype=torch.float32)
-    train_lat_std  = torch.std(train_lat, dim=(0, 1, 3, 4))
+    train_lat_mean = torch.mean(train_lat, dim=(0, 2, 3, 4), dtype=torch.float32)
+    train_lat_std  = torch.std(train_lat, dim=(0, 2, 3, 4))
+    train_lat = (train_lat - train_lat_mean.reshape(1, 6, 1, 1, 1)) / train_lat_std.reshape(1, 6, 1, 1, 1)
+    test_lat  = (test_lat  - train_lat_mean.reshape(1, 6, 1, 1, 1)) / train_lat_std.reshape(1, 6, 1, 1, 1)
 
-    # Normalize both train and test using train stats
-    train_lat = (train_lat - train_lat_mean.reshape(1, 1, 4, 1, 1)) / train_lat_std.reshape(1, 1, 4, 1, 1)
-    test_lat  = (test_lat  - train_lat_mean.reshape(1, 1, 4, 1, 1)) / train_lat_std.reshape(1, 1, 4, 1, 1)
 
     print(f"[Latent norm] train mean={train_lat.mean():.5f}, std={train_lat.std():.5f}")
     print(f"[Latent norm] test  mean={test_lat.mean():.5f}, std={test_lat.std():.5f}")
