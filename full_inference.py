@@ -215,58 +215,85 @@ pipe = TuneAVideoPipeline(
     scheduler=DDIMScheduler.from_pretrained(PRETRAINED_SD_PATH, subfolder="scheduler"),
 ).to(device)
 pipe.unet.to(torch.float16)
+pipe.vae.to(torch.float16)
 pipe.enable_vae_slicing()
 
 # ==========================================
-# Inference Function (with biasing)
+# Inference Function (biasing + stability fixes)
 # ==========================================
 def run_inference():
-    video_length, fps = 6, 3
+    video_length, fps = 8, 3
     sem_preds = sem_preds_all.reshape(num_classes, trials_per_class, 77, 768)
 
-    # Precompute class means (centroids)
+    # === Precompute class centroids ===
     class_means = sem_preds.mean(axis=1)
-    class_means_t = torch.tensor(class_means, dtype=torch.float32, device=device)
+    class_means_t = torch.tensor(class_means, dtype=torch.float16, device=device)
 
     for trial in range(trials_per_class):
         for ci, class_id in enumerate(CLASS_SUBSET):
             emb = sem_preds[ci, trial]
             caption = str(blip_text[test_block, class_id, trial])
 
-            # ----- Weighted semantic conditioning -----
-            emb_t = torch.tensor(emb, dtype=torch.float32, device=device)
+            # ==========================================
+            # Weighted semantic conditioning (temperature + top-k)
+            # ==========================================
+            emb_t = torch.tensor(emb, dtype=torch.float16, device=device)
             sims = torch.nn.functional.cosine_similarity(
-                emb_t.flatten().unsqueeze(0),
-                class_means_t.flatten(start_dim=1),
+                emb_t.flatten().unsqueeze(0).to(torch.float32),
+                class_means_t.flatten(start_dim=1).to(torch.float32),
                 dim=1
             )
-            weights = torch.softmax(sims, dim=0)
-            bias_emb = torch.sum(weights[:, None, None] * class_means_t, dim=0)
-            semantic_emb = 0.7 * emb_t + 0.3 * bias_emb
-            semantic_emb = semantic_emb.unsqueeze(0).to(torch.float16)
 
-            # ----- Class-conditioned negative embedding -----
+            tau = 2.5
+            k = 3
+            weights = torch.softmax(sims * tau, dim=0)
+            topk = torch.topk(weights, k)
+            mask = torch.zeros_like(weights)
+            mask[topk.indices] = weights[topk.indices]
+            mask = mask / mask.sum()
+
+            bias_emb = torch.sum(mask[:, None, None] * class_means_t.to(torch.float32), dim=0)
+            bias_emb = bias_emb.to(torch.float16)
+
+            alpha = 0.15
+            semantic_emb = (1 - alpha) * emb_t + alpha * bias_emb
+            semantic_emb = semantic_emb.unsqueeze(0)
+
+            # ==========================================
+            # Class-conditioned negative embedding
+            # ==========================================
             neg_class_mean = torch.mean(
                 torch.stack([m for i, m in enumerate(class_means_t) if i != ci]),
                 dim=0
             )
-            neg_embeddings = neg_class_mean.to(torch.float16).unsqueeze(0)
+            neg_embeddings = neg_class_mean.unsqueeze(0)
 
-            # ----- Diffusion generation -----
+            # ==========================================
+            # Adaptive guidance based on confidence (clamped)
+            # ==========================================
+            conf = sims.max().item()
+            guidance_scale = max(7.0, min(8.0 + 8.0 * conf, 10.0))
+
+            # ==========================================
+            # Diffusion generation (reduced steps)
+            # ==========================================
             video = pipe(
                 prompt=semantic_emb,
                 negative_prompt=neg_embeddings,
                 video_length=video_length,
                 height=288,
                 width=512,
-                num_inference_steps=100,
-                guidance_scale=12.5,
+                num_inference_steps=40,
+                guidance_scale=guidance_scale,
             ).videos
 
-            # ----- Save output -----
+            # ==========================================
+            # Save output
+            # ==========================================
             safe_caption = re.sub(r'[^a-zA-Z0-9_-]', '_', caption)
             if len(safe_caption) > 120:
                 safe_caption = safe_caption[:120]
+
             out_gif = os.path.join(OUTPUT_DIR, f"{safe_caption}.gif")
             save_videos_grid(video, out_gif, fps=fps)
             print(f"Saved: {out_gif}")
@@ -278,4 +305,3 @@ if __name__ == "__main__":
     print(f"Running inference for {FEATURE_TYPE}, subset {SUBSET_ID}...")
     cleanup_previous_outputs()
     run_inference()
-
