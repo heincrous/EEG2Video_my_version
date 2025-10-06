@@ -14,7 +14,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from sklearn import preprocessing
+from sklearn.preprocessing import StandardScaler
 from einops import rearrange
 from tqdm import tqdm
 
@@ -22,12 +22,13 @@ from tqdm import tqdm
 # ==========================================
 # Config
 # ==========================================
-FEATURE_TYPE  = "EEG_windows_100"
+FEATURE_TYPE   = "EEG_windows_100"  # single feature if fusion is empty
+FEATURE_FUSION = []  # e.g. ["EEG_DE_1per2s", "EEG_PSD_1per2s", "EEG_windows_100"]
 SUBJECT_NAME  = "sub1.npy"
 CLASS_SUBSET  = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID     = "1"
 
-EPOCHS        = 200
+EPOCHS        = 100
 BATCH_SIZE    = 32
 LR            = 5e-4
 DEVICE        = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -79,8 +80,9 @@ class EEGTextDataset:
 # Clean-up Utility
 # ==========================================
 def cleanup_previous_run():
-    prefix_ckpt = f"semantic_predictor_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}"
-    prefix_emb  = f"pred_embeddings_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}"
+    tag = "_".join(FEATURE_FUSION) if FEATURE_FUSION else FEATURE_TYPE
+    prefix_ckpt = f"semantic_predictor_{tag}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}"
+    prefix_emb  = f"pred_embeddings_{tag}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}"
 
     deleted = 0
     for root, _, files in os.walk(CKPT_SAVE_PATH):
@@ -93,25 +95,55 @@ def cleanup_previous_run():
             if f.startswith(prefix_emb):
                 os.remove(os.path.join(root, f))
                 deleted += 1
-    print(f"🧹 Deleted {deleted} old file(s) for subset {SUBSET_ID} ({FEATURE_TYPE}).")
+    print(f"🧹 Deleted {deleted} old file(s) for subset {SUBSET_ID} ({tag}).")
 
 
 # ==========================================
 # Data Loading Utility
 # ==========================================
 def load_data():
-    print(f"Loading EEG features from: {FEATURE_TYPE}/{SUBJECT_NAME}")
-    eeg_path = os.path.join(EEG_PATH_ROOT, FEATURE_TYPE, SUBJECT_NAME)
-    eeg_data = np.load(eeg_path, allow_pickle=True)
+    # ----- Single feature -----
+    if not FEATURE_FUSION:
+        print(f"Loading EEG features from: {FEATURE_TYPE}/{SUBJECT_NAME}")
+        eeg_path = os.path.join(EEG_PATH_ROOT, FEATURE_TYPE, SUBJECT_NAME)
+        eeg_data = np.load(eeg_path, allow_pickle=True)
+        clip_data = np.load(CLIP_PATH, allow_pickle=True)
+
+        if eeg_data.ndim == 6 and eeg_data.shape[3] in [2, 3, 7]:
+            eeg_data = eeg_data.mean(axis=3)
+        elif eeg_data.ndim != 5:
+            raise ValueError(f"Unexpected EEG shape: {eeg_data.shape}")
+
+        print(f"Loaded EEG shape: {eeg_data.shape}")
+        print(f"CLIP shape: {clip_data.shape}")
+        return eeg_data, clip_data
+
+    # ----- Multi-feature fusion -----
+    eeg_list = []
+    print(f"Loading EEG features for fusion: {FEATURE_FUSION}")
+    for ftype in FEATURE_FUSION:
+        path = os.path.join(EEG_PATH_ROOT, ftype, SUBJECT_NAME)
+        eeg = np.load(path, allow_pickle=True)
+
+        if eeg.ndim == 6 and eeg.shape[3] in [2, 3, 7]:
+            eeg = eeg.mean(axis=3)
+        elif eeg.ndim == 7:
+            eeg = eeg.mean(axis=3)
+        elif eeg.ndim != 5:
+            raise ValueError(f"Unexpected EEG shape for {ftype}: {eeg.shape}")
+
+        eeg_list.append(eeg)
+        print(f"  {ftype}: shape {eeg.shape}")
+
+    # Align temporal dimension
+    min_t = min(eeg.shape[-1] for eeg in eeg_list)
+    eeg_list = [eeg[..., :min_t] for eeg in eeg_list]
+
+    # Concatenate along last axis
+    eeg_data = np.concatenate(eeg_list, axis=-1)
     clip_data = np.load(CLIP_PATH, allow_pickle=True)
-    print(f"Original EEG shape: {eeg_data.shape}")
 
-    if eeg_data.ndim == 6 and eeg_data.shape[3] in [2, 3, 7]:
-        eeg_data = eeg_data.mean(axis=3)
-    elif eeg_data.ndim != 5:
-        raise ValueError(f"Unexpected EEG shape: {eeg_data.shape}")
-
-    print(f"Processed EEG shape: {eeg_data.shape}")
+    print(f"Fused EEG shape: {eeg_data.shape}")
     print(f"CLIP shape: {clip_data.shape}")
     return eeg_data, clip_data
 
@@ -120,23 +152,47 @@ def load_data():
 # Data Shaping Utility
 # ==========================================
 def prepare_data(eeg_data, clip_data):
+    # Split 6 train, 1 test blocks
     train_eeg, test_eeg = eeg_data[:6], eeg_data[6:]
     train_clip, test_clip = clip_data[:6], clip_data[6:]
 
+    # Apply subset BEFORE scaling
     train_eeg  = train_eeg[:, CLASS_SUBSET]
     test_eeg   = test_eeg[:, CLASS_SUBSET]
     train_clip = train_clip[:, CLASS_SUBSET]
     test_clip  = test_clip[:, CLASS_SUBSET]
 
-    train_eeg_flat = rearrange(train_eeg, "b c s ch t -> (b c s) (ch t)")
-    test_eeg_flat  = rearrange(test_eeg,  "b c s ch t -> (b c s) (ch t)")
+    # Flatten EEG & CLIP
+    train_eeg_flat  = rearrange(train_eeg,  "b c s ch t -> (b c s) (ch t)")
+    test_eeg_flat   = rearrange(test_eeg,   "b c s ch t -> (b c s) (ch t)")
     train_clip_flat = rearrange(train_clip, "b c s tok dim -> (b c s) (tok dim)")
     test_clip_flat  = rearrange(test_clip,  "b c s tok dim -> (b c s) (tok dim)")
 
-    scaler = preprocessing.StandardScaler()
-    scaler.fit(train_eeg_flat)
-    train_eeg_flat = scaler.transform(train_eeg_flat)
-    test_eeg_flat  = scaler.transform(test_eeg_flat)
+    # Scaling
+    if not FEATURE_FUSION:
+        print("Scaling EEG features (single-feature mode)...")
+        scaler = StandardScaler()
+        scaler.fit(train_eeg_flat)
+        train_eeg_flat = scaler.transform(train_eeg_flat)
+        test_eeg_flat  = scaler.transform(test_eeg_flat)
+
+    else:
+        print("Scaling fused features separately using training EEG only...")
+        n_feats = len(FEATURE_FUSION)
+        total_len = train_eeg_flat.shape[1]
+        chunk_size = total_len // n_feats
+
+        scaled_train_parts, scaled_test_parts = [], []
+        for i in range(n_feats):
+            start = i * chunk_size
+            end = (i + 1) * chunk_size if i < n_feats - 1 else total_len
+            scaler = StandardScaler()
+            scaler.fit(train_eeg_flat[:, start:end])  # fit only on training EEG
+            scaled_train_parts.append(scaler.transform(train_eeg_flat[:, start:end]))
+            scaled_test_parts.append(scaler.transform(test_eeg_flat[:, start:end]))
+
+        train_eeg_flat = np.concatenate(scaled_train_parts, axis=1)
+        test_eeg_flat  = np.concatenate(scaled_test_parts, axis=1)
 
     return train_eeg_flat, test_eeg_flat, train_clip_flat, test_clip_flat
 
@@ -238,8 +294,9 @@ def save_outputs(model, test_eeg_flat):
         preds = model(torch.tensor(test_eeg_flat, dtype=torch.float32, device=DEVICE)).cpu().numpy()
     preds = preds.reshape(-1, 77, 768)  # store true token×embedding structure
 
-    ckpt_name = f"semantic_predictor_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt"
-    emb_name  = f"pred_embeddings_{FEATURE_TYPE}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy"
+    tag = "_".join(FEATURE_FUSION) if FEATURE_FUSION else FEATURE_TYPE
+    ckpt_name = f"semantic_predictor_{tag}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt"
+    emb_name  = f"pred_embeddings_{tag}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy"
 
     torch.save({'state_dict': model.state_dict()}, os.path.join(CKPT_SAVE_PATH, ckpt_name))
     np.save(os.path.join(EMB_SAVE_PATH, emb_name), preds)
