@@ -35,7 +35,7 @@ SUBJECT_NAME     = "sub1.npy"
 CLASS_SUBSET     = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID        = "1"
 
-EPOCHS           = 200
+EPOCHS           = 100
 BATCH_SIZE       = 32
 LR               = 5e-4
 P                = 0.5
@@ -289,7 +289,7 @@ def evaluate_model(model, test_loader):
             out = model(eeg, full_video)
             loss = F.mse_loss(video, out[:, :-1, :])
             total_loss += loss.item()
-    print(f"  Final Test MSE: {total_loss / len(test_loader):.6f}\n")
+    print(f"  Final Test MSE: {total_loss:.6f}\n")
 
 
 # ==========================================
