@@ -39,7 +39,7 @@ SUBSET_ID        = "1"
 EPOCHS           = 300
 BATCH_SIZE       = 32
 LR               = 5e-4
-P                = 0.2
+P                = 0.1
 DEVICE           = "cuda" if torch.cuda.is_available() else "cpu"
 
 EEG_PATH_ROOT    = "/content/drive/MyDrive/EEG2Video_data/processed"
@@ -200,7 +200,6 @@ class Seq2SeqTransformer(nn.Module):
 
         # Combine predicted frames
         out = torch.cat(out_frames, dim=1)
-        out = F.normalize(out, dim=-1)
         return out.reshape(out.shape[0], out.shape[1], 4, 36, 64)
 
 
@@ -280,9 +279,6 @@ def prepare_data(eeg_data, latent_data):
     print(f"[Latent norm] train mean={train_lat.mean():.5f}, std={train_lat.std():.5f}")
     print(f"[Latent norm] test  mean={test_lat.mean():.5f}, std={test_lat.std():.5f}")
 
-    train_lat = F.layer_norm(train_lat, train_lat.shape[-3:])
-    test_lat  = F.layer_norm(test_lat,  test_lat.shape[-3:])
-
     return train_eeg, test_eeg, train_lat, test_lat
 
 
@@ -318,15 +314,12 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
 
             cos = 1 - F.cosine_similarity(pred.flatten(1), video.flatten(1), dim=1).mean()
 
-            # Variance regularization
-            var_reg = (pred.std() - 1.0).pow(2)
-
             if epoch < 100:
-                loss = 0.5 * mse + 0.5 * cos + 0.01 * var_reg
+                loss = 0.5 * mse + 0.5 * cos
             elif epoch < 200:
-                loss = 0.7 * mse + 0.3 * cos + 0.01 * var_reg
+                loss = 0.7 * mse + 0.3 * cos
             else:
-                loss = 0.5 * mse + 0.5 * cos + 0.01 * var_reg
+                loss = 0.5 * mse + 0.5 * cos
 
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
