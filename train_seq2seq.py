@@ -314,11 +314,7 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
             out = model(eeg, full_video)
             pred = out[:, :-1, :]
 
-            # === Normalize per batch before loss ===
-            pred = (pred - pred.mean()) / (pred.std() + 1e-6)
-            video = (video - video.mean()) / (video.std() + 1e-6)
             mse = F.mse_loss(pred, video, reduction='mean')
-
 
             # Normalize for cosine
             pred_norm = F.normalize(pred.flatten(1), dim=1)
@@ -328,11 +324,10 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
             # Variance regularization
             var_reg = (pred.std() - 1.0).pow(2)
 
-            # Simpler, balanced schedule
             if epoch < 100:
-                loss = mse + 0.1 * cos + 0.01 * var_reg
+                loss = mse + 0.3 * cos + 0.01 * var_reg
             elif epoch < 200:
-                loss = 0.7 * mse + 0.3 * cos + 0.01 * var_reg
+                loss = 0.6 * mse + 0.4 * cos + 0.01 * var_reg
             else:
                 loss = 0.5 * mse + 0.5 * cos + 0.01 * var_reg
 
