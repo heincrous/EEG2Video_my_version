@@ -277,13 +277,13 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
             # Combined loss = MSE + cosine penalty
             mse = F.mse_loss(pred, video, reduction='mean')
             cos = 1 - F.cosine_similarity(pred.flatten(1), video.flatten(1), dim=1).mean()
-            var_reg = (pred.std() - 1.0).pow(2)
+            var_reg = (pred.std() - 0.7).pow(2)
 
             # Warmup for first 50 epochs: prioritize cosine
             if epoch < 50:
                 loss = 0.3 * mse + 2.0 * cos + 0.1 * var_reg
             else:
-                loss = 0.8 * mse + 1.0 * cos + 0.05 * var_reg
+                loss = 0.7 * mse + 1.5 * cos + 0.05 * var_reg
 
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -380,7 +380,7 @@ if __name__ == "__main__":
 
     model = Seq2SeqTransformer().to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50 * len(train_loader))
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
 
     print(f"Starting training for {FEATURE_TYPE} on subset {SUBSET_ID}...")
     model = train_model(model, train_loader, optimizer, scheduler, test_loader)
