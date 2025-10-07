@@ -171,8 +171,8 @@ def prepare_data(eeg_data, clip_data):
     train_clip = train_clip[:, CLASS_SUBSET]
     test_clip  = test_clip[:, CLASS_SUBSET]
 
-    train_clip = train_clip[:, :, :1, :, :].repeat(1, 1, 5, 1, 1)
-    test_clip  = test_clip[:, :, :1, :, :].repeat(1, 1, 5, 1, 1)
+    train_clip = np.repeat(train_clip[:, :, :1, :, :], 5, axis=2)
+    test_clip  = np.repeat(test_clip[:, :, :1, :, :], 5, axis=2)
     print("Applied authors' scheme: repeated first clip embedding 5× per class.")
 
     # Flatten EEG & CLIP
