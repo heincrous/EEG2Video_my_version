@@ -194,10 +194,10 @@ if __name__ == "__main__":
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
 
     model = myTransformer().cuda()
-    optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(dataloader))
 
-    for epoch in tqdm(range(400)):
+    for epoch in tqdm(range(200)):
         model.train()
         epoch_loss = 0
         for eeg, video in dataloader:
