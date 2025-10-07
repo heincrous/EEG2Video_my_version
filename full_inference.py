@@ -29,7 +29,7 @@ SEM_PATH           = f"/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddi
 
 NEGATIVE_MODE      = "mean_sem"
 NUM_INFERENCE      = 50
-GUIDANCE_SCALE     = 25
+GUIDANCE_SCALE     = 5
 
 
 # ==========================================

@@ -31,7 +31,6 @@ SUBSET_ID     = "1"
 EPOCHS        = 200
 BATCH_SIZE    = 32
 LR            = 1e-5
-COSINE_LAMBDA = 3   # weight for cosine term (0 = pure MSE)
 DEVICE        = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 EEG_PATH_ROOT   = "/content/drive/MyDrive/EEG2Video_data/processed"
@@ -292,16 +291,28 @@ def train_model(model, dataloader, optimizer, scheduler, test_eeg_flat, test_cli
             optimizer.zero_grad()
             pred = model(eeg)
             
-            # === Base MSE loss ===
-            mse_loss = F.mse_loss(pred, clip)
+            # Configurable weights
+            L_MSE     = 1.0   # weight for normalized MSE
+            L_COSINE  = 3.0   # weight for cosine alignment
+            L_MAG     = 0.1   # weight for magnitude consistency
 
-            # === Cosine loss term ===
+            # === Normalize predicted and target embeddings ===
             pred_norm = F.normalize(pred, p=2, dim=1)
             clip_norm = F.normalize(clip, p=2, dim=1)
-            cosine_loss = 1 - torch.mean(torch.sum(pred_norm * clip_norm, dim=1))
 
-            # === Combined loss ===
-            loss = mse_loss + COSINE_LAMBDA * cosine_loss
+            # === (1) MSE loss on normalized embeddings ===
+            mse_loss = F.mse_loss(pred_norm, clip_norm) if L_MSE > 0 else torch.tensor(0.0, device=DEVICE)
+
+            # === (2) Cosine loss ===
+            cosine_loss = (1 - torch.mean(torch.sum(pred_norm * clip_norm, dim=1))) if L_COSINE > 0 else torch.tensor(0.0, device=DEVICE)
+
+            # === (3) Magnitude (norm) loss ===
+            pred_mag = torch.norm(pred, dim=1)
+            clip_mag = torch.norm(clip, dim=1)
+            mag_loss = F.mse_loss(pred_mag, clip_mag) if L_MAG > 0 else torch.tensor(0.0, device=DEVICE)
+
+            # === Combined total loss ===
+            loss = (L_MSE * mse_loss) + (L_COSINE * cosine_loss) + (L_MAG * mag_loss)
 
             loss.backward()
             optimizer.step()
