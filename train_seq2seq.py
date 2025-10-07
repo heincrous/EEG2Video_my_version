@@ -261,6 +261,8 @@ def prepare_data(eeg_data, latent_data):
 # Training and Evaluation Utility
 # ==========================================
 def train_model(model, dataloader, optimizer, scheduler, test_loader):
+    print(f"{'Epoch':<8}{'Train MSE':<12}{'Cos':<10}{'Grad':<10}{'μ':<10}{'σ':<10}")
+    print("-"*60)
     for epoch in tqdm(range(1, EPOCHS + 1)):
         model.train()
         epoch_mse, epoch_cos = 0.0, 0.0
@@ -315,8 +317,7 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
         mean_grad = np.mean(grad_norms)
         mean_pred, std_pred = np.mean(pred_means), np.mean(pred_stds)
 
-        print(f"[Epoch {epoch:03d}] MSE={avg_mse:.4f} | Cos={avg_cos:.4f} | "
-              f"μ={mean_pred:.3f} σ={std_pred:.3f} | Grad={mean_grad:.2f}")
+        print(f"{epoch:<8}{avg_mse:<12.4f}{avg_cos:<10.4f}{mean_grad:<10.3f}{mean_pred:<10.3f}{std_pred:<10.3f}")
 
         # occasional evaluation
         if epoch % 10 == 0:
@@ -354,8 +355,7 @@ def evaluate_model(model, test_loader):
 
     avg_mse = total_mse / total_samples
     avg_cos = total_cos / total_samples
-    print(f"Eval → MSE={avg_mse:.6f} | Cosine={avg_cos:.6f} "
-          f"| Pred μ={np.mean(pred_means):.4f}, σ={np.mean(pred_stds):.4f}\n")
+    print(f"📊 Eval ▶ MSE={avg_mse:.4f} | Cos={avg_cos:.4f} | μ={np.mean(pred_means):.3f} σ={np.mean(pred_stds):.3f}\n")
 
 
 # ==========================================
