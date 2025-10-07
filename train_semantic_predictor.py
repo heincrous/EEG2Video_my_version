@@ -221,12 +221,10 @@ def prepare_data(eeg_data, clip_data):
 def evaluate_model(model, test_eeg_flat, test_clip_flat):
     model.eval()
     with torch.no_grad():
-        test_preds = model(
-            torch.tensor(test_eeg_flat, dtype=torch.float32, device=DEVICE)
-        ).cpu().numpy()
+        test_preds = model(torch.tensor(test_eeg_flat, dtype=torch.float32, device=DEVICE)).cpu().numpy()
         gt = test_clip_flat
 
-    # === Normalize predicted and GT embeddings ===
+    # === Normalize for cosine computations ===
     preds = test_preds / (np.linalg.norm(test_preds, axis=1, keepdims=True) + 1e-8)
     gt_norm = gt / (np.linalg.norm(gt, axis=1, keepdims=True) + 1e-8)
 
@@ -237,29 +235,26 @@ def evaluate_model(model, test_eeg_flat, test_clip_flat):
     # === 1. Average cosine similarity (pred vs ground truth) ===
     avg_cosine = np.mean(np.sum(preds * gt_norm, axis=1))
 
-    # === 2. Compute per-class means ===
+    # === 2. Compute per-class means from GT embeddings ===
     class_means = np.zeros((num_classes, preds.shape[1]))
     for c in range(num_classes):
-        class_means[c] = preds[labels == c].mean(axis=0)
+        class_means[c] = gt_norm[labels == c].mean(axis=0)
         class_means[c] /= np.linalg.norm(class_means[c]) + 1e-8
 
-    # === 3. Within-class similarity ===
-    within_scores = []
-    for i, p in enumerate(preds):
-        c = labels[i]
-        sim = np.dot(p, class_means[c])
-        within_scores.append(sim)
-    avg_within = np.mean(within_scores)
+    # === 3. Compute class assignments for each predicted embedding ===
+    sims = np.dot(preds, class_means.T)        # (N × num_classes)
+    pred_classes = np.argmax(sims, axis=1)     # highest-similarity class
+    correct = (pred_classes == labels).sum()
+    acc = correct / len(labels)
 
-    # === 4. Between-class similarity ===
-    between_scores = []
-    for i, p in enumerate(preds):
-        c = labels[i]
-        sims = np.dot(class_means[np.arange(num_classes) != c], p)
-        between_scores.extend(sims)
+    # === 4. Within / Between class similarity ===
+    within_scores = [np.dot(preds[i], class_means[labels[i]]) for i in range(len(preds))]
+    between_scores = [np.mean(np.dot(preds[i], class_means[np.arange(num_classes) != labels[i]]))
+                      for i in range(len(preds))]
+    avg_within = np.mean(within_scores)
     avg_between = np.mean(between_scores)
 
-    # === 5. Fisher-style class separability (optional) ===
+    # === 5. Fisher-style separability ===
     global_mean = class_means.mean(axis=0)
     numerator = np.sum([np.sum((m - global_mean) ** 2) for m in class_means])
     denominator = np.sum([
@@ -273,7 +268,8 @@ def evaluate_model(model, test_eeg_flat, test_clip_flat):
         f"  Within-class cosine: {avg_within:.4f}\n"
         f"  Between-class cosine: {avg_between:.4f}\n"
         f"  Fisher Score: {fisher_score:.4f}\n"
-        f"  Δ (Within−Between): {avg_within - avg_between:.4f}"
+        f"  Δ (Within−Between): {avg_within - avg_between:.4f}\n"
+        f"  Classification Accuracy: {acc*100:.2f}%"
     )
 
 
