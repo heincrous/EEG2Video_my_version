@@ -30,8 +30,8 @@ SUBSET_ID     = "1"
 
 EPOCHS        = 200
 BATCH_SIZE    = 32
-LR            = 1e-4
-COSINE_LAMBDA = 2   # weight for cosine term (0 = pure MSE)
+LR            = 1e-5
+COSINE_LAMBDA = 3   # weight for cosine term (0 = pure MSE)
 DEVICE        = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 EEG_PATH_ROOT   = "/content/drive/MyDrive/EEG2Video_data/processed"
