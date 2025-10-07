@@ -206,7 +206,7 @@ if __name__ == "__main__":
             b, _, c, w, h = video.shape
             full_video = torch.cat((torch.zeros((b, 1, c, w, h), device='cuda'), video), dim=1)
             optimizer.zero_grad()
-            _, out = model(eeg, full_video)
+            out = model(eeg, full_video)
             l = loss(video, out[:, :-1, :])
             l.backward()
             optimizer.step()
@@ -220,7 +220,7 @@ if __name__ == "__main__":
     test_eeg = test_eeg.float().cuda()
     b, _, c, w, h = test_latent.shape
     full_video = torch.cat((torch.zeros((b, 1, c, w, h), device='cuda'), test_latent), dim=1)
-    _, out = model(test_eeg, full_video)
+    out = model(test_eeg, full_video)
     latent_out = out[:, :-1, :].cpu().detach().numpy()
 
     np.save("/content/drive/MyDrive/EEG2Video_checkpoints/latent_out_block7_40_classes.npy", latent_out)
