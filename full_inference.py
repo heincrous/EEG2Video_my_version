@@ -92,10 +92,21 @@ if WITH_SEQ2SEQ:
     latents_seq2seq = np.load(LATENT_SEQ2SEQ)
     latents_seq2seq = torch.from_numpy(latents_seq2seq).half()
 
-    print(f"[Predicted latents] mean={latents_seq2seq.mean():.4f}, std={latents_seq2seq.std():.4f}")
+    mean_val = latents_seq2seq.mean().item()
+    std_val  = latents_seq2seq.std().item()
+    print(f"[Predicted latents] mean={mean_val:.4f}, std={std_val:.4f}")
 
-    # DO NOT apply extra 0.18215 scaling here
+    # === Rescale to match true VAE latent std (~0.182) ===
+    target_std = 0.182
+    scale_factor = target_std / std_val
+    latents_seq2seq = latents_seq2seq * scale_factor
+    print(f"[Rescaled latents] mean={latents_seq2seq.mean():.4f}, std={latents_seq2seq.std():.4f}")
+
+    # Correct tensor layout for pipeline
     latents_seq2seq = rearrange(latents_seq2seq, "a b c d e -> a c b d e").to(device)
+else:
+    latents_seq2seq = None
+    print("Running WITHOUT Seq2Seq latents (semantic only).")
 
 
 # ==========================================
