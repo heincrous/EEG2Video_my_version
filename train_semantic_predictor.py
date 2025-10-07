@@ -291,22 +291,36 @@ def train_model(model, dataloader, optimizer, scheduler, test_eeg_flat, test_cli
             optimizer.zero_grad()
             pred = model(eeg)
             
-            # Configurable weights
-            L_MSE     = 1.0   # weight for normalized MSE
-            L_COSINE  = 3.0   # weight for cosine alignment
-            L_MAG     = 0.1   # weight for magnitude consistency
+            # ==========================================
+            # Weighted composite loss (toggleable)
+            # ==========================================
+            # Toggle between raw-space and normalized-space MSE
+            USE_NORMALIZED = True  # False = pure unnormalized MSE, True = combine with cosine
 
-            # === Normalize predicted and target embeddings ===
+            # Adjustable coefficients
+            L_MSE    = 1.0   # weight for MSE loss
+            L_COSINE = 1.0   # weight for cosine alignment
+            L_MAG    = 0.5   # weight for magnitude consistency
+
+            # === Choose MSE mode ===
+            if USE_NORMALIZED:
+                # When mixing with cosine, keep MSE on normalized vectors for consistency
+                pred_for_mse = F.normalize(pred, p=2, dim=1)
+                clip_for_mse = F.normalize(clip, p=2, dim=1)
+            else:
+                # Pure MSE mode (raw, unnormalized space)
+                pred_for_mse = pred
+                clip_for_mse = clip
+
+            # (1) MSE loss
+            mse_loss = F.mse_loss(pred_for_mse, clip_for_mse) if L_MSE > 0 else torch.tensor(0.0, device=DEVICE)
+
+            # (2) Cosine loss (always on normalized embeddings)
             pred_norm = F.normalize(pred, p=2, dim=1)
             clip_norm = F.normalize(clip, p=2, dim=1)
-
-            # === (1) MSE loss on normalized embeddings ===
-            mse_loss = F.mse_loss(pred_norm, clip_norm) if L_MSE > 0 else torch.tensor(0.0, device=DEVICE)
-
-            # === (2) Cosine loss ===
             cosine_loss = (1 - torch.mean(torch.sum(pred_norm * clip_norm, dim=1))) if L_COSINE > 0 else torch.tensor(0.0, device=DEVICE)
 
-            # === (3) Magnitude (norm) loss ===
+            # (3) Magnitude (norm) loss (always unnormalized)
             pred_mag = torch.norm(pred, dim=1)
             clip_mag = torch.norm(clip, dim=1)
             mag_loss = F.mse_loss(pred_mag, clip_mag) if L_MAG > 0 else torch.tensor(0.0, device=DEVICE)
