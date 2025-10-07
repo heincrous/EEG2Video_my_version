@@ -124,7 +124,7 @@ for block_id, block in enumerate(all_blocks):
             for i in range(0, frames.shape[0], config["batch_size"]):
                 batch = frames[i:i+config["batch_size"]] * 2 - 1  # scale to [-1,1]
                 latent = vae.encode(batch).latent_dist.sample()   # fp32
-                latent = latent * 0.18215
+                latent = latent * (0.18215 ** 2)
                 latents.append(latent)
             latents = torch.cat(latents, dim=0)  # [6,4,36,64]
             # ===============================
