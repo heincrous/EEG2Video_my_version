@@ -191,13 +191,13 @@ if __name__ == "__main__":
     print(f"[EEG scaler] test  mean={test_eeg.mean():.5f}, std={test_eeg.std():.5f}")
 
     dataset = Dataset(train_eeg, train_lat)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=512, shuffle=True)
 
     model = myTransformer().cuda()
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(dataloader))
 
-    for epoch in tqdm(range(50)):
+    for epoch in tqdm(range(400)):
         model.train()
         epoch_loss = 0
         for eeg, video in dataloader:
