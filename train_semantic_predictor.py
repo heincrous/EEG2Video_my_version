@@ -249,8 +249,11 @@ def evaluate_model(model, test_eeg_flat, test_clip_flat):
 
     # === 4. Within / Between class similarity ===
     within_scores = [np.dot(preds[i], class_means[labels[i]]) for i in range(len(preds))]
-    between_scores = [np.mean(np.dot(preds[i], class_means[np.arange(num_classes) != labels[i]]))
-                      for i in range(len(preds))]
+    between_scores = [
+        np.mean(np.dot(class_means[np.arange(num_classes) != labels[i]], preds[i]))
+        for i in range(len(preds))
+    ]
+
     avg_within = np.mean(within_scores)
     avg_between = np.mean(between_scores)
 
