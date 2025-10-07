@@ -147,7 +147,7 @@ class Seq2SeqTransformer(nn.Module):
         )
         self.pos_enc = PositionalEncoding(d_model, dropout=0)
         self.predictor = nn.Linear(d_model, 4 * 36 * 64)
-        self.teacher_forcing_ratio = 0.8
+        self.teacher_forcing_ratio = 0.6
 
     def forward(self, src, tgt):
         # Encode EEG sequence
@@ -296,7 +296,7 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
         model.train()
         # Gradually reduce teacher forcing ratio each epoch
         if hasattr(model, 'teacher_forcing_ratio'):
-            model.teacher_forcing_ratio = max(0.2, model.teacher_forcing_ratio * 0.995)
+            model.teacher_forcing_ratio = max(0.1, model.teacher_forcing_ratio * 0.99)
 
         epoch_mse, epoch_cos = 0.0, 0.0
         grad_norms, pred_means, pred_stds = [], [], []
@@ -325,16 +325,15 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
             var_reg = (pred.std() - 1.0).pow(2)
 
             if epoch < 100:
-                loss = mse + 0.3 * cos + 0.01 * var_reg
+                loss = mse + 0.5 * cos + 0.01 * var_reg
             elif epoch < 200:
-                loss = 0.6 * mse + 0.4 * cos + 0.01 * var_reg
+                loss = 0.7 * mse + 0.3 * cos + 0.01 * var_reg
             else:
                 loss = 0.5 * mse + 0.5 * cos + 0.01 * var_reg
 
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
-            scheduler.step()
 
             # record stats
             epoch_mse += mse.item()
@@ -342,6 +341,8 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
             grad_norms.append(grad_norm.item())
             pred_means.append(pred.mean().item())
             pred_stds.append(pred.std().item())
+
+        scheduler.step()
 
         # summarize epoch
         avg_mse = epoch_mse / len(dataloader)
