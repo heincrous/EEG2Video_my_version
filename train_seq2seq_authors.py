@@ -321,10 +321,10 @@ if __name__ == "__main__":
     model = myTransformer()
     # model.load_state_dict(torch.load(model_file, map_location=lambda storage, loc: storage)['state_dict'])
     model =model.cuda()
-    optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200 * len(train_dataloader))
     latent_out = None
-    for epoch in tqdm(range(200)):
+    for epoch in tqdm(range(400)):
         model.train()
         epoch_loss = 0
         for i, batch in enumerate(train_dataloader):
