@@ -30,7 +30,8 @@ SUBSET_ID     = "1"
 
 EPOCHS        = 200
 BATCH_SIZE    = 32
-LR            = 5e-4
+LR            = 1e-4
+COSINE_LAMBDA = 2   # weight for cosine term (0 = pure MSE)
 DEVICE        = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 EEG_PATH_ROOT   = "/content/drive/MyDrive/EEG2Video_data/processed"
@@ -290,7 +291,18 @@ def train_model(model, dataloader, optimizer, scheduler, test_eeg_flat, test_cli
             eeg, clip = eeg.float().to(DEVICE), clip.float().to(DEVICE)
             optimizer.zero_grad()
             pred = model(eeg)
-            loss = F.mse_loss(pred, clip)
+            
+            # === Base MSE loss ===
+            mse_loss = F.mse_loss(pred, clip)
+
+            # === Cosine loss term ===
+            pred_norm = F.normalize(pred, p=2, dim=1)
+            clip_norm = F.normalize(clip, p=2, dim=1)
+            cosine_loss = 1 - torch.mean(torch.sum(pred_norm * clip_norm, dim=1))
+
+            # === Combined loss ===
+            loss = mse_loss + COSINE_LAMBDA * cosine_loss
+
             loss.backward()
             optimizer.step()
             scheduler.step()
