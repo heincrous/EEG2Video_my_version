@@ -147,6 +147,7 @@ class Seq2SeqTransformer(nn.Module):
         )
         self.pos_enc = PositionalEncoding(d_model, dropout=0)
         self.predictor = nn.Linear(d_model, 4 * 36 * 64)
+        self.teacher_forcing_ratio = 0.8
 
     def forward(self, src, tgt):
         # Encode EEG sequence
@@ -163,6 +164,7 @@ class Seq2SeqTransformer(nn.Module):
         # Transformer encoder–decoder
         tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt.size(1)).to(tgt.device)
         src = src + 0.01 * torch.randn_like(src)
+        tgt = tgt + 0.005 * torch.randn_like(tgt)
         encoder_output = self.encoder(src)
 
         # new_tgt = torch.zeros((tgt.shape[0], 1, tgt.shape[2]), device=tgt.device)
@@ -177,7 +179,7 @@ class Seq2SeqTransformer(nn.Module):
         # ------------------------------------------
         # 🧠 Teacher Forcing version
         # ------------------------------------------
-        teacher_forcing_ratio = 0.5  # probability of using ground truth latent during training
+        teacher_forcing_ratio = self.teacher_forcing_ratio
 
         new_tgt = torch.zeros((tgt.shape[0], 1, tgt.shape[2]), device=tgt.device)
         out_frames = []
@@ -292,6 +294,10 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
     print("-"*60)
     for epoch in tqdm(range(1, EPOCHS + 1)):
         model.train()
+        # Gradually reduce teacher forcing ratio each epoch
+        if hasattr(model, 'teacher_forcing_ratio'):
+            model.teacher_forcing_ratio = max(0.2, model.teacher_forcing_ratio * 0.995)
+
         epoch_mse, epoch_cos = 0.0, 0.0
         grad_norms, pred_means, pred_stds = [], [], []
 
@@ -308,7 +314,11 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
             out = model(eeg, full_video)
             pred = out[:, :-1, :]
 
+            # === Normalize per batch before loss ===
+            pred = (pred - pred.mean()) / (pred.std() + 1e-6)
+            video = (video - video.mean()) / (video.std() + 1e-6)
             mse = F.mse_loss(pred, video, reduction='mean')
+
 
             # Normalize for cosine
             pred_norm = F.normalize(pred.flatten(1), dim=1)
@@ -318,13 +328,13 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
             # Variance regularization
             var_reg = (pred.std() - 1.0).pow(2)
 
-            # Three-phase loss schedule
-            if epoch < 50:
-                loss = mse
-            elif epoch < 150:
-                loss = 0.6 * mse + 1.5 * cos + 0.05 * var_reg
+            # Simpler, balanced schedule
+            if epoch < 100:
+                loss = mse + 0.1 * cos + 0.01 * var_reg
+            elif epoch < 200:
+                loss = 0.7 * mse + 0.3 * cos + 0.01 * var_reg
             else:
-                loss = 0.7 * mse + 1.0 * cos + 0.02 * var_reg
+                loss = 0.5 * mse + 0.5 * cos + 0.01 * var_reg
 
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -345,6 +355,12 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
         mean_pred, std_pred = np.mean(pred_means), np.mean(pred_stds)
 
         print(f"{epoch:<8}{avg_mse:<12.4f}{avg_cos:<10.4f}{mean_grad:<10.3f}{mean_pred:<10.3f}{std_pred:<10.3f}")
+
+        # === Diagnostic: EEG embedding variance ===
+        with torch.no_grad():
+            sample_eeg = eeg[:1].to(DEVICE)
+            emb = model.eeg_embedding(sample_eeg.reshape(-1, 1, 62, 100))
+            print(f"   [EEG emb σ={emb.std().item():.3f}, μ={emb.mean().item():.3f}]")
 
         # occasional evaluation
         if epoch % 10 == 0:
@@ -398,7 +414,7 @@ def run_inference(model, test_loader):
             b, f, c, h, w = vid.shape
             full_vid = torch.cat((torch.zeros((b, 1, c, h, w), device=DEVICE), vid), 1)
             out = model(eeg, full_vid)
-            preds.append(out[:, 1:, :].cpu().numpy())  # keep last 6 frames only
+            preds.append(out.cpu().numpy())  # use all frames directly (already 6 frames)
     preds = np.concatenate(preds)
     return preds
 
