@@ -97,9 +97,9 @@ if WITH_SEQ2SEQ:
     print(f"[Predicted latents] mean={mean_val:.4f}, std={std_val:.4f}")
 
     # === Rescale to match true VAE latent std (~0.182) ===
-    target_std = 0.182
+    target_std = 0.18215
     scale_factor = target_std / std_val
-    latents_seq2seq = latents_seq2seq * scale_factor
+    latents_seq2seq = latents_seq2seq * scale_factor / 0.18215
     print(f"[Rescaled latents] mean={latents_seq2seq.mean():.4f}, std={latents_seq2seq.std():.4f}")
 
     # Correct tensor layout for pipeline
