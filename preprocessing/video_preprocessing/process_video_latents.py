@@ -36,7 +36,7 @@ config = {
     "resize_h":      288,
     "target_frames": 48,   # expected clip length @ 24 fps
     "subsample":     True, # downsample to 6 frames (3 FPS)
-    "batch_size":    32,   # frames per VAE forward pass
+    "batch_size":    512,   # frames per VAE forward pass
 
     "drive_root": "/content/drive/MyDrive/EEG2Video_data",
     "vae_path":   "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4",
