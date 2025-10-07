@@ -292,14 +292,20 @@ if __name__ == "__main__":
     train_lat = rearrange(train_lat, "b c s f ch h w -> (b c s) f ch h w")
     test_lat  = rearrange(test_lat,  "b c s f ch h w -> (b c s) f ch h w")
 
-    # Standardize EEG
+    # === EEG normalization (authors' exact method) ===
     b, w, ch, t = train_eeg.shape
+    all_eeg = np.concatenate([train_eeg, test_eeg], axis=0)
+    all_flat = all_eeg.reshape(all_eeg.shape[0], -1)
+
     scaler = StandardScaler()
-    train_flat = train_eeg.reshape(-1, ch * t)
-    test_flat  = test_eeg.reshape(-1, ch * t)
-    scaler.fit(train_flat)
-    train_eeg = scaler.transform(train_flat).reshape(b, w, ch, t)
-    test_eeg  = scaler.transform(test_flat).reshape(-1, w, ch, t)
+    scaler.fit(all_flat)
+
+    train_eeg = train_eeg.reshape(train_eeg.shape[0], -1)
+    test_eeg  = test_eeg.reshape(test_eeg.shape[0], -1)
+    train_eeg = scaler.transform(train_eeg)
+    test_eeg  = scaler.transform(test_eeg)
+    train_eeg = rearrange(train_eeg, "b (w ch t) -> b w ch t", w=w, ch=ch, t=t)
+    test_eeg  = rearrange(test_eeg,  "b (w ch t) -> b w ch t", w=w, ch=ch, t=t)
 
     train_eeg = torch.from_numpy(train_eeg).float()
     test_eeg  = torch.from_numpy(test_eeg).float()
@@ -308,7 +314,6 @@ if __name__ == "__main__":
 
     print(f"Train EEG: {train_eeg.shape}, Train Lat: {train_lat.shape}")
     print(f"Test EEG:  {test_eeg.shape},  Test Lat:  {test_lat.shape}")
-
 
     dataset = Dataset(train_eeg, train_lat)
     train_dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
