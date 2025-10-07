@@ -38,7 +38,7 @@ SUBSET_ID        = "1"
 
 EPOCHS           = 300
 BATCH_SIZE       = 32
-LR               = 1e-4
+LR               = 5e-4
 P                = 0.2
 DEVICE           = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -169,8 +169,9 @@ class Seq2SeqTransformer(nn.Module):
             decoder_output = self.decoder(new_tgt, encoder_output, tgt_mask=tgt_mask[:i+1, :i+1])
             new_tgt = torch.cat((new_tgt, decoder_output[:, -1:, :]), dim=1)
 
-        # match authors’ output structure
-        return self.predictor(new_tgt).reshape(new_tgt.shape[0], new_tgt.shape[1], 4, 36, 64)
+        out = self.predictor(new_tgt)
+        out = F.layer_norm(out, out.shape[-1:])  # normalize per latent vector
+        return out.reshape(new_tgt.shape[0], new_tgt.shape[1], 4, 36, 64)
 
 
 # ==========================================
@@ -274,16 +275,23 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
             out = model(eeg, full_video)
             pred = out[:, :-1, :]
 
-            # Combined loss = MSE + cosine penalty
             mse = F.mse_loss(pred, video, reduction='mean')
-            cos = 1 - F.cosine_similarity(pred.flatten(1), video.flatten(1), dim=1).mean()
-            var_reg = (pred.std() - 0.7).pow(2)
 
-            # Warmup for first 50 epochs: prioritize cosine
-            if epoch < 50:
-                loss = 0.3 * mse + 2.0 * cos + 0.1 * var_reg
+            # Normalize for cosine
+            pred_norm = F.normalize(pred.flatten(1), dim=1)
+            video_norm = F.normalize(video.flatten(1), dim=1)
+            cos = 1 - (pred_norm * video_norm).sum(dim=1).mean()
+
+            # Variance regularization
+            var_reg = (pred.std() - 1.0).pow(2)
+
+            # Three-phase loss schedule
+            if epoch < 100:
+                loss = 0.2 * mse + 2.5 * cos + 0.1 * var_reg
+            elif epoch < 200:
+                loss = 0.6 * mse + 1.0 * cos + 0.05 * var_reg
             else:
-                loss = 0.7 * mse + 1.5 * cos + 0.05 * var_reg
+                loss = 0.8 * mse + 0.5 * cos + 0.01 * var_reg
 
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -336,7 +344,9 @@ def evaluate_model(model, test_loader):
             pred = out[:, :-1, :]
 
             mse = F.mse_loss(pred, video, reduction='mean')
-            cos = F.cosine_similarity(pred.flatten(1), video.flatten(1), dim=1).mean()
+            pred_norm = F.normalize(pred.flatten(1), dim=1)
+            video_norm = F.normalize(video.flatten(1), dim=1)
+            cos = (pred_norm * video_norm).sum(dim=1).mean()
 
             total_mse += mse.item() * b
             total_cos += cos.item() * b
@@ -347,6 +357,10 @@ def evaluate_model(model, test_loader):
     avg_cos = total_cos / total_samples
     print(f"Eval → MSE={avg_mse:.6f} | Cosine={avg_cos:.6f} "
           f"| Pred μ={np.mean(pred_means):.4f}, σ={np.mean(pred_stds):.4f}\n")
+    
+    # --- Additional diagnostic check ---
+    print(f"[Eval check] pred σ={pred.std():.3f}, gt σ={video.std():.3f}, "
+          f"pred μ={pred.mean():.3f}, gt μ={video.mean():.3f}\n")
 
 
 # ==========================================
@@ -380,7 +394,7 @@ if __name__ == "__main__":
 
     model = Seq2SeqTransformer().to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
     print(f"Starting training for {FEATURE_TYPE} on subset {SUBSET_ID}...")
     model = train_model(model, train_loader, optimizer, scheduler, test_loader)
