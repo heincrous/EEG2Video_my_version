@@ -77,7 +77,7 @@ def cleanup_previous_run():
 # EEGNet
 # ==========================================
 class MyEEGNet_embedding(nn.Module):
-    def __init__(self, d_model=256, C=62, T=100, F1=16, D=4, F2=16):
+    def __init__(self, d_model=512, C=62, T=100, F1=16, D=4, F2=16):
         super(MyEEGNet_embedding, self).__init__()
         self.drop_out = P
         self.block_1 = nn.Sequential(
@@ -138,11 +138,11 @@ class Seq2SeqTransformer(nn.Module):
         self.eeg_embedding = MyEEGNet_embedding(d_model=d_model, C=62, T=100)
         self.img_embedding = nn.Linear(4 * 36 * 64, d_model)
         self.encoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model=d_model, nhead=4, batch_first=True),
+            nn.TransformerEncoderLayer(d_model=d_model, nhead=4, dropout=0.1, batch_first=True),
             num_layers=2
         )
         self.decoder = nn.TransformerDecoder(
-            nn.TransformerDecoderLayer(d_model=d_model, nhead=4, batch_first=True),
+            nn.TransformerDecoderLayer(d_model=d_model, nhead=4, dropout=0.1, batch_first=True),
             num_layers=4
         )
         self.pos_enc = PositionalEncoding(d_model, dropout=0)
@@ -292,12 +292,12 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
             var_reg = (pred.std() - 1.0).pow(2)
 
             # Three-phase loss schedule
-            if epoch < 150:
-                loss = 0.15 * mse + 3.0 * cos + 0.05 * var_reg
-            elif epoch < 250:
-                loss = 0.4 * mse + 1.5 * cos + 0.02 * var_reg
+            if epoch < 50:
+                loss = mse
+            elif epoch < 150:
+                loss = 0.6 * mse + 1.5 * cos + 0.05 * var_reg
             else:
-                loss = 0.7 * mse + 1.0 * cos + 0.01 * var_reg
+                loss = 0.7 * mse + 1.0 * cos + 0.02 * var_reg
 
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -321,9 +321,9 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
 
         # occasional evaluation
         if epoch % 10 == 0:
-            print("-"*65)
+            print("\n" + "-"*60)
             evaluate_model(model, test_loader)
-            print("="*65 + "\n")
+            print("-"*60 + "\n")
     return model
 
 
@@ -387,18 +387,10 @@ if __name__ == "__main__":
     train_loader = DataLoader(TensorDataset(train_eeg, train_lat), batch_size=BATCH_SIZE, shuffle=True)
     test_loader  = DataLoader(TensorDataset(test_eeg, test_lat), batch_size=BATCH_SIZE, shuffle=False)
 
-    model = Seq2SeqTransformer(d_model=256).to(DEVICE)
+    model = Seq2SeqTransformer(d_model=512).to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer,
-        max_lr=LR * 5,
-        steps_per_epoch=len(train_loader),
-        epochs=EPOCHS,
-        pct_start=0.3,
-        div_factor=10,
-        final_div_factor=100
-    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
     print(f"Starting training for {FEATURE_TYPE} on subset {SUBSET_ID}...")
     model = train_model(model, train_loader, optimizer, scheduler, test_loader)
