@@ -1,5 +1,5 @@
 # ==========================================
-# EEG2Video – Inference with and without Seq2Seq Latents
+# EEG2Video – Inference with and without Seq2Seq Latents (50 samples)
 # ==========================================
 import os, gc, re, shutil, torch, numpy as np
 from diffusers import AutoencoderKL, DDIMScheduler
@@ -29,7 +29,7 @@ BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/
 SEM_PATH           = f"/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/pred_embeddings_{SEM_TAG}_sub1_subset{SUBSET_ID}.npy"
 
 # Seq2Seq latent path
-LATENT_SEQ2SEQ     = "/content/EEG2Video_my_version/latent_out_block7_40_classes.npy"
+LATENT_SEQ2SEQ     = "/content/drive/MyDrive/EEG2Video_checkpoints/latent_out_block7_40_classes.npy"
 
 NEGATIVE_MODE      = "mean_sem"
 USE_FINETUNED      = False
@@ -80,6 +80,9 @@ sem_preds_all = np.load(SEM_PATH)
 num_classes   = len(CLASS_SUBSET)
 trials_per_class = 5
 test_block    = 6
+total_samples = num_classes * trials_per_class  # 10 x 5 = 50
+print(f"Semantic embeddings shape: {sem_preds_all.shape}, total samples: {total_samples}")
+
 
 # ==========================================
 # Load Seq2Seq Latents (optional)
@@ -88,10 +91,23 @@ if WITH_SEQ2SEQ:
     print(f"Loading Seq2Seq latents from: {LATENT_SEQ2SEQ}")
     latents_seq2seq = np.load(LATENT_SEQ2SEQ)
     latents_seq2seq = torch.from_numpy(latents_seq2seq).half()
+
+    # ==========================================
+    # Scale predicted latents to match expected distribution
+    # ==========================================
+    mean_val = latents_seq2seq.mean()
+    std_val  = latents_seq2seq.std()
+    print(f"[Before scaling] mean={mean_val:.4f}, std={std_val:.4f}")
+
+    latents_seq2seq = (latents_seq2seq - mean_val) / (std_val + 1e-8)
+    latents_seq2seq = latents_seq2seq.clamp(-3, 3)
+    print(f"[After scaling] mean={latents_seq2seq.mean():.4f}, std={latents_seq2seq.std():.4f}")
+
     latents_seq2seq = rearrange(latents_seq2seq, "a b c d e -> a c b d e").to(device)
 else:
     latents_seq2seq = None
     print("Running WITHOUT Seq2Seq latents (semantic only).")
+
 
 # ==========================================
 # Build Negative Embedding
@@ -126,46 +142,50 @@ pipe.enable_vae_slicing()
 
 
 # ==========================================
-# Inference Function
+# Inference Function (correct for 50 samples)
 # ==========================================
 def run_inference():
     video_length, fps = 6, 3
-    sem_preds = sem_preds_all.reshape(num_classes, trials_per_class, 77, 768)
 
-    for trial in range(trials_per_class):
-        for ci, class_id in enumerate(CLASS_SUBSET):
-            emb = sem_preds[ci, trial]
-            semantic_emb = torch.tensor(emb, dtype=torch.float16).unsqueeze(0).to(device)
+    # Flatten semantic predictions
+    flat_sem_preds = sem_preds_all.reshape(total_samples, 77, 768)
+    print(f"Flattened semantic predictions: {flat_sem_preds.shape}")
 
-            if WITH_SEQ2SEQ:
-                idx = ci * trials_per_class + trial
-                latent_cond = latents_seq2seq[idx:idx+1]
-            else:
-                latent_cond = None
+    for idx in range(total_samples):
+        emb = flat_sem_preds[idx]
+        semantic_emb = torch.tensor(emb, dtype=torch.float16).unsqueeze(0).to(device)
+        latent_cond = latents_seq2seq[idx:idx+1] if WITH_SEQ2SEQ else None
 
-            caption = str(blip_text[test_block, class_id, trial])
-            video = pipe(
-                prompt=semantic_emb,
-                negative_prompt=neg_embeddings,
-                latents=latent_cond,
-                video_length=video_length,
-                height=288,
-                width=512,
-                num_inference_steps=50,
-                guidance_scale=GUIDANCE_SCALE,
-            ).videos
+        # Map back to class/trial for captions
+        ci = idx // trials_per_class
+        trial = idx % trials_per_class
+        class_id = CLASS_SUBSET[ci]
+        caption = str(blip_text[test_block, class_id, trial])
 
-            safe_caption = re.sub(r"[^a-zA-Z0-9_-]", "_", caption)
-            if len(safe_caption) > 120:
-                safe_caption = safe_caption[:120]
+        # Generate video
+        video = pipe(
+            prompt=semantic_emb,
+            negative_prompt=neg_embeddings,
+            latents=latent_cond,
+            video_length=video_length,
+            height=288,
+            width=512,
+            num_inference_steps=50,
+            guidance_scale=GUIDANCE_SCALE,
+        ).videos
 
-            mode_tag = "withSeq2Seq" if WITH_SEQ2SEQ else "semanticOnly"
-            out_dir = os.path.join(OUTPUT_DIR, mode_tag)
-            os.makedirs(out_dir, exist_ok=True)
-            out_gif = os.path.join(out_dir, f"{safe_caption}.gif")
+        # Save video
+        safe_caption = re.sub(r"[^a-zA-Z0-9_-]", "_", caption)
+        if len(safe_caption) > 120:
+            safe_caption = safe_caption[:120]
 
-            save_videos_grid(video, out_gif, fps=fps)
-            print(f"Saved: {out_gif}")
+        mode_tag = "withSeq2Seq" if WITH_SEQ2SEQ else "semanticOnly"
+        out_dir = os.path.join(OUTPUT_DIR, mode_tag)
+        os.makedirs(out_dir, exist_ok=True)
+        out_gif = os.path.join(out_dir, f"class{class_id}_trial{trial}_{safe_caption}.gif")
+
+        save_videos_grid(video, out_gif, fps=fps)
+        print(f"Saved [{mode_tag}] {out_gif}")
 
 
 # ==========================================
@@ -173,7 +193,6 @@ def run_inference():
 # ==========================================
 if __name__ == "__main__":
     print(f"Running inference for SEM={SEM_TAG}, subset={SUBSET_ID}")
-    print(f"Mode: {'WITH Seq2Seq' if WITH_SEQ2SEQ else 'Semantic only'} | "
-          f"Guidance={GUIDANCE_SCALE}")
+    print(f"Mode: {'WITH Seq2Seq' if WITH_SEQ2SEQ else 'Semantic only'} | Guidance={GUIDANCE_SCALE}")
     cleanup_previous_outputs()
     run_inference()
