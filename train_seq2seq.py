@@ -208,7 +208,8 @@ def prepare_data(eeg_data, latent_data):
     test_flat  = test_eeg.reshape(-1, ch * t)
 
     scaler = StandardScaler()
-    scaler.fit(train_flat)
+    all_flat = np.concatenate([train_flat, test_flat], axis=0)
+    scaler.fit(all_flat)
     train_eeg = scaler.transform(train_flat)
     test_eeg  = scaler.transform(test_flat)
 
@@ -265,7 +266,9 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
             video = video.to(DEVICE, dtype=torch.float32)
 
             b, f, c, h, w = video.shape
-            full_video = torch.cat((torch.zeros((b, 1, c, h, w), device=DEVICE), video), dim=1)
+
+            padded_video = torch.zeros((b, 1, c, h, w), device=DEVICE)
+            full_video = torch.cat((padded_video, video), dim=1)
 
             optimizer.zero_grad()
             out = model(eeg, full_video)
@@ -274,7 +277,7 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
             # Combined loss = MSE + cosine penalty
             mse = F.mse_loss(pred, video, reduction='mean')
             cos = 1 - F.cosine_similarity(pred.flatten(1), video.flatten(1), dim=1).mean()
-            loss = mse + 0.1 * cos
+            loss = mse + 0.5 * cos
 
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -371,7 +374,7 @@ if __name__ == "__main__":
 
     model = Seq2SeqTransformer().to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS * len(train_loader))
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50 * len(train_loader))
 
     print(f"Starting training for {FEATURE_TYPE} on subset {SUBSET_ID}...")
     model = train_model(model, train_loader, optimizer, scheduler, test_loader)
