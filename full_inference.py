@@ -28,8 +28,8 @@ BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/
 SEM_PATH           = f"/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings/pred_embeddings_{SEM_TAG}_sub1_subset{SUBSET_ID}.npy"
 
 NEGATIVE_MODE      = "mean_sem"
-NUM_INFERENCE      = 100
-GUIDANCE_SCALE     = 8
+NUM_INFERENCE      = 50
+GUIDANCE_SCALE     = 25
 
 
 # ==========================================
