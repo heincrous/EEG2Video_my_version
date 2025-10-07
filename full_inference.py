@@ -92,22 +92,10 @@ if WITH_SEQ2SEQ:
     latents_seq2seq = np.load(LATENT_SEQ2SEQ)
     latents_seq2seq = torch.from_numpy(latents_seq2seq).half()
 
-    # ==========================================
-    # Apply Stable Diffusion VAE scale
-    # ==========================================
-    mean_val = latents_seq2seq.mean()
-    std_val  = latents_seq2seq.std()
-    print(f"[Raw predicted latents] mean={mean_val:.4f}, std={std_val:.4f}")
+    print(f"[Predicted latents] mean={latents_seq2seq.mean():.4f}, std={latents_seq2seq.std():.4f}")
 
-    vae_scale = 0.18215
-    latents_seq2seq = latents_seq2seq * vae_scale
-
-    print(f"[After applying VAE scale] mean={latents_seq2seq.mean():.4f}, std={latents_seq2seq.std():.4f}")
-
+    # DO NOT apply extra 0.18215 scaling here
     latents_seq2seq = rearrange(latents_seq2seq, "a b c d e -> a c b d e").to(device)
-else:
-    latents_seq2seq = None
-    print("Running WITHOUT Seq2Seq latents (semantic only).")
 
 
 # ==========================================
