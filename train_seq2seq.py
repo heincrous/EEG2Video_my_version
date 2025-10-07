@@ -165,14 +165,41 @@ class Seq2SeqTransformer(nn.Module):
         src = src + 0.01 * torch.randn_like(src)
         encoder_output = self.encoder(src)
 
-        new_tgt = torch.zeros((tgt.shape[0], 1, tgt.shape[2]), device=tgt.device)
-        for i in range(6):
-            decoder_output = self.decoder(new_tgt, encoder_output, tgt_mask=tgt_mask[:i+1, :i+1])
-            new_tgt = torch.cat((new_tgt, decoder_output[:, -1:, :]), dim=1)
+        # new_tgt = torch.zeros((tgt.shape[0], 1, tgt.shape[2]), device=tgt.device)
+        # for i in range(6):
+        #     decoder_output = self.decoder(new_tgt, encoder_output, tgt_mask=tgt_mask[:i+1, :i+1])
+        #     new_tgt = torch.cat((new_tgt, decoder_output[:, -1:, :]), dim=1)
 
-        out = self.predictor(new_tgt)
+        # out = self.predictor(new_tgt)
+        # out = F.layer_norm(out, out.shape[-1:])  # normalize per latent vector
+        # return out.reshape(new_tgt.shape[0], new_tgt.shape[1], 4, 36, 64)
+
+        # ------------------------------------------
+        # 🧠 Teacher Forcing version
+        # ------------------------------------------
+        teacher_forcing_ratio = 0.5  # probability of using ground truth latent during training
+
+        new_tgt = torch.zeros((tgt.shape[0], 1, tgt.shape[2]), device=tgt.device)
+        out_frames = []
+
+        for i in range(tgt.shape[1]):  # 6 latent frames
+            decoder_output = self.decoder(new_tgt, encoder_output, tgt_mask=tgt_mask[:i+1, :i+1])
+            next_frame = self.predictor(decoder_output[:, -1:, :])
+
+            # --- 🧠 Teacher forcing logic ---
+            use_teacher = self.training and (torch.rand(1).item() < teacher_forcing_ratio)
+            if use_teacher:
+                next_input = tgt[:, i:i+1, :]  # use ground truth latent embedding
+            else:
+                next_input = decoder_output[:, -1:, :]  # use model prediction
+
+            new_tgt = torch.cat((new_tgt, next_input), dim=1)
+            out_frames.append(next_frame)
+
+        # Combine predicted frames
+        out = torch.cat(out_frames, dim=1)
         out = F.layer_norm(out, out.shape[-1:])  # normalize per latent vector
-        return out.reshape(new_tgt.shape[0], new_tgt.shape[1], 4, 36, 64)
+        return out.reshape(out.shape[0], out.shape[1], 4, 36, 64)
 
 
 # ==========================================
