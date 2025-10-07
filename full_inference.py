@@ -149,35 +149,24 @@ pipe.enable_vae_slicing()
 # ==========================================
 # Inference Function (correct for 50 samples)
 # ==========================================
-# ==========================================
-# Inference Function (class-major order)
-# ==========================================
 def run_inference():
     video_length, fps = 6, 3
-
-    # Flatten semantic predictions (50 × 77 × 768)
     flat_sem_preds = sem_preds_all.reshape(total_samples, 77, 768)
-    print(f"Semantic embeddings reshaped: {flat_sem_preds.shape}")
+    print(f"Semantic embeddings shape verified: {flat_sem_preds.shape}")
 
-    sample_idx = 0  # running global index through 50 samples
-
+    sample_idx = 0
     for ci, class_id in enumerate(CLASS_SUBSET):
         print(f"\n[CLASS {class_id}] ------------------------------")
 
         for trial in range(trials_per_class):
-            if sample_idx >= total_samples:
-                break  # safety guard if shapes mismatch
-
             emb = flat_sem_preds[sample_idx]
             semantic_emb = torch.tensor(emb, dtype=torch.float16).unsqueeze(0).to(device)
-
-            # Select latent if enabled
             latent_cond = latents_seq2seq[sample_idx:sample_idx+1] if WITH_SEQ2SEQ else None
 
-            # Get caption from BLIP text (apply subset)
+            # Caption lookup using subset class id
             caption = str(blip_text[test_block, class_id, trial])
 
-            # Run pipeline
+            # --- Generate video ---
             video = pipe(
                 prompt=semantic_emb,
                 negative_prompt=neg_embeddings,
@@ -189,12 +178,11 @@ def run_inference():
                 guidance_scale=GUIDANCE_SCALE,
             ).videos
 
-            # Clean filename
+            # --- Save ---
             safe_caption = re.sub(r"[^a-zA-Z0-9_-]", "_", caption)
             if len(safe_caption) > 120:
                 safe_caption = safe_caption[:120]
 
-            # Save
             mode_tag = "withSeq2Seq" if WITH_SEQ2SEQ else "semanticOnly"
             out_dir = os.path.join(OUTPUT_DIR, mode_tag)
             os.makedirs(out_dir, exist_ok=True)
@@ -204,7 +192,7 @@ def run_inference():
             print(f"Saved [{mode_tag}] {out_gif}")
 
             sample_idx += 1
-            
+
 
 # ==========================================
 # Main
