@@ -25,7 +25,7 @@ from tqdm import tqdm
 FEATURE_TYPE   = "EEG_DE_1per2s"  # single feature if fusion is empty
 FEATURE_FUSION = []  # e.g. ["EEG_DE_1per2s", "EEG_PSD_1per2s", "EEG_windows_100"]
 SUBJECT_NAME  = "sub1.npy"
-CLASS_SUBSET  = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
+CLASS_SUBSET  = [0, 11, 24, 30, 33] # [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID     = "1"
 
 EPOCHS        = 200
