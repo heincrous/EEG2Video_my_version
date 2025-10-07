@@ -101,6 +101,11 @@ if WITH_SEQ2SEQ:
 
     latents_seq2seq = (latents_seq2seq - mean_val) / (std_val + 1e-8)
     latents_seq2seq = latents_seq2seq.clamp(-3, 3)
+
+    # Match the expected latent scale of Stable Diffusion
+    vae_scale = 0.18215
+    latents_seq2seq = latents_seq2seq * vae_scale
+
     print(f"[After scaling] mean={latents_seq2seq.mean():.4f}, std={latents_seq2seq.std():.4f}")
 
     latents_seq2seq = rearrange(latents_seq2seq, "a b c d e -> a c b d e").to(device)
@@ -144,49 +149,62 @@ pipe.enable_vae_slicing()
 # ==========================================
 # Inference Function (correct for 50 samples)
 # ==========================================
+# ==========================================
+# Inference Function (class-major order)
+# ==========================================
 def run_inference():
     video_length, fps = 6, 3
 
-    # Flatten semantic predictions
+    # Flatten semantic predictions (50 × 77 × 768)
     flat_sem_preds = sem_preds_all.reshape(total_samples, 77, 768)
-    print(f"Flattened semantic predictions: {flat_sem_preds.shape}")
+    print(f"Semantic embeddings reshaped: {flat_sem_preds.shape}")
 
-    for idx in range(total_samples):
-        emb = flat_sem_preds[idx]
-        semantic_emb = torch.tensor(emb, dtype=torch.float16).unsqueeze(0).to(device)
-        latent_cond = latents_seq2seq[idx:idx+1] if WITH_SEQ2SEQ else None
+    sample_idx = 0  # running global index through 50 samples
 
-        # Map back to class/trial for captions
-        ci = idx // trials_per_class
-        trial = idx % trials_per_class
-        class_id = CLASS_SUBSET[ci]
-        caption = str(blip_text[test_block, class_id, trial])
+    for ci, class_id in enumerate(CLASS_SUBSET):
+        print(f"\n[CLASS {class_id}] ------------------------------")
 
-        # Generate video
-        video = pipe(
-            prompt=semantic_emb,
-            negative_prompt=neg_embeddings,
-            latents=latent_cond,
-            video_length=video_length,
-            height=288,
-            width=512,
-            num_inference_steps=50,
-            guidance_scale=GUIDANCE_SCALE,
-        ).videos
+        for trial in range(trials_per_class):
+            if sample_idx >= total_samples:
+                break  # safety guard if shapes mismatch
 
-        # Save video
-        safe_caption = re.sub(r"[^a-zA-Z0-9_-]", "_", caption)
-        if len(safe_caption) > 120:
-            safe_caption = safe_caption[:120]
+            emb = flat_sem_preds[sample_idx]
+            semantic_emb = torch.tensor(emb, dtype=torch.float16).unsqueeze(0).to(device)
 
-        mode_tag = "withSeq2Seq" if WITH_SEQ2SEQ else "semanticOnly"
-        out_dir = os.path.join(OUTPUT_DIR, mode_tag)
-        os.makedirs(out_dir, exist_ok=True)
-        out_gif = os.path.join(out_dir, f"class{class_id}_trial{trial}_{safe_caption}.gif")
+            # Select latent if enabled
+            latent_cond = latents_seq2seq[sample_idx:sample_idx+1] if WITH_SEQ2SEQ else None
 
-        save_videos_grid(video, out_gif, fps=fps)
-        print(f"Saved [{mode_tag}] {out_gif}")
+            # Get caption from BLIP text (apply subset)
+            caption = str(blip_text[test_block, class_id, trial])
 
+            # Run pipeline
+            video = pipe(
+                prompt=semantic_emb,
+                negative_prompt=neg_embeddings,
+                latents=latent_cond,
+                video_length=video_length,
+                height=288,
+                width=512,
+                num_inference_steps=50,
+                guidance_scale=GUIDANCE_SCALE,
+            ).videos
+
+            # Clean filename
+            safe_caption = re.sub(r"[^a-zA-Z0-9_-]", "_", caption)
+            if len(safe_caption) > 120:
+                safe_caption = safe_caption[:120]
+
+            # Save
+            mode_tag = "withSeq2Seq" if WITH_SEQ2SEQ else "semanticOnly"
+            out_dir = os.path.join(OUTPUT_DIR, mode_tag)
+            os.makedirs(out_dir, exist_ok=True)
+            out_gif = os.path.join(out_dir, f"class{class_id}_trial{trial}_{safe_caption}.gif")
+
+            save_videos_grid(video, out_gif, fps=fps)
+            print(f"Saved [{mode_tag}] {out_gif}")
+
+            sample_idx += 1
+            
 
 # ==========================================
 # Main
