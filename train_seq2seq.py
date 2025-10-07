@@ -200,7 +200,7 @@ class Seq2SeqTransformer(nn.Module):
 
         # Combine predicted frames
         out = torch.cat(out_frames, dim=1)
-        out = F.layer_norm(out, out.shape[-1:])  # normalize per latent vector
+        out = F.normalize(out, dim=-1)
         return out.reshape(out.shape[0], out.shape[1], 4, 36, 64)
 
 
@@ -316,16 +316,13 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
 
             mse = F.mse_loss(pred, video, reduction='mean')
 
-            # Normalize for cosine
-            pred_norm = F.normalize(pred.flatten(1), dim=1)
-            video_norm = F.normalize(video.flatten(1), dim=1)
-            cos = 1 - (pred_norm * video_norm).sum(dim=1).mean()
+            cos = 1 - F.cosine_similarity(pred.flatten(1), video.flatten(1), dim=1).mean()
 
             # Variance regularization
             var_reg = (pred.std() - 1.0).pow(2)
 
             if epoch < 100:
-                loss = mse + 0.5 * cos + 0.01 * var_reg
+                loss = 0.5 * mse + 0.5 * cos + 0.01 * var_reg
             elif epoch < 200:
                 loss = 0.7 * mse + 0.3 * cos + 0.01 * var_reg
             else:
