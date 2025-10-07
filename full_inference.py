@@ -34,7 +34,7 @@ LATENT_SEQ2SEQ     = "/content/drive/MyDrive/EEG2Video_checkpoints/latent_out_bl
 NEGATIVE_MODE      = "mean_sem"
 USE_FINETUNED      = False
 WITH_SEQ2SEQ       = False   # True = use Seq2Seq latents; False = semantic-only
-GUIDANCE_SCALE     = 12.5
+GUIDANCE_SCALE     = 25
 
 
 # ==========================================
@@ -93,20 +93,16 @@ if WITH_SEQ2SEQ:
     latents_seq2seq = torch.from_numpy(latents_seq2seq).half()
 
     # ==========================================
-    # Scale predicted latents to match expected distribution
+    # Apply Stable Diffusion VAE scale
     # ==========================================
     mean_val = latents_seq2seq.mean()
     std_val  = latents_seq2seq.std()
-    print(f"[Before scaling] mean={mean_val:.4f}, std={std_val:.4f}")
+    print(f"[Raw predicted latents] mean={mean_val:.4f}, std={std_val:.4f}")
 
-    latents_seq2seq = (latents_seq2seq - mean_val) / (std_val + 1e-8)
-    latents_seq2seq = latents_seq2seq.clamp(-3, 3)
-
-    # Match the expected latent scale of Stable Diffusion
     vae_scale = 0.18215
     latents_seq2seq = latents_seq2seq * vae_scale
 
-    print(f"[After scaling] mean={latents_seq2seq.mean():.4f}, std={latents_seq2seq.std():.4f}")
+    print(f"[After applying VAE scale] mean={latents_seq2seq.mean():.4f}, std={latents_seq2seq.std():.4f}")
 
     latents_seq2seq = rearrange(latents_seq2seq, "a b c d e -> a c b d e").to(device)
 else:

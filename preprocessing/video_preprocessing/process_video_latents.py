@@ -127,6 +127,14 @@ for block_id, block in enumerate(all_blocks):
                 latent = latent * 0.18215
                 latents.append(latent)
             latents = torch.cat(latents, dim=0)  # [6,4,36,64]
+            # ===============================
+            # 🔍 Sanity check per clip
+            # ===============================
+            m, s = latents.mean().item(), latents.std().item()
+            print(f"[Check] Block={block_id} Class={cls} Clip={clip} → mean={m:.4f}, std={s:.4f}")
+            if s > 0.3 or s < 0.1:
+                print("⚠️ Latent std out of expected range (should be ~0.18). STOP and check scaling!")
+                raise SystemExit("🚫 Early stop: incorrect latent scaling detected.")
 
         # save latents as float32
         all_latents[block_id, cls, clip] = latents.cpu().numpy().astype(np.float32)
