@@ -36,10 +36,10 @@ SUBJECT_NAME     = "sub1.npy"
 CLASS_SUBSET     = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
 SUBSET_ID        = "1"
 
-EPOCHS           = 100
+EPOCHS           = 300
 BATCH_SIZE       = 32
-LR               = 5e-4
-P                = 0.5
+LR               = 1e-4
+P                = 0.2
 DEVICE           = "cuda" if torch.cuda.is_available() else "cpu"
 
 EEG_PATH_ROOT    = "/content/drive/MyDrive/EEG2Video_data/processed"
@@ -257,9 +257,10 @@ def prepare_data(eeg_data, latent_data):
 def train_model(model, dataloader, optimizer, scheduler, test_loader):
     for epoch in tqdm(range(1, EPOCHS + 1)):
         model.train()
-        epoch_loss = 0.0
+        epoch_mse, epoch_cos = 0.0, 0.0
+        grad_norms, pred_means, pred_stds = [], [], []
 
-        for eeg, video in dataloader:
+        for step, (eeg, video) in enumerate(dataloader):
             eeg   = eeg.to(DEVICE, dtype=torch.float32)
             video = video.to(DEVICE, dtype=torch.float32)
 
@@ -268,19 +269,41 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
 
             optimizer.zero_grad()
             out = model(eeg, full_video)
+            pred = out[:, :-1, :]
 
-            # Mean MSE per batch
-            loss = F.mse_loss(out[:, :-1, :], video, reduction='mean')
+            # Combined loss = MSE + cosine penalty
+            mse = F.mse_loss(pred, video, reduction='mean')
+            cos = 1 - F.cosine_similarity(pred.flatten(1), video.flatten(1), dim=1).mean()
+            loss = mse + 0.1 * cos
+
             loss.backward()
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             scheduler.step()
 
-            epoch_loss += loss.item()
+            # record stats
+            epoch_mse += mse.item()
+            epoch_cos += 1 - cos.item()
+            grad_norms.append(grad_norm.item())
+            pred_means.append(pred.mean().item())
+            pred_stds.append(pred.std().item())
 
-        avg_epoch_loss = epoch_loss / len(dataloader)  # mean of batch MSEs
+            # --- lightweight inline diagnostics ---
+            if step % 200 == 0:
+                print(f"[Batch {step}] loss={loss.item():.4f} mse={mse.item():.4f} cos={1-cos.item():.4f} "
+                      f"| pred μ={pred.mean():.4f}, σ={pred.std():.4f}, grad_norm={grad_norm.item():.4f}")
+
+        # summarize epoch
+        avg_mse = epoch_mse / len(dataloader)
+        avg_cos = epoch_cos / len(dataloader)
+        mean_grad = np.mean(grad_norms)
+        mean_pred, std_pred = np.mean(pred_means), np.mean(pred_stds)
+
+        print(f"\n[Epoch {epoch}] MSE={avg_mse:.6f} | Cosine={avg_cos:.6f} "
+              f"| Pred μ={mean_pred:.4f}, σ={std_pred:.4f}, GradNorm={mean_grad:.4f}")
+
+        # occasional evaluation
         if epoch % 10 == 0:
-            print("\n" + "="*65)
-            print(f"[Epoch {epoch:03d}/{EPOCHS}]  Avg MSE (batch mean): {avg_epoch_loss:.6f}")
             print("-"*65)
             evaluate_model(model, test_loader)
             print("="*65 + "\n")
@@ -289,8 +312,8 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
 
 def evaluate_model(model, test_loader):
     model.eval()
-    total_loss = 0.0
-    total_samples = 0
+    total_mse, total_cos, total_samples = 0.0, 0.0, 0
+    pred_means, pred_stds = [], []
 
     with torch.no_grad():
         for eeg, video in test_loader:
@@ -301,13 +324,20 @@ def evaluate_model(model, test_loader):
 
             full_video = torch.cat((torch.zeros((b, 1, c, h, w), device=DEVICE), video), dim=1)
             out = model(eeg, full_video)
+            pred = out[:, :-1, :]
 
-            # Mean MSE per batch → scale back by batch size to compute global mean
-            loss = F.mse_loss(out[:, :-1, :], video, reduction='mean')
-            total_loss += loss.item() * b
+            mse = F.mse_loss(pred, video, reduction='mean')
+            cos = F.cosine_similarity(pred.flatten(1), video.flatten(1), dim=1).mean()
 
-    avg_test_loss = total_loss / total_samples
-    print(f"Test Avg MSE per sample: {avg_test_loss:.6f}\n")
+            total_mse += mse.item() * b
+            total_cos += cos.item() * b
+            pred_means.append(pred.mean().item())
+            pred_stds.append(pred.std().item())
+
+    avg_mse = total_mse / total_samples
+    avg_cos = total_cos / total_samples
+    print(f"Eval → MSE={avg_mse:.6f} | Cosine={avg_cos:.6f} "
+          f"| Pred μ={np.mean(pred_means):.4f}, σ={np.mean(pred_stds):.4f}\n")
 
 
 # ==========================================
