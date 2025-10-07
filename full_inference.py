@@ -33,7 +33,7 @@ LATENT_SEQ2SEQ     = "/content/drive/MyDrive/EEG2Video_checkpoints/latent_out_bl
 
 NEGATIVE_MODE      = "mean_sem"
 USE_FINETUNED      = False
-WITH_SEQ2SEQ       = False   # True = use Seq2Seq latents; False = semantic-only
+WITH_SEQ2SEQ       = True   # True = use Seq2Seq latents; False = semantic-only
 GUIDANCE_SCALE     = 25
 
 
