@@ -294,18 +294,21 @@ if __name__ == "__main__":
 
     # === EEG normalization (authors' exact method) ===
     b, w, ch, t = train_eeg.shape
-    all_eeg = np.concatenate([train_eeg, test_eeg], axis=0)
-    all_flat = all_eeg.reshape(all_eeg.shape[0], -1)
+
+    # flatten per sample (not across all data)
+    train_eeg_flat = train_eeg.reshape(train_eeg.shape[0], -1)
+    test_eeg_flat  = test_eeg.reshape(test_eeg.shape[0], -1)
 
     scaler = StandardScaler()
-    scaler.fit(all_flat)
+    scaler.fit(train_eeg_flat)  # fit on train only
 
-    train_eeg = train_eeg.reshape(train_eeg.shape[0], -1)
-    test_eeg  = test_eeg.reshape(test_eeg.shape[0], -1)
-    train_eeg = scaler.transform(train_eeg)
-    test_eeg  = scaler.transform(test_eeg)
+    train_eeg = scaler.transform(train_eeg_flat)
+    test_eeg  = scaler.transform(test_eeg_flat)
+
+    # reshape back
     train_eeg = rearrange(train_eeg, "b (w ch t) -> b w ch t", w=w, ch=ch, t=t)
     test_eeg  = rearrange(test_eeg,  "b (w ch t) -> b w ch t", w=w, ch=ch, t=t)
+
 
     train_eeg = torch.from_numpy(train_eeg).float()
     test_eeg  = torch.from_numpy(test_eeg).float()
