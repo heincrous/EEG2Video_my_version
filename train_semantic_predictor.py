@@ -297,7 +297,7 @@ def train_model(model, dataloader, optimizer, scheduler, test_eeg_flat, test_cli
             USE_NORMALIZED = True  # False = pure unnormalized MSE, True = combine with cosine
 
             # Adjustable coefficients
-            L_MSE    = 0   # weight for MSE loss
+            L_MSE    = 1.0   # weight for MSE loss
             L_COSINE = 1.0   # weight for cosine alignment
             L_MAG    = 0   # weight for magnitude consistency
 
