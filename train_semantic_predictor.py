@@ -30,7 +30,7 @@ SUBSET_ID     = "1"
 
 EPOCHS        = 200
 BATCH_SIZE    = 32
-LR            = 1e-5
+LR            = 5e-4
 DEVICE        = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 EEG_PATH_ROOT   = "/content/drive/MyDrive/EEG2Video_data/processed"
@@ -299,7 +299,7 @@ def train_model(model, dataloader, optimizer, scheduler, test_eeg_flat, test_cli
 
             # Adjustable coefficients
             L_MSE    = 1.0   # weight for MSE loss
-            L_COSINE = 1.0   # weight for cosine alignment
+            L_COSINE = 5.0   # weight for cosine alignment
             L_MAG    = 0.5   # weight for magnitude consistency
 
             # === Choose MSE mode ===
