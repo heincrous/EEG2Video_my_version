@@ -77,7 +77,7 @@ def cleanup_previous_run():
 # EEGNet
 # ==========================================
 class MyEEGNet_embedding(nn.Module):
-    def __init__(self, d_model=128, C=62, T=100, F1=16, D=4, F2=16):
+    def __init__(self, d_model=256, C=62, T=100, F1=16, D=4, F2=16):
         super(MyEEGNet_embedding, self).__init__()
         self.drop_out = P
         self.block_1 = nn.Sequential(
@@ -162,6 +162,7 @@ class Seq2SeqTransformer(nn.Module):
 
         # Transformer encoder–decoder
         tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt.size(1)).to(tgt.device)
+        src = src + 0.01 * torch.randn_like(src)
         encoder_output = self.encoder(src)
 
         new_tgt = torch.zeros((tgt.shape[0], 1, tgt.shape[2]), device=tgt.device)
@@ -250,6 +251,9 @@ def prepare_data(eeg_data, latent_data):
     print(f"[Latent norm] train mean={train_lat.mean():.5f}, std={train_lat.std():.5f}")
     print(f"[Latent norm] test  mean={test_lat.mean():.5f}, std={test_lat.std():.5f}")
 
+    train_lat = F.layer_norm(train_lat, train_lat.shape[-3:])
+    test_lat  = F.layer_norm(test_lat,  test_lat.shape[-3:])
+
     return train_eeg, test_eeg, train_lat, test_lat
 
 
@@ -286,12 +290,12 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
             var_reg = (pred.std() - 1.0).pow(2)
 
             # Three-phase loss schedule
-            if epoch < 100:
-                loss = 0.2 * mse + 2.5 * cos + 0.1 * var_reg
-            elif epoch < 200:
-                loss = 0.6 * mse + 1.0 * cos + 0.05 * var_reg
+            if epoch < 150:
+                loss = 0.15 * mse + 3.0 * cos + 0.05 * var_reg
+            elif epoch < 250:
+                loss = 0.4 * mse + 1.5 * cos + 0.02 * var_reg
             else:
-                loss = 0.8 * mse + 0.5 * cos + 0.01 * var_reg
+                loss = 0.7 * mse + 1.0 * cos + 0.01 * var_reg
 
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -305,19 +309,14 @@ def train_model(model, dataloader, optimizer, scheduler, test_loader):
             pred_means.append(pred.mean().item())
             pred_stds.append(pred.std().item())
 
-            # --- lightweight inline diagnostics ---
-            if step % 200 == 0:
-                print(f"[Batch {step}] loss={loss.item():.4f} mse={mse.item():.4f} cos={1-cos.item():.4f} "
-                      f"| pred μ={pred.mean():.4f}, σ={pred.std():.4f}, grad_norm={grad_norm.item():.4f}")
-
         # summarize epoch
         avg_mse = epoch_mse / len(dataloader)
         avg_cos = epoch_cos / len(dataloader)
         mean_grad = np.mean(grad_norms)
         mean_pred, std_pred = np.mean(pred_means), np.mean(pred_stds)
 
-        print(f"\n[Epoch {epoch}] MSE={avg_mse:.6f} | Cosine={avg_cos:.6f} "
-              f"| Pred μ={mean_pred:.4f}, σ={std_pred:.4f}, GradNorm={mean_grad:.4f}")
+        print(f"[Epoch {epoch:03d}] MSE={avg_mse:.4f} | Cos={avg_cos:.4f} | "
+              f"μ={mean_pred:.3f} σ={std_pred:.3f} | Grad={mean_grad:.2f}")
 
         # occasional evaluation
         if epoch % 10 == 0:
@@ -357,10 +356,6 @@ def evaluate_model(model, test_loader):
     avg_cos = total_cos / total_samples
     print(f"Eval → MSE={avg_mse:.6f} | Cosine={avg_cos:.6f} "
           f"| Pred μ={np.mean(pred_means):.4f}, σ={np.mean(pred_stds):.4f}\n")
-    
-    # --- Additional diagnostic check ---
-    print(f"[Eval check] pred σ={pred.std():.3f}, gt σ={video.std():.3f}, "
-          f"pred μ={pred.mean():.3f}, gt μ={video.mean():.3f}\n")
 
 
 # ==========================================
@@ -392,9 +387,18 @@ if __name__ == "__main__":
     train_loader = DataLoader(TensorDataset(train_eeg, train_lat), batch_size=BATCH_SIZE, shuffle=True)
     test_loader  = DataLoader(TensorDataset(test_eeg, test_lat), batch_size=BATCH_SIZE, shuffle=False)
 
-    model = Seq2SeqTransformer().to(DEVICE)
+    model = Seq2SeqTransformer(d_model=256).to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
+
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=LR * 5,
+        steps_per_epoch=len(train_loader),
+        epochs=EPOCHS,
+        pct_start=0.3,
+        div_factor=10,
+        final_div_factor=100
+    )
 
     print(f"Starting training for {FEATURE_TYPE} on subset {SUBSET_ID}...")
     model = train_model(model, train_loader, optimizer, scheduler, test_loader)
