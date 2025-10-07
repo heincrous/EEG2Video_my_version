@@ -294,11 +294,11 @@ def train_model(model, dataloader, optimizer, scheduler, test_eeg_flat, test_cli
             # Weighted composite loss (toggleable)
             # ==========================================
             # Toggle between raw-space and normalized-space MSE
-            USE_NORMALIZED = False  # False = pure unnormalized MSE, True = combine with cosine
+            USE_NORMALIZED = True  # False = pure unnormalized MSE, True = combine with cosine
 
             # Adjustable coefficients
-            L_MSE    = 1.0   # weight for MSE loss
-            L_COSINE = 0   # weight for cosine alignment
+            L_MSE    = 0   # weight for MSE loss
+            L_COSINE = 1.0   # weight for cosine alignment
             L_MAG    = 0   # weight for magnitude consistency
 
             # === Choose MSE mode ===
