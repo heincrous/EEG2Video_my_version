@@ -300,7 +300,7 @@ def train_model(model, dataloader, optimizer, scheduler, test_eeg_flat, test_cli
             # Adjustable coefficients
             L_MSE    = 1.0   # weight for MSE loss
             L_COSINE = 5.0   # weight for cosine alignment
-            L_MAG    = 0.5   # weight for magnitude consistency
+            L_MAG    = 0.1   # weight for magnitude consistency
 
             # === Choose MSE mode ===
             if USE_NORMALIZED:
