@@ -10,11 +10,13 @@
 # === Imports ===
 import os
 import numpy as np
+import importlib
 from sklearn.preprocessing import StandardScaler
 import torch
 import torch.nn as nn
 from torch.utils import data
 from einops import rearrange
+
 
 # === Encoder Imports ===
 from models.shallownet import shallownet
@@ -169,7 +171,22 @@ def select_model(cfg):
         raise ValueError(f"Unknown encoder: {en}")
 
     print(f"Using encoder: {en} | Feature type: {ft}")
+    get_model_config(en)
     return model
+
+def get_model_config(encoder_name):
+    """Import CONFIG dict from the model file (if available)."""
+    try:
+        module = importlib.import_module(f"models.{encoder_name}")
+        cfg_model = getattr(module, "CONFIG", None)
+        if cfg_model:
+            print(f"\n[{encoder_name.upper()} CONFIG]")
+            for k, v in cfg_model.items():
+                print(f"{k}: {v}")
+        else:
+            print(f"No CONFIG found for {encoder_name}")
+    except Exception as e:
+        print(f"Error loading CONFIG from {encoder_name}: {e}")
 
 
 # ==========================================
@@ -369,18 +386,89 @@ def main(cfg):
     print(f"Mean Top-1: {np.mean(all_top1):.4f} ± {np.std(all_top1):.4f}")
     print(f"Mean Top-5: {np.mean(all_top5):.4f} ± {np.std(all_top5):.4f}")
 
-    # ==========================================
-    # Ranked Subject Performance Summary
-    # ==========================================
-    print("\n=== Ranked Subject Performance (Top-1 Accuracy) ===")
-    subject_scores = list(zip(subjects, all_top1, all_top5))
-    subject_scores.sort(key=lambda x: x[1], reverse=True)
+    # # ==========================================
+    # # Ranked Subject Performance Summary
+    # # ==========================================
+    # print("\n=== Ranked Subject Performance (Top-1 Accuracy) ===")
+    # subject_scores = list(zip(subjects, all_top1, all_top5))
+    # subject_scores.sort(key=lambda x: x[1], reverse=True)
 
-    for rank, (sub, top1, top5) in enumerate(subject_scores, 1):
-        print(f"{rank:2d}. {sub:15s} | Top-1: {top1:.4f} | Top-5: {top5:.4f}")
+    # for rank, (sub, top1, top5) in enumerate(subject_scores, 1):
+    #     print(f"{rank:2d}. {sub:15s} | Top-1: {top1:.4f} | Top-5: {top5:.4f}")
 
-    best_sub, best_top1, best_top5 = subject_scores[0]
-    print(f"\nBest Performing Subject: {best_sub} | Top-1: {best_top1:.4f} | Top-5: {best_top5:.4f}")
+    # best_sub, best_top1, best_top5 = subject_scores[0]
+    # print(f"\nBest Performing Subject: {best_sub} | Top-1: {best_top1:.4f} | Top-5: {best_top5:.4f}")
+
+ 
+    # ==========================================
+    # Save Configuration and Results to Google Drive (no timestamp)
+    # ==========================================
+
+    # Base directory
+    base_dir = "/content/drive/MyDrive/EEG2Video_results/EEG_VP_benchmark"
+
+    # Feature-type subdirectory
+    feature_dir = os.path.join(base_dir, cfg["feature_type"])
+    os.makedirs(feature_dir, exist_ok=True)
+
+    # Load model-specific config
+    try:
+        model_module = importlib.import_module(f"models.{cfg['encoder_name']}")
+        model_cfg = getattr(model_module, "CONFIG", {})
+    except Exception:
+        model_cfg = {}
+
+    # Extract key config info for filename
+    layer_widths  = "-".join(str(x) for x in model_cfg.get("layer_widths", ["NA"]))
+    dropout       = model_cfg.get("dropout", "NA")
+    activation    = model_cfg.get("activation", "NA")
+    normalisation = model_cfg.get("normalisation", "NA")
+
+    # Build filename without timestamp
+    filename = (
+        f"{cfg['encoder_name']}_"
+        f"lw{layer_widths}_"
+        f"do{dropout}_"
+        f"act{activation}_"
+        f"norm{normalisation}_"
+        f"lr{cfg['lr']}_"
+        f"bs{cfg['batch_size']}_"
+        f"ep{cfg['num_epochs']}.txt"
+    )
+
+    save_path = os.path.join(feature_dir, filename)
+
+    # Write log
+    with open(save_path, "w") as f:
+        f.write("EEG Classification Experiment Summary\n")
+        f.write("==========================================\n\n")
+
+        f.write("Configuration Used:\n")
+        f.write(f"Encoder: {cfg['encoder_name']}\n")
+        f.write(f"Feature Type: {cfg['feature_type']}\n")
+        f.write(f"Subjects Used: {', '.join(cfg['subjects_to_train'])}\n")
+        f.write(f"Learning Rate: {cfg['lr']}\n")
+        f.write(f"Batch Size: {cfg['batch_size']}\n")
+        f.write(f"Epoch Count: {cfg['num_epochs']}\n\n")
+
+        f.write("Model Config:\n")
+        if model_cfg:
+            for k, v in model_cfg.items():
+                f.write(f"{k}: {v}\n")
+        else:
+            f.write("No model-specific CONFIG found.\n")
+        f.write("\n")
+
+        f.write("Final Results:\n")
+        f.write(f"Mean Top-1 Accuracy: {np.mean(all_top1):.4f} ± {np.std(all_top1):.4f}\n")
+        f.write(f"Mean Top-5 Accuracy: {np.mean(all_top5):.4f} ± {np.std(all_top5):.4f}\n\n")
+
+        f.write("Subject-Wise Results:\n")
+        for sub, t1, t5 in zip(subjects, all_top1, all_top5):
+            f.write(f"{sub:15s} | Top-1: {t1:.4f} | Top-5: {t5:.4f}\n")
+
+    print(f"\nSaved configuration and results to: {save_path}")
+
 
 
 if __name__ == "__main__":
