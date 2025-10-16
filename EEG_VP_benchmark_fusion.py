@@ -28,7 +28,7 @@ from models.glfnet_mlp import glfnet_mlp
 # ==========================================
 CONFIG = {
     # --- Core setup ---
-    "feature_types": ["de", "segment"],   # choose any subset: ["segment"], ["de", "psd"], ["segment", "de"], etc.
+    "feature_types": ["psd", "segment"],   # choose any subset: ["segment"], ["de", "psd"], ["segment", "de"], etc.
     "subjects_to_train": [
         "sub1_session2.npy",
         "sub1.npy",
