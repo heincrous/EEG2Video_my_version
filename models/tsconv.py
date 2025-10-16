@@ -11,6 +11,7 @@ CONFIG = {
     "normalization": "BatchNorm" # normalization type
 }
 
+
 # ==========================================
 # Model definition
 # ==========================================

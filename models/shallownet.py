@@ -11,8 +11,9 @@ CONFIG = {
     "activation": "ELU",         # "ELU", "GELU", "SiLU", etc.
     "normalization": "BatchNorm",# "BatchNorm", "LayerNorm", "GroupNorm"
     # training / input
-    "input_dim": {"C": 62, "T": 200}  # default input shape
+    "input_dim": {"C": 62, "T": 100}  # default input shape
 }
+
 
 # ==========================================
 # Model definition

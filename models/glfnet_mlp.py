@@ -8,6 +8,7 @@ CONFIG = {
     "normalization": None         # optional: "LayerNorm" or "BatchNorm1d"
 }
 
+
 # ==========================================
 # Model definition
 # ==========================================
