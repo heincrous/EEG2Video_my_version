@@ -6,15 +6,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from glob import glob
 
-# === Mount Google Drive (if not already mounted) ===
-from google.colab import drive
-drive.mount('/content/drive')
-
-# === Define root paths ===
-base_path   = "/content/drive/MyDrive/EEG2Video_data/processed"
-save_path   = "/content/drive/MyDrive/EEG2Video_results/figures"
-
-# create output directory if it does not exist
+# === Paths (Drive already mounted) ===
+base_path = "/content/drive/MyDrive/EEG2Video_data/processed"
+save_path = "/content/drive/MyDrive/EEG2Video_results/figures"
 os.makedirs(save_path, exist_ok=True)
 
 de_path     = os.path.join(base_path, "EEG_DE_1per2s")
@@ -22,7 +16,7 @@ psd_path    = os.path.join(base_path, "EEG_PSD_1per2s")
 win100_path = os.path.join(base_path, "EEG_windows_100")
 win200_path = os.path.join(base_path, "EEG_windows_200")
 
-# === Helper: load first subject file in folder ===
+# === Helper: load first subject file ===
 def load_first_subject(folder):
     files = sorted(glob(os.path.join(folder, "*.npy")))
     if not files:
@@ -30,11 +24,11 @@ def load_first_subject(folder):
     print(f"Loaded: {os.path.basename(files[0])}")
     return np.load(files[0])
 
-# === Load data ===
-DE      = load_first_subject(de_path)     # shape (40,5,62,200)
-PSD     = load_first_subject(psd_path)    # shape (40,5,62,200)
-win_100 = load_first_subject(win100_path) # shape (40,5,7,62,100)
-win_200 = load_first_subject(win200_path) # shape (40,5,3,62,200)
+# === Load arrays ===
+DE      = load_first_subject(de_path)     # (40,5,62,200)
+PSD     = load_first_subject(psd_path)    # (40,5,62,200)
+win_100 = load_first_subject(win100_path) # (40,5,7,62,100)
+win_200 = load_first_subject(win200_path) # (40,5,3,62,200)
 
 # ==========================================
 # 1. DE Feature Distribution
@@ -71,10 +65,9 @@ s, c, t, ch = 0, 0, 0, 0
 segment = win_100[c, t, :, ch, :]  # (7,100)
 fs = 200
 full_signal = segment.flatten()
-
 plt.figure(figsize=(8,3))
 plt.plot(np.arange(len(full_signal))/fs, full_signal, 'k', lw=1)
-window_len = segment.shape[-1] / fs  # 100 samples / 200 Hz = 0.5 s
+window_len = segment.shape[-1] / fs
 starts = np.arange(0, len(full_signal)/fs, window_len)
 for s_i in starts[:segment.shape[0]]:
     plt.axvspan(s_i, s_i + window_len, color='orange', alpha=0.25)
@@ -90,10 +83,9 @@ plt.close()
 # ==========================================
 segment = win_200[c, t, :, ch, :]  # (3,200)
 full_signal = segment.flatten()
-
 plt.figure(figsize=(8,3))
 plt.plot(np.arange(len(full_signal))/fs, full_signal, 'k', lw=1)
-window_len = segment.shape[-1] / fs  # 200 samples / 200 Hz = 1 s
+window_len = segment.shape[-1] / fs
 starts = np.arange(0, len(full_signal)/fs, window_len/2)
 for s_i in starts[:segment.shape[0]]:
     plt.axvspan(s_i, s_i + window_len, color='skyblue', alpha=0.25)
