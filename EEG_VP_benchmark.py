@@ -78,38 +78,35 @@ def load_feature_data(sub_file, cfg):
 
 
 def preprocess_data(data, cfg):
-    """Split EEG data into train (1–5), val (6), test (7) using ONE StandardScaler fit on all blocks."""
+    """Split EEG data into train/val/test (blocks 1–5, 6, 7) using ONE global StandardScaler, preserving structure."""
     if cfg["feature_type"] == "window":
-        data = data.mean(axis=3)       # (7, 40, 5, 62, 100)
+        data = data.mean(axis=3)  # (7, 40, 5, 62, 100)
     else:
-        data = data.mean(axis=3)       # (7, 40, 5, 62, 5)
+        data = data.mean(axis=3)  # (7, 40, 5, 62, 5)
 
-    # Rearrange so that each block has samples of shape (62, features)
-    data = rearrange(data, "b c d f g -> b (c d f g)")  # flatten within each block
+    # reshape to (blocks, samples_per_block, channels, features)
+    b, c, d, f, g = data.shape  # (7, 40, 5, 62, 5)
+    data = data.reshape(b, c * d, f, g)  # (7, 200, 62, 5)
 
-    # Fit ONE global StandardScaler on all blocks jointly
+    # fit one scaler on all blocks
     scaler = StandardScaler()
-    data_scaled = scaler.fit_transform(data.reshape(-1, data.shape[-1]))
-    data_scaled = data_scaled.reshape(data.shape)
+    flat_all = data.reshape(-1, g)  # flatten feature dimension only
+    scaler.fit(flat_all)
+    scaled = scaler.transform(flat_all).reshape(b, c * d, f, g)
 
-    # Restore per-block structure
-    data_scaled = data_scaled.reshape(7, 40, 5, cfg["channels"], 5)
-    data_scaled = rearrange(data_scaled, "b c d f g -> b (c d) f g")
+    # now split cleanly by blocks
+    train_data = scaled[:5]
+    val_data   = scaled[5:6]
+    test_data  = scaled[6:7]
 
-    # --- Split blocks ---
-    train_data = data_scaled[:5]
-    val_data   = data_scaled[5]
-    test_data  = data_scaled[6]
-
-    # --- Make labels ---
     train_labels = create_labels(cfg["num_classes"], cfg["clips_per_class"], 5)
     val_labels   = create_labels(cfg["num_classes"], cfg["clips_per_class"])
     test_labels  = create_labels(cfg["num_classes"], cfg["clips_per_class"])
 
-    # Flatten to (samples, channels, features)
-    train_data = train_data.reshape(-1, cfg["channels"], 5)
-    val_data   = val_data.reshape(-1, cfg["channels"], 5)
-    test_data  = test_data.reshape(-1, cfg["channels"], 5)
+    # reshape to (samples, channels, features)
+    train_data = train_data.reshape(-1, f, g)
+    val_data   = val_data.reshape(-1, f, g)
+    test_data  = test_data.reshape(-1, f, g)
 
     return train_data, val_data, test_data, train_labels, val_labels, test_labels
 
