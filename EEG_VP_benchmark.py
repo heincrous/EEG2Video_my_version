@@ -33,8 +33,8 @@ from models.glfnet_mlp import glfnet_mlp
 # 1. Configuration Table
 # ==========================================
 CONFIG = {
-    "feature_type": "segment",         # "segment", "de", or "psd"
-    "encoder_name": "conformer",
+    "feature_type": "de",         # "segment", "de", or "psd"
+    "encoder_name": "glfnet_mlp",
     "subjects_to_train": [
         "sub1_session2.npy",
         "sub1.npy",
