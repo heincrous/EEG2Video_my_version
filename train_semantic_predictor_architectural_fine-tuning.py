@@ -175,7 +175,7 @@ def build_scheduler(optimizer, cfg):
 
 
 # ==========================================
-# Evaluation (copied exactly from stable reference)
+# Fixed Evaluation Core
 # ==========================================
 def evaluate_model(model, eeg_flat, clip_flat, cfg):
     device = cfg["device"]
@@ -186,32 +186,37 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
         preds_tensor = model(eeg_tensor)
         mse_loss = F.mse_loss(preds_tensor, gt_tensor).item()
         preds = preds_tensor.cpu().numpy()
-    gt = clip_flat
-
-    preds /= np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8
-    gt_norm = gt / (np.linalg.norm(gt, axis=1, keepdims=True) + 1e-8)
 
     num_classes = len(cfg["class_subset"])
     samples_per_class = 5
     labels = np.repeat(np.arange(num_classes), samples_per_class)
 
-    avg_cosine = np.mean(np.sum(preds * gt_norm, axis=1))
-    class_means = np.zeros((num_classes, preds.shape[1]))
+    # normalize both
+    preds_norm = preds / (np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8)
+    gt_norm = clip_flat / (np.linalg.norm(clip_flat, axis=1, keepdims=True) + 1e-8)
+
+    # per-class mean of *predictions*, not GT
+    class_means = np.zeros((num_classes, preds_norm.shape[1]))
     for c in range(num_classes):
-        class_means[c] = gt_norm[labels == c].mean(axis=0)
+        class_means[c] = preds_norm[labels == c].mean(axis=0)
         class_means[c] /= np.linalg.norm(class_means[c]) + 1e-8
 
-    sims = np.dot(preds, class_means.T)
+    # similarities
+    sims = np.dot(preds_norm, class_means.T)
     acc = (np.argmax(sims, axis=1) == labels).mean()
 
-    within = [np.dot(preds[i], class_means[labels[i]]) for i in range(len(preds))]
-    between = [np.mean(np.dot(class_means[np.arange(num_classes) != labels[i]], preds[i])) for i in range(len(preds))]
+    within = [np.dot(preds_norm[i], class_means[labels[i]]) for i in range(len(preds_norm))]
+    between = [np.mean(np.dot(class_means[np.arange(num_classes) != labels[i]], preds_norm[i]))
+               for i in range(len(preds_norm))]
     avg_within, avg_between = np.mean(within), np.mean(between)
 
-    global_mean = class_means.mean(axis=0)
-    num = np.sum([np.sum((m - global_mean) ** 2) for m in class_means])
-    den = np.sum([np.sum((preds[labels == c] - class_means[c]) ** 2) for c in range(num_classes)])
-    fisher_score = num / (den + 1e-8)
+    # Fisher ratio
+    global_mean = np.mean(class_means, axis=0)
+    sb = np.sum((class_means - global_mean) ** 2)
+    sw = np.sum([(preds_norm[labels == c] - class_means[c]) ** 2 for c in range(num_classes)])
+    fisher_score = sb / (sw + 1e-8)
+
+    avg_cosine = np.mean(np.sum(preds_norm * gt_norm, axis=1))
 
     print(
         f"  MSE Loss: {mse_loss:.6f}\n"

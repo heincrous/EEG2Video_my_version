@@ -23,26 +23,27 @@ from tqdm import tqdm
 # Config block (tunable but defaults unchanged)
 # ==========================================
 CONFIG = {
-    # === Model structure ===
-    "dropout": 0.0,                      # Dropout probability. Default: 0.0
-    "layer_widths": [10000, 10000, 10000, 10000],  # Hidden layer sizes. Default: four layers of 10,000 units
-    "activation": "ReLU",                # Activation function. Default: "ReLU"
-    "normalization": "None",             # Normalization type. Default: "None"
+    # model structure
+    "dropout": 0.0,                  # dropout probability (default: 0.0)
+    "layer_widths": [10000, 10000, 10000, 10000],  # hidden layer sizes
+    "activation": "ReLU",            # "ReLU", "ELU", "GELU", "SiLU", etc.
+    "normalization": "None",         # "BatchNorm", "LayerNorm", "GroupNorm", "None"
 
-    # === Training and data parameters ===
-    "feature_type": "EEG_DE_1per2s",     # EEG feature directory
-    "subject_name": "sub1.npy",          # Subject file
-    "class_subset": [0, 11, 24, 30, 33], # Subset of classes
-    "subset_id": "1",                    # Subset identifier
+    # training / data
+    "feature_type": "EEG_DE_1per2s",
+    "subject_name": "sub1.npy",
+    "class_subset": [0, 11, 24, 30, 33],
+    "subset_id": "1",
     "epochs": 200,
     "batch_size": 128,
     "lr": 0.0005,
     "device": "cuda:0" if torch.cuda.is_available() else "cpu",
 
-    # === Directory paths ===
+    # paths
     "eeg_root": "/content/drive/MyDrive/EEG2Video_data/processed",
     "clip_path": "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy",
-    "result_root": "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/architectural_fine-tuning",
+    "ckpt_save": "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints",
+    "emb_save": "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings",
 }
 
 
