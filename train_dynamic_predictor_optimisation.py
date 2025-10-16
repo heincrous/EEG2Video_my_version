@@ -57,7 +57,7 @@ CONFIG = {
     # --- Training parameters ---
     "batch_size"        : 128,
     "num_epochs"        : 100,
-    "lr"                : 0.0001,
+    "lr"                : 0.0005,
     "optimizer"         : "adamw",          # ["adam", "adamw"]
     "weight_decay"      : 0.0,
     "scheduler"         : "constant",       # ["constant", "cosine"]
@@ -202,9 +202,10 @@ def main(cfg):
         ckpt_path = os.path.join(cfg["checkpoint_dir"], f"dynpred_{EXPERIMENT_TYPE}_{sub.replace('.npy','')}.pt")
         torch.save({"state_dict": model.state_dict()}, ckpt_path)
 
-    mean_acc, std_acc = np.mean(all_acc), np.std(all_acc)
+    mean_acc = np.mean(all_acc)
     print("\n=== Final Results ===")
-    print(f"Mean Accuracy: {mean_acc:.4f} ± {std_acc:.4f}")
+    print(f"Mean Accuracy: {mean_acc:.4f}")
+
 
     # ==========================================
     # Save Configuration and Results
@@ -227,7 +228,7 @@ def main(cfg):
         for k, v in model_cfg.items():
             f.write(f"{k}: {v}\n")
         f.write("\nFinal Results:\n")
-        f.write(f"Mean Accuracy: {mean_acc:.4f} ± {std_acc:.4f}\n\n")
+        f.write(f"Mean Accuracy: {mean_acc:.4f}\n\n")
         f.write("Subject-Wise Results:\n")
         for sub, acc in zip(subjects, all_acc):
             f.write(f"{sub:15s} | Acc: {acc:.4f}\n")
