@@ -154,10 +154,24 @@ def main(cfg):
         data = load_feature_data(sub, cfg)
         processed = preprocess_data(data, cfg)
 
-        # Align labels with block splits (40 concepts × 5 clips)
-        train_labels = np.repeat(labels_all, 5)[:40*5]
-        val_labels   = np.repeat(labels_all, 5)[40*5:40*6]
-        test_labels  = np.repeat(labels_all, 5)[40*6:40*7]
+        # Flatten optical flow labels to (1400,)
+        labels_all = np.load(cfg["optical_flow_path"]).reshape(-1)  # (1400,)
+        threshold = np.median(labels_all)
+        labels_all = (labels_all > threshold).astype(int)
+
+        # Split by blocks: 5 train, 1 val, 1 test
+        samples_per_block = 40 * 5
+        train_labels = labels_all[:samples_per_block * 5]   # 1000
+        val_labels   = labels_all[samples_per_block * 5 : samples_per_block * 6]  # 200
+        test_labels  = labels_all[samples_per_block * 6 : samples_per_block * 7]  # 200
+
+        # Debug check
+        print("Train EEG shape:", processed["train"].shape)
+        print("Val EEG shape:", processed["val"].shape)
+        print("Test EEG shape:", processed["test"].shape)
+        print("Train labels:", len(train_labels))
+        print("Val labels:", len(val_labels))
+        print("Test labels:", len(test_labels))
 
         # === Debug shapes ===
         print("Train EEG shape:", processed["train"].shape)
