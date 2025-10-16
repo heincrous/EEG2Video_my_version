@@ -1,5 +1,5 @@
 # ==========================================
-# EEG2Video Preprocessing Figures Generator (Shaded Overlap = Grey)
+# EEG2Video Preprocessing Figures Generator (Accurate Overlap Visualization)
 # ==========================================
 import os
 import numpy as np
@@ -13,8 +13,8 @@ os.makedirs(save_path, exist_ok=True)
 
 de_path     = os.path.join(base_path, "EEG_DE_1per2s")
 psd_path    = os.path.join(base_path, "EEG_PSD_1per2s")
-win100_path = os.path.join(base_path, "EEG_windows_100")  # 0.5 s windows (100, overlap 50)
-win200_path = os.path.join(base_path, "EEG_windows_200")  # 1.0 s windows (200, overlap 100)
+win100_path = os.path.join(base_path, "EEG_windows_100")  # 0.5 s windows
+win200_path = os.path.join(base_path, "EEG_windows_200")  # 1.0 s windows
 
 # === Helper: load first subject file ===
 def load_first_subject(folder):
@@ -63,79 +63,62 @@ plt.savefig(os.path.join(save_path, "feat_distribution_PSD.png"), dpi=300)
 plt.close()
 
 # ==========================================
-# 3. Temporal Segmentation (Shaded Overlap = Grey) – 0.5 s Windows
+# 3. Accurate Window Visualization – 0.5 s (EEG_windows_100)
 # ==========================================
 fs = 200
 block, cls, clip, ch = 0, 0, 0, 0
 windows = win_100[block, cls, clip, :, ch, :]  # (7,100)
-win_len = windows.shape[-1]
-step = win_len // 2  # 50 overlap → 50 samples
-
-# reconstruct continuous signal (2 s total)
-duration = (win_len + (windows.shape[0]-1)*step) / fs
-t = np.linspace(0, duration, win_len + (windows.shape[0]-1)*step)
-signal = np.zeros_like(t)
-count = np.zeros_like(t)
-for i, w in enumerate(windows):
-    start = i * step
-    signal[start:start+win_len] += w
-    count[start:start+win_len] += 1
-signal /= np.maximum(count, 1)
+win_len = 100
+step = 50  # overlap 50 samples
+duration = 400 / fs  # 2 s original clip
 
 plt.figure(figsize=(8,3))
-plt.plot(t, signal, color='black', lw=1)
+colors = plt.cm.tab10(np.linspace(0,1,windows.shape[0]))
 
-# shaded areas: base windows (blue) + overlap regions (grey)
-for i in range(windows.shape[0]):
+for i, w in enumerate(windows):
     start = i * step / fs
-    end = start + win_len / fs
-    plt.axvspan(start, end, color='lightblue', alpha=0.3)
-    if i > 0:
-        overlap_start = start
-        overlap_end = start + (win_len - step) / fs
-        plt.axvspan(overlap_start, overlap_end, color='grey', alpha=0.25)
+    t = np.linspace(start, start + win_len/fs, win_len)
+    plt.plot(t, w, color=colors[i], lw=0.8, alpha=0.9)
 
-plt.title("0.5 s Window Segmentation – 50% Overlap Highlighted (Grey)")
+# mark overlap zones in grey
+for i in range(1, windows.shape[0]):
+    overlap_start = i * step / fs
+    overlap_end = overlap_start + (win_len - step) / fs
+    plt.axvspan(overlap_start, overlap_end, color='grey', alpha=0.25)
+
+plt.title("0.5 s Windows (100 samples) with 50% Overlap Highlighted (Grey)")
 plt.xlabel("Time (s)")
 plt.ylabel("Amplitude (µV)")
 plt.tight_layout()
-plt.savefig(os.path.join(save_path, "temp_window_shaded_overlap_0.5s.png"), dpi=300)
+plt.savefig(os.path.join(save_path, "accurate_window_overlap_0.5s.png"), dpi=300)
 plt.close()
 
 # ==========================================
-# 4. Temporal Segmentation (Shaded Overlap = Grey) – 1 s Windows
+# 4. Accurate Window Visualization – 1 s (EEG_windows_200)
 # ==========================================
 windows = win_200[block, cls, clip, :, ch, :]  # (3,200)
-win_len = windows.shape[-1]
-step = win_len // 2  # 100 samples
-
-duration = (win_len + (windows.shape[0]-1)*step) / fs
-t = np.linspace(0, duration, win_len + (windows.shape[0]-1)*step)
-signal = np.zeros_like(t)
-count = np.zeros_like(t)
-for i, w in enumerate(windows):
-    start = i * step
-    signal[start:start+win_len] += w
-    count[start:start+win_len] += 1
-signal /= np.maximum(count, 1)
+win_len = 200
+step = 100
+duration = 400 / fs  # 2 s total signal
 
 plt.figure(figsize=(8,3))
-plt.plot(t, signal, color='black', lw=1)
+colors = plt.cm.tab10(np.linspace(0,1,windows.shape[0]))
 
-for i in range(windows.shape[0]):
+for i, w in enumerate(windows):
     start = i * step / fs
-    end = start + win_len / fs
-    plt.axvspan(start, end, color='lightcoral', alpha=0.3)
-    if i > 0:
-        overlap_start = start
-        overlap_end = start + (win_len - step) / fs
-        plt.axvspan(overlap_start, overlap_end, color='grey', alpha=0.25)
+    t = np.linspace(start, start + win_len/fs, win_len)
+    plt.plot(t, w, color=colors[i], lw=0.8, alpha=0.9)
 
-plt.title("1 s Window Segmentation – 50% Overlap Highlighted (Grey)")
+for i in range(1, windows.shape[0]):
+    overlap_start = i * step / fs
+    overlap_end = overlap_start + (win_len - step) / fs
+    plt.axvspan(overlap_start, overlap_end, color='grey', alpha=0.25)
+
+plt.title("1 s Windows (200 samples) with 50% Overlap Highlighted (Grey)")
 plt.xlabel("Time (s)")
 plt.ylabel("Amplitude (µV)")
 plt.tight_layout()
-plt.savefig(os.path.join(save_path, "temp_window_shaded_overlap_1s.png"), dpi=300)
+plt.savefig(os.path.join(save_path, "accurate_window_overlap_1s.png"), dpi=300)
 plt.close()
 
 print("All figures saved to:", save_path)
