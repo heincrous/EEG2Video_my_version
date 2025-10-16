@@ -3,13 +3,13 @@
 # ==========================================
 CONFIG = {
     # model structure
-    "dropout": 0.5,              # dropout probability
-    "layer_width": 40,           # number of convolutional filters
-    "kernel_size": (1, 25),      # temporal kernel
-    "pool_size": (1, 51),        # pooling window
-    "pool_stride": (1, 5),       # pooling stride
-    "activation": "ELU",         # "ELU", "GELU", "SiLU", etc.
-    "normalization": "BatchNorm",# "BatchNorm", "LayerNorm", "GroupNorm"
+    "dropout": 0.5,                   # dropout probability
+    "layer_width": 40,                # number of convolutional filters
+    "kernel_size": (1, 25),           # temporal kernel
+    "pool_size": (1, 51),             # pooling window
+    "pool_stride": (1, 5),            # pooling stride
+    "activation": "ELU",              # "ELU", "GELU", "SiLU", etc.
+    "normalization": "BatchNorm",     # "BatchNorm", "LayerNorm", "GroupNorm"
     "input_dim": {"C": 62, "T": 100}  # default input shape
 }
 

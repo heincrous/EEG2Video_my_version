@@ -2,12 +2,12 @@
 # Config block (tunable but defaults unchanged)
 # ==========================================
 CONFIG = {
-    "dropout": 0.5,          # dropout probability
-    "layer_width": 40,       # embedding dimension
-    "num_heads": 10,         # number of attention heads
-    "kernel_size": (1, 25),  # temporal patch kernel
-    "pool_size": (1, 75),    # pooling window
-    "pool_stride": (1, 15),  # pooling stride
+    "dropout": 0.5,              # dropout probability
+    "layer_width": 40,           # embedding dimension
+    "num_heads": 10,             # number of attention heads
+    "kernel_size": (1, 25),      # temporal patch kernel
+    "pool_size": (1, 75),        # pooling window
+    "pool_stride": (1, 15),      # pooling stride
     "activation": "ELU",         # "ELU", "GELU", "SiLU", etc.
     "normalization": "BatchNorm",# "BatchNorm", "LayerNorm", "GroupNorm"
 }
