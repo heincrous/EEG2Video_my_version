@@ -1,10 +1,10 @@
 # ==========================================
-# EEG → CLIP Semantic Predictor (DE-only, MSE Loss)
+# EEG → CLIP Semantic Predictor (DE-Only, MSE Loss)
 # ==========================================
-# Trains EEG→CLIP semantic predictor with MSE loss.
+# Trains on DE features for one subject.
+# Uses MSE loss and reports MSE, cosine, within/between, Fisher, accuracy.
 # Supports optimizer, scheduler, and learning rate experiments.
-# Uses DE features (subset of 5 classes, one subject).
-# Saves results and configuration in .txt format.
+# Saves only metrics and configuration (no checkpoints or embeddings).
 # ==========================================
 
 
@@ -15,7 +15,7 @@ import importlib
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils import data
+from torch.utils.data import DataLoader
 from sklearn.preprocessing import StandardScaler
 from einops import rearrange
 from tqdm import tqdm
@@ -39,10 +39,9 @@ CONFIG = {
     "subset_id"         : "1",
 
     # --- Paths ---
-    "data_root"         : "/content/drive/MyDrive/EEG2Video_data/processed/",
+    "eeg_root"          : "/content/drive/MyDrive/EEG2Video_data/processed/",
     "clip_path"         : "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy",
     "save_root"         : "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/optimisation/",
-    "checkpoint_dir"    : "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_predictor/",
 
     # --- Model parameters ---
     "layer_widths"      : [10000, 10000, 10000, 10000],
@@ -54,15 +53,15 @@ CONFIG = {
     "batch_size"        : 128,
     "num_epochs"        : 200,
     "lr"                : 0.0005,
-    "optimizer"         : "adamw",      # ["adam", "adamw"]
-    "weight_decay"      : 1e-4,         # used only for AdamW
-    "scheduler"         : "cosine",     # ["constant", "cosine"]
+    "optimizer"         : "adam",         # ["adam", "adamw"]
+    "weight_decay"      : 0.0,            # used only for AdamW
+    "scheduler"         : "cosine",        # ["constant", "cosine"]
     "device"            : "cuda" if torch.cuda.is_available() else "cpu",
 }
 
 
 # ==========================================
-# 2. Model Definition
+# 2. Model
 # ==========================================
 class CLIPSemanticMLP(nn.Module):
     def __init__(self, input_dim, cfg):
@@ -99,9 +98,11 @@ class CLIPSemanticMLP(nn.Module):
 # 3. Data Handling
 # ==========================================
 def load_de_data(cfg):
-    eeg_path = os.path.join(cfg["data_root"], cfg["feature_type"], cfg["subject_name"])
+    eeg_path = os.path.join(cfg["eeg_root"], cfg["feature_type"], cfg["subject_name"])
+    clip_path = cfg["clip_path"]
+
     eeg = np.load(eeg_path, allow_pickle=True)
-    clip = np.load(cfg["clip_path"], allow_pickle=True)
+    clip = np.load(clip_path, allow_pickle=True)
 
     if eeg.ndim == 6 and eeg.shape[3] == 2:
         eeg = eeg.mean(axis=3)
@@ -109,7 +110,7 @@ def load_de_data(cfg):
         raise ValueError(f"Unexpected EEG shape: {eeg.shape}")
 
     print(f"Loaded EEG {cfg['subject_name']} | shape={eeg.shape}")
-    print(f"Loaded CLIP shape={clip.shape}")
+    print(f"Loaded CLIP | shape={clip.shape}")
     return eeg, clip
 
 
@@ -126,6 +127,7 @@ def prepare_data(eeg, clip, cfg):
     train_eeg, val_eeg, test_eeg = map(flatten_eeg, [train_eeg, val_eeg, test_eeg])
     train_clip, val_clip, test_clip = map(flatten_clip, [train_clip, val_clip, test_clip])
 
+    # Fit scaler ONLY on training EEG
     scaler = StandardScaler()
     scaler.fit(train_eeg)
     train_eeg = scaler.transform(train_eeg)
@@ -136,14 +138,8 @@ def prepare_data(eeg, clip, cfg):
     return train_eeg, val_eeg, test_eeg, train_clip, val_clip, test_clip
 
 
-def Get_Dataloader(eeg, clip, batch_size, istrain):
-    X = torch.tensor(eeg, dtype=torch.float32)
-    Y = torch.tensor(clip, dtype=torch.float32)
-    return data.DataLoader(data.TensorDataset(X, Y), batch_size=batch_size, shuffle=istrain)
-
-
 # ==========================================
-# 4. Training and Evaluation
+# 4. Optimiser + Scheduler
 # ==========================================
 def build_optimizer(model, cfg):
     if cfg["optimizer"].lower() == "adam":
@@ -163,84 +159,92 @@ def build_scheduler(optimizer, cfg):
         raise ValueError("Unknown scheduler type. Choose 'constant' or 'cosine'.")
 
 
-def evaluate_model(model, eeg, clip, cfg):
+# ==========================================
+# 5. Evaluation Metrics
+# ==========================================
+def evaluate_model(model, eeg_flat, clip_flat, cfg):
     model.eval()
     device = cfg["device"]
     with torch.no_grad():
-        eeg_tensor = torch.tensor(eeg, dtype=torch.float32, device=device)
-        clip_tensor = torch.tensor(clip, dtype=torch.float32, device=device)
-        preds = model(eeg_tensor)
-        mse_loss = F.mse_loss(preds, clip_tensor).item()
+        eeg_tensor = torch.tensor(eeg_flat, dtype=torch.float32, device=device)
+        gt_tensor = torch.tensor(clip_flat, dtype=torch.float32, device=device)
+        preds_tensor = model(eeg_tensor)
+        mse_loss = F.mse_loss(preds_tensor, gt_tensor).item()
+        preds = preds_tensor.cpu().numpy()
 
-        preds = preds.cpu().numpy()
-        gt = clip
-        preds /= np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8
-        gt /= np.linalg.norm(gt, axis=1, keepdims=True) + 1e-8
+    gt = clip_flat
+    preds /= np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8
+    gt /= np.linalg.norm(gt, axis=1, keepdims=True) + 1e-8
 
-        num_classes = len(cfg["class_subset"])
-        samples_per_class = 5
-        labels = np.repeat(np.arange(num_classes), samples_per_class)
-        avg_cosine = np.mean(np.sum(preds * gt, axis=1))
+    num_classes = len(cfg["class_subset"])
+    samples_per_class = 5
+    labels = np.repeat(np.arange(num_classes), samples_per_class)
 
-        class_means = np.array([gt[labels == c].mean(axis=0) for c in range(num_classes)])
-        class_means /= np.linalg.norm(class_means, axis=1, keepdims=True) + 1e-8
+    avg_cosine = np.mean(np.sum(preds * gt, axis=1))
 
-        sims = np.dot(preds, class_means.T)
-        acc = (np.argmax(sims, axis=1) == labels).mean()
-    return mse_loss, avg_cosine, acc
+    class_means = np.array([gt[labels == c].mean(axis=0) for c in range(num_classes)])
+    class_means /= np.linalg.norm(class_means, axis=1, keepdims=True) + 1e-8
+
+    sims = np.dot(preds, class_means.T)
+    acc = (np.argmax(sims, axis=1) == labels).mean()
+
+    within = [np.dot(preds[i], class_means[labels[i]]) for i in range(len(preds))]
+    between = [np.mean(np.dot(class_means[np.arange(num_classes) != labels[i]], preds[i])) for i in range(len(preds))]
+    avg_within, avg_between = np.mean(within), np.mean(between)
+
+    global_mean = class_means.mean(axis=0)
+    num = np.sum([np.sum((m - global_mean) ** 2) for m in class_means])
+    den = np.sum([np.sum((preds[labels == c] - class_means[c]) ** 2) for c in range(num_classes)])
+    fisher_score = num / (den + 1e-8)
+
+    return mse_loss, avg_cosine, avg_within, avg_between, fisher_score, acc
 
 
-def train_and_eval(model, train_iter, test_eeg, test_clip, cfg):
+# ==========================================
+# 6. Training
+# ==========================================
+def train_model(model, train_loader, val_eeg, val_clip, cfg):
     device = cfg["device"]
-    model.to(device)
     optimizer = build_optimizer(model, cfg)
     scheduler = build_scheduler(optimizer, cfg)
 
-    for epoch in tqdm(range(cfg["num_epochs"])):
+    for epoch in tqdm(range(1, cfg["num_epochs"] + 1)):
         model.train()
-        total_loss = 0
-        for X, Y in train_iter:
-            X, Y = X.to(device), Y.to(device)
-            preds = model(X)
-            loss = F.mse_loss(preds, Y)
+        epoch_loss = 0
+        for eeg, clip in train_loader:
+            eeg, clip = eeg.float().to(device), clip.float().to(device)
             optimizer.zero_grad()
+            loss = F.mse_loss(model(eeg), clip)
             loss.backward()
             optimizer.step()
             if scheduler:
                 scheduler.step()
-            total_loss += loss.item()
-        if (epoch + 1) % 10 == 0:
-            print(f"[Epoch {epoch+1}] Avg Loss: {total_loss/len(train_iter):.6f}")
-
-    mse, cos, acc = evaluate_model(model, test_eeg, test_clip, cfg)
-    return mse, cos, acc
+            epoch_loss += loss.item()
+        if epoch % 10 == 0:
+            print(f"[Epoch {epoch:03d}/{cfg['num_epochs']}] Avg Loss: {epoch_loss / len(train_loader):.6f}")
+            evaluate_model(model, val_eeg, val_clip, cfg)
 
 
 # ==========================================
-# 5. Main Execution
+# 7. Main Execution
 # ==========================================
 def main(cfg):
     exp_dir = os.path.join(cfg["save_root"], EXPERIMENT_TYPE)
     os.makedirs(exp_dir, exist_ok=True)
-    os.makedirs(cfg["checkpoint_dir"], exist_ok=True)
 
     eeg, clip = load_de_data(cfg)
     train_eeg, val_eeg, test_eeg, train_clip, val_clip, test_clip = prepare_data(eeg, clip, cfg)
-    train_iter = Get_Dataloader(train_eeg, train_clip, cfg["batch_size"], True)
+    train_loader = DataLoader(list(zip(torch.tensor(train_eeg), torch.tensor(train_clip))), batch_size=cfg["batch_size"], shuffle=True)
 
-    model = CLIPSemanticMLP(input_dim=train_eeg.shape[1], cfg=cfg)
-    mse, cos, acc = train_and_eval(model, train_iter, test_eeg, test_clip, cfg)
+    model = CLIPSemanticMLP(input_dim=train_eeg.shape[1], cfg=cfg).to(cfg["device"])
+    train_model(model, train_loader, val_eeg, val_clip, cfg)
 
     print("\n=== Final Test Metrics ===")
-    print(f"MSE: {mse:.6f} | Avg Cosine: {cos:.4f} | Accuracy: {acc*100:.2f}%")
-
-    ckpt_path = os.path.join(cfg["checkpoint_dir"], f"semanticpred_{EXPERIMENT_TYPE}_{cfg['subject_name'].replace('.npy','')}.pt")
-    torch.save({"state_dict": model.state_dict()}, ckpt_path)
+    mse, cos, within, between, fisher, acc = evaluate_model(model, test_eeg, test_clip, cfg)
 
     # ==========================================
-    # Save Configuration and Results
+    # Save Configuration + Metrics
     # ==========================================
-    model_cfg = getattr(importlib.import_module("models.glfnet_mlp"), "CONFIG", {})
     filename = (
         f"{EXPERIMENT_TYPE}_opt{cfg['optimizer']}_sched{cfg['scheduler']}_"
         f"lr{cfg['lr']}_wd{cfg['weight_decay']}_bs{cfg['batch_size']}_ep{cfg['num_epochs']}.txt"
@@ -254,12 +258,13 @@ def main(cfg):
         f.write("Configuration Used:\n")
         for k, v in cfg.items():
             f.write(f"{k}: {v}\n")
-        f.write("\nModel Config:\n")
-        for k, v in model_cfg.items():
-            f.write(f"{k}: {v}\n")
         f.write("\nFinal Results:\n")
         f.write(f"MSE Loss: {mse:.6f}\n")
-        f.write(f"Average Cosine: {cos:.4f}\n")
+        f.write(f"Average Cosine(pred, gt): {cos:.4f}\n")
+        f.write(f"Within-Class Cosine: {within:.4f}\n")
+        f.write(f"Between-Class Cosine: {between:.4f}\n")
+        f.write(f"Δ (Within−Between): {within - between:.4f}\n")
+        f.write(f"Fisher Score: {fisher:.4f}\n")
         f.write(f"Classification Accuracy: {acc*100:.2f}%\n")
 
     print(f"\nSaved configuration and results to: {save_path}")
