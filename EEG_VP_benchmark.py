@@ -34,7 +34,7 @@ from models.glfnet_mlp import glfnet_mlp
 # ==========================================
 CONFIG = {
     "feature_type": "segment",         # "segment", "de", or "psd"
-    "encoder_name": "deepnet",      # used for training
+    "encoder_name": "deepnet",
     "subjects_to_train": [
         "sub1_session2.npy",
         "sub1.npy",

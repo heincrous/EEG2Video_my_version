@@ -41,6 +41,7 @@ CONFIG = {
         "sub10.npy",
         "sub13.npy"
     ],
+    # "subjects_to_train": "all",
     "dry_run": True,
 
     # --- Data parameters ---
