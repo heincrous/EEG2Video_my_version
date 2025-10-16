@@ -1,5 +1,5 @@
 # ==========================================
-# EEG2Video Preprocessing Figures Generator (Accurate Overlap Visualization)
+# EEG2Video Preprocessing Figures Generator (Accurate Overlap Visualization - Final)
 # ==========================================
 import os
 import numpy as np
@@ -25,18 +25,18 @@ def load_first_subject(folder):
     return np.load(files[0])
 
 # === Load arrays ===
-DE      = load_first_subject(de_path)     
-PSD     = load_first_subject(psd_path)    
-win_100 = load_first_subject(win100_path) 
-win_200 = load_first_subject(win200_path) 
+DE      = load_first_subject(de_path)
+PSD     = load_first_subject(psd_path)
+win_100 = load_first_subject(win100_path)
+win_200 = load_first_subject(win200_path)
 
 # ==========================================
 # 1. DE Feature Distribution – Mean ± SD
 # ==========================================
-de_mean = DE.mean(axis=(0,1,2,4))
-de_std  = DE.std(axis=(0,1,2,4))
+de_mean = DE.mean(axis=(0, 1, 2, 4))
+de_std  = DE.std(axis=(0, 1, 2, 4))
 
-plt.figure(figsize=(8,4))
+plt.figure(figsize=(8, 4))
 plt.bar(np.arange(1, 63), de_mean, yerr=de_std, capsize=2, color='steelblue')
 plt.title("DE Feature Mean ± SD Across Channels")
 plt.xlabel("EEG Channel Index")
@@ -49,10 +49,10 @@ plt.close()
 # ==========================================
 # 2. PSD Feature Distribution – Mean ± SD
 # ==========================================
-psd_mean = PSD.mean(axis=(0,1,2,4))
-psd_std  = PSD.std(axis=(0,1,2,4))
+psd_mean = PSD.mean(axis=(0, 1, 2, 4))
+psd_std  = PSD.std(axis=(0, 1, 2, 4))
 
-plt.figure(figsize=(8,4))
+plt.figure(figsize=(8, 4))
 plt.bar(np.arange(1, 63), psd_mean, yerr=psd_std, capsize=2, color='mediumseagreen')
 plt.title("PSD Feature Mean ± SD Across Channels")
 plt.xlabel("EEG Channel Index")
@@ -67,28 +67,22 @@ plt.close()
 # ==========================================
 fs = 200
 block, cls, clip, ch = 0, 0, 0, 0
-windows = win_100[block, cls, clip, :, ch, :]  # (7,100)
 win_len = 100
 step = 50  # overlap 50 samples
-duration = 400 / fs  # 2 s original clip
+windows = win_100[block, cls, clip, :, ch, :]  # (7,100)
+colors = plt.cm.tab10(np.linspace(0, 1, windows.shape[0]))
 
-plt.figure(figsize=(8,3))
-colors = plt.cm.tab10(np.linspace(0,1,windows.shape[0]))
-
+plt.figure(figsize=(8, 3))
 for i, w in enumerate(windows):
     start = i * step / fs
-    t = np.linspace(start, start + win_len/fs, win_len)
-    plt.plot(t, w, color=colors[i], lw=0.8, alpha=0.9)
+    t = np.arange(start, start + win_len / fs, 1 / fs)
+    plt.plot(t, w, color=colors[i], lw=0.9, label=f"Win {i+1}")
 
-# mark overlap zones in grey
-for i in range(1, windows.shape[0]):
-    overlap_start = i * step / fs
-    overlap_end = overlap_start + (win_len - step) / fs
-    plt.axvspan(overlap_start, overlap_end, color='grey', alpha=0.25)
-
-plt.title("0.5 s Windows (100 samples) with 50% Overlap Highlighted (Grey)")
+plt.title("EEG Windows – 0.5 s (100 samples, 50 overlap)")
 plt.xlabel("Time (s)")
 plt.ylabel("Amplitude (µV)")
+plt.legend(fontsize=7, ncol=7)
+plt.grid(alpha=0.3)
 plt.tight_layout()
 plt.savefig(os.path.join(save_path, "accurate_window_overlap_0.5s.png"), dpi=300)
 plt.close()
@@ -96,27 +90,22 @@ plt.close()
 # ==========================================
 # 4. Accurate Window Visualization – 1 s (EEG_windows_200)
 # ==========================================
-windows = win_200[block, cls, clip, :, ch, :]  # (3,200)
 win_len = 200
-step = 100
-duration = 400 / fs  # 2 s total signal
+step = 100  # overlap 100 samples
+windows = win_200[block, cls, clip, :, ch, :]  # (3,200)
+colors = plt.cm.tab10(np.linspace(0, 1, windows.shape[0]))
 
-plt.figure(figsize=(8,3))
-colors = plt.cm.tab10(np.linspace(0,1,windows.shape[0]))
-
+plt.figure(figsize=(8, 3))
 for i, w in enumerate(windows):
     start = i * step / fs
-    t = np.linspace(start, start + win_len/fs, win_len)
-    plt.plot(t, w, color=colors[i], lw=0.8, alpha=0.9)
+    t = np.arange(start, start + win_len / fs, 1 / fs)
+    plt.plot(t, w, color=colors[i], lw=0.9, label=f"Win {i+1}")
 
-for i in range(1, windows.shape[0]):
-    overlap_start = i * step / fs
-    overlap_end = overlap_start + (win_len - step) / fs
-    plt.axvspan(overlap_start, overlap_end, color='grey', alpha=0.25)
-
-plt.title("1 s Windows (200 samples) with 50% Overlap Highlighted (Grey)")
+plt.title("EEG Windows – 1 s (200 samples, 100 overlap)")
 plt.xlabel("Time (s)")
 plt.ylabel("Amplitude (µV)")
+plt.legend(fontsize=8, ncol=3)
+plt.grid(alpha=0.3)
 plt.tight_layout()
 plt.savefig(os.path.join(save_path, "accurate_window_overlap_1s.png"), dpi=300)
 plt.close()
