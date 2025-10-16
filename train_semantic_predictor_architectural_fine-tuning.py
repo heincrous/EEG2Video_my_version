@@ -46,7 +46,7 @@ CONFIG = {
     "normalization": "None",
 
     # === Training and data parameters ===
-    "feature_type": "EEG_DE_1per2s",
+    "feature_type": "EEG_DE_1per1s",
     "subject_name": "sub1.npy",
     "class_subset": [0, 11, 24, 30, 33],
     "subset_id": "1",
