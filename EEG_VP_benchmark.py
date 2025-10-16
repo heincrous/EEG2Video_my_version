@@ -59,7 +59,7 @@ CONFIG = {
 
     # --- Paths ---
     "data_root": "/content/drive/MyDrive/EEG2Video_data/processed/",
-    "window_dir": "EEG_window_100/",
+    "window_dir": "EEG_windows_100/",
     "de_dir": "EEG_DE_1per1s/",
     "psd_dir": "EEG_PSD_1per1s/",
 
