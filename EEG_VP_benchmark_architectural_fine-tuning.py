@@ -1,9 +1,9 @@
 # ==========================================
-# EEG Classification Script (Full Modular + Functional Dry Run)
+# EEG Classification Script (DE-Only)
 # ==========================================
-# Performs comprehensive dry-run forward passes on all models
-# with simulated preprocessing for all feature types.
-# Can also train EEG classifiers per subject when dry_run=False.
+# Performs training and evaluation for DE features only
+# using the GLFNet-MLP encoder architecture.
+# Supports architectural fine-tuning experiments.
 # ==========================================
 
 
@@ -15,11 +15,9 @@ from sklearn.preprocessing import StandardScaler
 import torch
 import torch.nn as nn
 from torch.utils import data
-from einops import rearrange
 
 
-# === Encoder Imports ===
-from models.glfnet import glfnet
+# === Encoder Import ===
 from models.glfnet_mlp import glfnet_mlp
 
 
@@ -34,8 +32,7 @@ EXPERIMENT_TYPE = "activation"
 # 1. Configuration Table
 # ==========================================
 CONFIG = {
-    # --- Core setup ---
-    "feature_types": ["de"],   # choose any subset: ["segment"], ["de", "psd"], ["segment", "de"], etc.
+    "feature_type": "de",
     "subjects_to_train": [
         "sub1_session2.npy",
         "sub1.npy",
@@ -48,27 +45,20 @@ CONFIG = {
         "sub10.npy",
         "sub13.npy"
     ],
-    # "subjects_to_train": "all",
     "dry_run": False,
 
-    # --- Data parameters ---
+    # --- Data ---
     "num_classes": 40,
     "channels": 62,
-    "time_len": 400,
+    "time_len": 5,  # DE features per channel
     "num_blocks": 7,
     "clips_per_class": 5,
 
     # --- Paths ---
     "data_root": "/content/drive/MyDrive/EEG2Video_data/processed/",
-    "segment_dir": "EEG_segments/",
     "de_dir": "EEG_DE_1per1s/",
-    "psd_dir": "EEG_PSD_1per1s/",
 
-    # --- Model parameters ---
-    "emb_dim": 64,                # latent embedding size used by both GLFNet and GLFNet-MLP
-    "fusion_type": "attention",   # "concat" or "attention"
-
-    # --- Training parameters ---
+    # --- Training ---
     "batch_size": 256,
     "num_epochs": 100,
     "lr": 0.0005,
@@ -77,7 +67,7 @@ CONFIG = {
 
 
 # ==========================================
-# 2. Data Handling Module
+# 2. Data Handling
 # ==========================================
 def create_labels(num_classes, clips_per_class, blocks=1):
     block_labels = np.repeat(np.arange(num_classes), clips_per_class)
@@ -85,206 +75,53 @@ def create_labels(num_classes, clips_per_class, blocks=1):
 
 
 def load_feature_data(sub_file, cfg):
-    feature_data = {}
-
-    for ft in cfg["feature_types"]:
-        if ft == "segment":
-            path = os.path.join(cfg["data_root"], cfg["segment_dir"], sub_file)
-        elif ft == "de":
-            path = os.path.join(cfg["data_root"], cfg["de_dir"], sub_file)
-        elif ft == "psd":
-            path = os.path.join(cfg["data_root"], cfg["psd_dir"], sub_file)
-        else:
-            raise ValueError(f"Unsupported feature type: {ft}")
-
-        data = np.load(path)
-        print(f"Loaded {sub_file} [{ft}] | shape {data.shape}")
-        feature_data[ft] = data
-
-    return feature_data
+    path = os.path.join(cfg["data_root"], cfg["de_dir"], sub_file)
+    data = np.load(path)  # (7, 40, 5, 62, 5)
+    print(f"Loaded {sub_file} [DE] | shape {data.shape}")
+    return data
 
 
-def preprocess_data(feature_data, cfg):
+def preprocess_data(data, cfg):
     """
-    Preprocess multiple EEG feature types (segment, DE, PSD).
-    Each feature is standardized independently but split identically.
-    Returns dict of processed arrays and shared labels.
+    Preprocess DE EEG data (7, 40, 5, 62, 5).
     """
-    processed = {}
-    labels_dict = None
+    data = data.mean(axis=3)  # (7, 40, 5, 62, 5)
+    b, c, d, f, g = data.shape
+    data = data.reshape(b, c * d, f, g)
 
-    for ft, data in feature_data.items():
-        if ft == "segment":
-            b, c, d, f, g = data.shape  # (7, 40, 5, 62, 400)
-        else:
-            data = data.mean(axis=3)     # for DE/PSD -> (7, 40, 5, 62, 5)
-            b, c, d, f, g = data.shape
+    scaler = StandardScaler()
+    flat_all = data.reshape(-1, g)
+    scaler.fit(flat_all)
+    scaled = scaler.transform(flat_all).reshape(b, c * d, f, g)
 
-        # reshape to (blocks, samples_per_block, channels, features)
-        data = data.reshape(b, c * d, f, g)
+    train_data = scaled[:5]
+    val_data   = scaled[5:6]
+    test_data  = scaled[6:7]
 
-        # global normalization
-        scaler = StandardScaler()
-        flat_all = data.reshape(-1, g)
-        scaler.fit(flat_all)
-        scaled = scaler.transform(flat_all).reshape(b, c * d, f, g)
+    labels_dict = {
+        "train": create_labels(cfg["num_classes"], cfg["clips_per_class"], 5),
+        "val":   create_labels(cfg["num_classes"], cfg["clips_per_class"]),
+        "test":  create_labels(cfg["num_classes"], cfg["clips_per_class"]),
+    }
 
-        # split by blocks (5 train, 1 val, 1 test)
-        train_data = scaled[:5]
-        val_data   = scaled[5:6]
-        test_data  = scaled[6:7]
-
-        # create labels once
-        if labels_dict is None:
-            labels_dict = {
-                "train": create_labels(cfg["num_classes"], cfg["clips_per_class"], 5),
-                "val":   create_labels(cfg["num_classes"], cfg["clips_per_class"]),
-                "test":  create_labels(cfg["num_classes"], cfg["clips_per_class"]),
-            }
-
-        # flatten blocks into individual samples
-        processed[ft] = {
-            "train": train_data.reshape(-1, f, g),
-            "val":   val_data.reshape(-1, f, g),
-            "test":  test_data.reshape(-1, f, g),
-        }
-
+    processed = {
+        "train": train_data.reshape(-1, f, g),
+        "val":   val_data.reshape(-1, f, g),
+        "test":  test_data.reshape(-1, f, g),
+    }
     return processed, labels_dict
 
 
-def Get_Dataloader(feature_dict, labels, istrain, batch_size):
-    """
-    Combines multiple feature types into one PyTorch dataloader.
-    Each batch yields (x_segment, x_de, x_psd, labels)
-    depending on which feature types are present.
-    """
-    tensors = [torch.tensor(v, dtype=torch.float32) for v in feature_dict.values()]
-    labels = torch.tensor(labels, dtype=torch.long)
-    dataset = data.TensorDataset(*tensors, labels)
+def Get_Dataloader(data_split, labels, istrain, batch_size):
+    X = torch.tensor(data_split, dtype=torch.float32)
+    y = torch.tensor(labels, dtype=torch.long)
+    dataset = data.TensorDataset(X, y)
     return data.DataLoader(dataset, batch_size=batch_size, shuffle=istrain)
 
 
 # ==========================================
-# 3. Model Selection Module
+# 3. Training + Evaluation
 # ==========================================
-class AttentionFusion(nn.Module):
-    def __init__(self, emb_dim, num_classes):
-        super().__init__()
-        self.query = nn.Linear(emb_dim, emb_dim)
-        self.key   = nn.Linear(emb_dim, emb_dim)
-        self.value = nn.Linear(emb_dim, emb_dim)
-        self.softmax = nn.Softmax(dim=1)
-        self.classifier = nn.Sequential(
-            nn.Linear(emb_dim, 256),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(256, num_classes)
-        )
-
-    def forward(self, features):
-        # features: [B, N, D]
-        Q, K, V = self.query(features), self.key(features), self.value(features)
-        attn = self.softmax(torch.bmm(Q, K.transpose(1, 2)) / (features.size(-1) ** 0.5))
-        fused = torch.bmm(attn, V).mean(dim=1)  # [B, D]
-        return self.classifier(fused)
-
-
-def build_fusion_model(cfg):
-    """
-    Build modality-specific encoders and an attention-based fusion head.
-    Returns dict of encoders and the fusion module.
-    """
-    emb_dim = cfg["emb_dim"]
-    device = cfg["device"]
-
-    encoders = {}
-
-    if "segment" in cfg["feature_types"]:
-        encoders["segment"] = glfnet(
-            out_dim=emb_dim, emb_dim=emb_dim,
-            C=cfg["channels"], T=cfg["time_len"]
-        ).to(device)
-
-    if "de" in cfg["feature_types"]:
-        encoders["de"] = glfnet_mlp(
-            out_dim=emb_dim, emb_dim=emb_dim, input_dim=310
-        ).to(device)
-
-    if "psd" in cfg["feature_types"]:
-        encoders["psd"] = glfnet_mlp(
-            out_dim=emb_dim, emb_dim=emb_dim, input_dim=310
-        ).to(device)
-
-    fusion = AttentionFusion(emb_dim, cfg["num_classes"]).to(device)
-    return encoders, fusion
-
-
-# ==========================================
-# 4. Functional Dry Run Module (Fixed + Filtered)
-# ==========================================
-def simulate_dummy_features(cfg):
-    """
-    Create synthetic EEG tensors for each feature type in cfg["feature_types"].
-    Shapes mimic preprocessed data for quick dry-run validation.
-    Returns dict of dummy tensors keyed by feature name.
-    """
-    C, T = cfg["channels"], cfg["time_len"]
-    device = cfg["device"]
-    dummy = {}
-
-    for ft in cfg["feature_types"]:
-        if ft == "segment":
-            # Simulated segment EEG: (samples, 1, 62, 400)
-            flat = torch.randn(1400, 1, C, T)
-        else:
-            # Simulated DE/PSD EEG: (samples, 62, 5)
-            flat = torch.randn(1400, C, 5)
-        flat = (flat - flat.mean()) / (flat.std() + 1e-6)
-        dummy[ft] = flat.to(device)
-
-    return dummy
-
-
-def dry_run_fusion(cfg):
-    """
-    Dry run: forward pass through all encoders and attention fusion head
-    with synthetic data for each feature type.
-    Confirms compatibility and output dimensions.
-    """
-    print("\n=== Running Fusion Dry Run (GLFNet + GLFNet-MLP + Attention) ===")
-    device = cfg["device"]
-    emb_dim = cfg["emb_dim"]
-    num_classes = cfg["num_classes"]
-
-    # build models
-    encoders, fusion = build_fusion_model(cfg)
-    dummy_inputs = simulate_dummy_features(cfg)
-
-    features = []
-    for ft, encoder in encoders.items():
-        x = dummy_inputs[ft]
-        with torch.no_grad():
-            out = encoder(x)
-        print(f"{ft:8s} encoder → output {list(out.shape)}")
-        features.append(out)
-
-    tokens = torch.stack(features, dim=1)  # [B, N, D]
-    with torch.no_grad():
-        y_hat = fusion(tokens)
-    print(f"Fusion output shape: {list(y_hat.shape)} (expected [B, {num_classes}])")
-
-    print("=== Fusion Dry Run Complete ===\n")
-
-
-# ==========================================
-# 5. Training and Evaluation for Fusion
-# ==========================================
-def cal_accuracy(y_hat, y):
-    if y_hat.ndim > 1 and y_hat.shape[1] > 1:
-        y_hat = torch.argmax(y_hat, dim=1)
-    return (y_hat == y).sum()
-
-
 def topk_accuracy(output, target, topk=(1, 5)):
     with torch.no_grad():
         maxk = max(topk)
@@ -299,75 +136,37 @@ def topk_accuracy(output, target, topk=(1, 5)):
         return res
 
 
-def train_and_eval(encoders, fusion, train_iter, test_iter, cfg):
-    """
-    Train all encoders + fusion head jointly on multi-feature batches.
-    Each dataloader batch yields (x_segment, x_de, x_psd, labels).
-    """
+def train_and_eval(model, train_iter, test_iter, cfg):
     device = cfg["device"]
-    params = list(fusion.parameters())
-    for enc in encoders.values():
-        params += list(enc.parameters())
-
-    optimizer = torch.optim.AdamW(params, lr=cfg["lr"], weight_decay=0)
+    model.to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["lr"])
     loss_fn = nn.CrossEntropyLoss()
-    num_epochs = cfg["num_epochs"]
 
-    for epoch in range(num_epochs):
+    for epoch in range(cfg["num_epochs"]):
+        model.train()
         total_loss, total_acc, total_count = 0.0, 0.0, 0
-        fusion.train()
-        for e in encoders.values():
-            e.train()
-
-        for batch in train_iter:
-            *Xs, y = batch
-            y = y.to(device)
-            features = []
-
-            # forward through each encoder
-            for i, ft in enumerate(cfg["feature_types"]):
-                X = Xs[i].to(device)
-                if ft == "segment":
-                    X = X.unsqueeze(1)  # (B,1,62,400)
-                features.append(encoders[ft](X))
-
-            tokens = torch.stack(features, dim=1)  # [B, N, D]
-            y_hat = fusion(tokens)
-
-            loss = loss_fn(y_hat, y)
+        for X, y in train_iter:
+            X, y = X.to(device), y.to(device)
+            out = model(X)
+            loss = loss_fn(out, y)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
             total_loss += loss.item() * y.size(0)
-            total_acc += cal_accuracy(y_hat, y).item()
+            total_acc += (out.argmax(1) == y).sum().item()
             total_count += y.size(0)
 
         if (epoch + 1) % 10 == 0:
-            print(f"[Epoch {epoch+1}] Loss {total_loss/total_count:.4f} | Acc {total_acc/total_count:.4f}")
+            print(f"[Epoch {epoch+1}] Loss={total_loss/total_count:.4f} | Acc={total_acc/total_count:.4f}")
 
-    # --- Evaluation ---
-    fusion.eval()
-    for e in encoders.values():
-        e.eval()
-
+    model.eval()
     top1_all, top5_all = [], []
     with torch.no_grad():
-        for batch in test_iter:
-            *Xs, y = batch
-            y = y.to(device)
-            features = []
-
-            for i, ft in enumerate(cfg["feature_types"]):
-                X = Xs[i].to(device)
-                if ft == "segment":
-                    X = X.unsqueeze(1)
-                features.append(encoders[ft](X))
-
-            tokens = torch.stack(features, dim=1)
-            y_hat = fusion(tokens)
-
-            top1, top5 = topk_accuracy(y_hat, y)
+        for X, y in test_iter:
+            X, y = X.to(device), y.to(device)
+            out = model(X)
+            top1, top5 = topk_accuracy(out, y)
             top1_all.append(top1)
             top5_all.append(top5)
 
@@ -375,49 +174,32 @@ def train_and_eval(encoders, fusion, train_iter, test_iter, cfg):
 
 
 # ==========================================
-# 6. Main Execution
+# 4. Main Execution
 # ==========================================
 def main(cfg):
-    # --- Dry run ---
-    if cfg["dry_run"]:
-        dry_run_fusion(cfg)
-        return
+    base_dir = "/content/drive/MyDrive/EEG2Video_results/EEG_VP_benchmark"
+    fine_dir = os.path.join(base_dir, "architectural_fine-tuning", EXPERIMENT_TYPE)
+    os.makedirs(fine_dir, exist_ok=True)
 
-    # --- Subject list ---
-    data_dir = os.path.join(cfg["data_root"], cfg["segment_dir"])  # base path (segment always exists)
-    subjects = os.listdir(data_dir)
-    if cfg["subjects_to_train"] != "all":
-        subjects = [s for s in subjects if s in cfg["subjects_to_train"]]
-
+    subjects = cfg["subjects_to_train"]
     print(f"\nTraining subjects: {subjects}\n")
+
     all_top1, all_top5 = [], []
 
-    # --- Loop over subjects ---
     for sub in subjects:
         print(f"\n=== Subject: {sub} ===")
+        data = load_feature_data(sub, cfg)
+        processed, labels = preprocess_data(data, cfg)
 
-        # Load all features (segment, de, psd)
-        feature_data = load_feature_data(sub, cfg)
+        train_iter = Get_Dataloader(processed["train"], labels["train"], True, cfg["batch_size"])
+        test_iter  = Get_Dataloader(processed["test"],  labels["test"],  False, cfg["batch_size"])
 
-        # Preprocess and split into train/val/test
-        processed, labels_dict = preprocess_data(feature_data, cfg)
-
-        # Build dataloaders
-        train_iter = Get_Dataloader({ft: processed[ft]["train"] for ft in cfg["feature_types"]},
-                                    labels_dict["train"], True, cfg["batch_size"])
-        test_iter  = Get_Dataloader({ft: processed[ft]["test"]  for ft in cfg["feature_types"]},
-                                    labels_dict["test"],  False, cfg["batch_size"])
-
-        # Build encoders + fusion model
-        encoders, fusion = build_fusion_model(cfg)
-
-        # Train and evaluate
-        top1, top5 = train_and_eval(encoders, fusion, train_iter, test_iter, cfg)
-        print(f"Test (Block 7): Top-1={top1:.4f}, Top-5={top5:.4f}")
+        model = glfnet_mlp(out_dim=cfg["num_classes"], emb_dim=cfg["emb_dim"], input_dim=310)
+        top1, top5 = train_and_eval(model, train_iter, test_iter, cfg)
+        print(f"Test (Block 7): Top-1={top1:.4f} | Top-5={top5:.4f}")
         all_top1.append(top1)
         all_top5.append(top5)
 
-    # --- Final Summary ---
     mean_top1, std_top1 = np.mean(all_top1), np.std(all_top1)
     mean_top5, std_top5 = np.mean(all_top5), np.std(all_top5)
 
@@ -425,93 +207,43 @@ def main(cfg):
     print(f"Mean Top-1: {mean_top1:.4f} ± {std_top1:.4f}")
     print(f"Mean Top-5: {mean_top5:.4f} ± {std_top5:.4f}")
 
-        # ==========================================
-    # Save configuration and results (Auto-detected encoder + experiment type)
     # ==========================================
-    base_dir = "/content/drive/MyDrive/EEG2Video_results/EEG_VP_benchmark"
-    fine_dir = os.path.join(base_dir, "architectural_fine-tuning", EXPERIMENT_TYPE)
-    os.makedirs(fine_dir, exist_ok=True)
-
-    # Load model-specific configs
-    glfnet_cfg = getattr(importlib.import_module("models.glfnet"), "CONFIG", {})
+    # Save results (auto filename)
+    # ==========================================
     glfnet_mlp_cfg = getattr(importlib.import_module("models.glfnet_mlp"), "CONFIG", {})
 
-    # Helper for safe extraction
     def get_cfg_val(cfg_dict, key, default="NA"):
         return cfg_dict.get(key, cfg_dict.get(key.lower(), default))
 
-    # Extract values for each encoder
-    lw_seg = "-".join(str(x) for x in glfnet_cfg.get("layer_widths", [])) if "layer_widths" in glfnet_cfg else str(glfnet_cfg.get("layer_width", "NA"))
-    lw_de  = "-".join(str(x) for x in glfnet_mlp_cfg.get("layer_widths", [])) if "layer_widths" in glfnet_mlp_cfg else str(glfnet_mlp_cfg.get("layer_width", "NA"))
+    lw  = "-".join(str(x) for x in glfnet_mlp_cfg.get("layer_widths", [])) if "layer_widths" in glfnet_mlp_cfg else str(glfnet_mlp_cfg.get("layer_width", "NA"))
+    dropout = get_cfg_val(glfnet_mlp_cfg, "dropout")
+    act     = get_cfg_val(glfnet_mlp_cfg, "activation")
+    norm    = glfnet_mlp_cfg.get("normalization", glfnet_mlp_cfg.get("normalisation", "NA"))
 
-    dropout_seg = get_cfg_val(glfnet_cfg, "dropout")
-    dropout_de  = get_cfg_val(glfnet_mlp_cfg, "dropout")
-    act_seg     = get_cfg_val(glfnet_cfg, "activation")
-    act_de      = get_cfg_val(glfnet_mlp_cfg, "activation")
-
-    norm_seg = glfnet_cfg.get("normalization", glfnet_cfg.get("normalisation", "NA"))
-    norm_de  = glfnet_mlp_cfg.get("normalization", glfnet_mlp_cfg.get("normalisation", "NA"))
-
-    # Determine which encoders were used
-    used_encoders = []
-    if any(ft == "segment" for ft in cfg["feature_types"]):
-        used_encoders.append("glfnet")
-    if any(ft in ["de", "psd"] for ft in cfg["feature_types"]):
-        used_encoders.append("glfnet_mlp")
-
-    # Build encoder part for filename
-    encoder_name_part = []
-    if "glfnet" in used_encoders:
-        encoder_name_part.append(f"glf_lw{lw_seg}_do{dropout_seg}_act{act_seg}_norm{norm_seg}")
-    if "glfnet_mlp" in used_encoders:
-        encoder_name_part.append(f"mlp_lw{lw_de}_do{dropout_de}_act{act_de}_norm{norm_de}")
-    encoder_name_part = "_".join(encoder_name_part)
-
-    # Build full filename
-    fusion_name = "_".join(cfg["feature_types"])
     filename = (
-        f"{EXPERIMENT_TYPE}_fusion_{fusion_name}_{encoder_name_part}_"
+        f"{EXPERIMENT_TYPE}_de_mlp_lw{lw}_do{dropout}_act{act}_norm{norm}_"
         f"emb{cfg['emb_dim']}_lr{cfg['lr']}_bs{cfg['batch_size']}_ep{cfg['num_epochs']}.txt"
     )
-
     save_path = os.path.join(fine_dir, filename)
 
-    # Write file
     with open(save_path, "w") as f:
-        f.write("EEG Fusion Classification Summary\n")
+        f.write("EEG DE Classification Summary\n")
         f.write("==========================================\n\n")
-
         f.write(f"Architectural Fine-Tuning Type: {EXPERIMENT_TYPE}\n\n")
-
         f.write("Configuration Used:\n")
-        f.write(f"Features Used: {', '.join(cfg['feature_types'])}\n")
-        f.write(f"Subjects Used: {', '.join(cfg['subjects_to_train'])}\n")
-        f.write(f"Embedding Dim: {cfg['emb_dim']}\n")
-        f.write(f"Learning Rate: {cfg['lr']}\n")
-        f.write(f"Batch Size: {cfg['batch_size']}\n")
-        f.write(f"Epoch Count: {cfg['num_epochs']}\n\n")
-
-        f.write("Encoder Configs:\n")
-        if "glfnet" in used_encoders:
-            f.write("[GLFNet]\n")
-            for k, v in glfnet_cfg.items():
-                f.write(f"{k}: {v}\n")
-            f.write("\n")
-        if "glfnet_mlp" in used_encoders:
-            f.write("[GLFNet_MLP]\n")
-            for k, v in glfnet_mlp_cfg.items():
-                f.write(f"{k}: {v}\n")
-            f.write("\n")
-
-        f.write("Results:\n")
+        for k, v in cfg.items():
+            f.write(f"{k}: {v}\n")
+        f.write("\nEncoder Config (GLFNet-MLP):\n")
+        for k, v in glfnet_mlp_cfg.items():
+            f.write(f"{k}: {v}\n")
+        f.write("\nResults:\n")
         f.write(f"Mean Top-1 Accuracy: {mean_top1:.4f} ± {std_top1:.4f}\n")
         f.write(f"Mean Top-5 Accuracy: {mean_top5:.4f} ± {std_top5:.4f}\n\n")
-
         f.write("Per-Subject Results:\n")
         for sub, t1, t5 in zip(subjects, all_top1, all_top5):
             f.write(f"{sub:15s} | Top-1: {t1:.4f} | Top-5: {t5:.4f}\n")
 
-    print(f"\nSaved configuration and results to: {save_path}")
+    print(f"\nSaved results to: {save_path}")
 
 
 if __name__ == "__main__":
