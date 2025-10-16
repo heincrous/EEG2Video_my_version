@@ -33,8 +33,8 @@ from models.glfnet_mlp import glfnet_mlp
 # 1. Configuration Table
 # ==========================================
 CONFIG = {
-    "feature_type": "segment",         # "segment", "de", or "psd"
-    "encoder_name": "deepnet",
+    "feature_type": "de",         # "segment", "de", or "psd"
+    "encoder_name": "glfnet_mlp",
     "subjects_to_train": [
         "sub1_session2.npy",
         "sub1.npy",
@@ -64,7 +64,7 @@ CONFIG = {
     "psd_dir": "EEG_PSD_1per1s/",
 
     # --- Training parameters ---
-    "batch_size": 512,
+    "batch_size": 256,
     "num_epochs": 100,
     "lr": 0.0005,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
@@ -438,10 +438,18 @@ def main(cfg):
         model_cfg = {}
 
     # Extract key config info for filename
-    layer_widths  = "-".join(str(x) for x in model_cfg.get("layer_widths", ["NA"]))
+    if "layer_widths" in model_cfg:
+        lw_value = model_cfg["layer_widths"]
+        layer_widths = "-".join(str(x) for x in lw_value)
+    elif "layer_width" in model_cfg:
+        layer_widths = str(model_cfg["layer_width"])
+    else:
+        layer_widths = "NA"
+
     dropout       = model_cfg.get("dropout", "NA")
     activation    = model_cfg.get("activation", "NA")
-    normalisation = model_cfg.get("normalisation", "NA")
+    # accept both "normalization" and "normalisation"
+    normalisation = model_cfg.get("normalization", model_cfg.get("normalisation", "NA"))
 
     # Build filename without timestamp
     filename = (
