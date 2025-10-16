@@ -1,5 +1,5 @@
 # ==========================================
-# EEG2Video Preprocessing Figures Generator
+# EEG2Video Preprocessing Figures Generator (Corrected)
 # ==========================================
 import os
 import numpy as np
@@ -13,8 +13,8 @@ os.makedirs(save_path, exist_ok=True)
 
 de_path     = os.path.join(base_path, "EEG_DE_1per2s")
 psd_path    = os.path.join(base_path, "EEG_PSD_1per2s")
-win100_path = os.path.join(base_path, "EEG_windows_100")
-win200_path = os.path.join(base_path, "EEG_windows_200")
+win100_path = os.path.join(base_path, "EEG_windows_100")  # 0.5 s windows
+win200_path = os.path.join(base_path, "EEG_windows_200")  # 1.0 s windows
 
 # === Helper: load first subject file ===
 def load_first_subject(folder):
@@ -27,14 +27,13 @@ def load_first_subject(folder):
 # === Load arrays ===
 DE      = load_first_subject(de_path)     # (7,40,5,62,200)
 PSD     = load_first_subject(psd_path)    # (7,40,5,62,200)
-win_100 = load_first_subject(win100_path) # (7,40,5,7,62,200)
-win_200 = load_first_subject(win200_path) # (7,40,5,3,62,200)
+win_100 = load_first_subject(win100_path) # (7,40,5,7,62,200) -> 0.5 s windows
+win_200 = load_first_subject(win200_path) # (7,40,5,3,62,200) -> 1.0 s windows
 
 # ==========================================
 # 1. DE Feature Distribution – Mean ± SD
 # ==========================================
-# Aggregate across blocks, classes, clips, and time
-de_mean = DE.mean(axis=(0,1,2,4))   # mean per channel
+de_mean = DE.mean(axis=(0,1,2,4))
 de_std  = DE.std(axis=(0,1,2,4))
 
 plt.figure(figsize=(8,4))
@@ -64,38 +63,45 @@ plt.savefig(os.path.join(save_path, "feat_distribution_PSD.png"), dpi=300)
 plt.close()
 
 # ==========================================
-# 3. Temporal Window Verification – 1 s (EEG_windows_100)
+# 3. Temporal Window Verification – 0.5 s (EEG_windows_100)
 # ==========================================
-fs = 200  # sampling rate
-block, cls, clip, ch = 0, 0, 0, 0  # first block, class, clip, channel
-
-windows = win_100[block, cls, clip, :, ch, :]  # (7, 200)
-time = np.arange(windows.shape[-1]) / fs
+fs = 200
+block, cls, clip, ch = 0, 0, 0, 0
+windows = win_100[block, cls, clip, :, ch, :]  # (7,100)
+step = 100 // 2  # 50% overlap -> 50 samples = 0.25 s
 
 plt.figure(figsize=(8,3))
-for i in range(windows.shape[0]):
-    plt.plot(time + i * 0.5, windows[i], lw=0.8)
-plt.title("Temporal Segmentation – 1 s Overlapping Windows")
-plt.xlabel("Time (s)")
-plt.ylabel("Amplitude (µV)")
-plt.tight_layout()
-plt.savefig(os.path.join(save_path, "temp_window_verification_1s.png"), dpi=300)
-plt.close()
-
-# ==========================================
-# 4. Temporal Window Verification – 0.5 s (EEG_windows_200)
-# ==========================================
-windows = win_200[block, cls, clip, :, ch, :]  # (3, 200)
-time = np.arange(windows.shape[-1]) / fs
-
-plt.figure(figsize=(8,3))
-for i in range(windows.shape[0]):
-    plt.plot(time + i * 0.25, windows[i], lw=0.8)
+colors = plt.cm.tab10(np.linspace(0,1,windows.shape[0]))
+for i, w in enumerate(windows):
+    start = i * step / fs
+    end = start + w.shape[-1] / fs
+    t = np.linspace(start, end, w.shape[-1])
+    plt.plot(t, w, color=colors[i], lw=0.8)
 plt.title("Temporal Segmentation – 0.5 s Overlapping Windows")
 plt.xlabel("Time (s)")
 plt.ylabel("Amplitude (µV)")
 plt.tight_layout()
 plt.savefig(os.path.join(save_path, "temp_window_verification_0.5s.png"), dpi=300)
+plt.close()
+
+# ==========================================
+# 4. Temporal Window Verification – 1 s (EEG_windows_200)
+# ==========================================
+windows = win_200[block, cls, clip, :, ch, :]  # (3,200)
+step = 200 // 2  # 50% overlap -> 100 samples = 0.5 s
+
+plt.figure(figsize=(8,3))
+colors = plt.cm.tab10(np.linspace(0,1,windows.shape[0]))
+for i, w in enumerate(windows):
+    start = i * step / fs
+    end = start + w.shape[-1] / fs
+    t = np.linspace(start, end, w.shape[-1])
+    plt.plot(t, w, color=colors[i], lw=0.8)
+plt.title("Temporal Segmentation – 1 s Overlapping Windows")
+plt.xlabel("Time (s)")
+plt.ylabel("Amplitude (µV)")
+plt.tight_layout()
+plt.savefig(os.path.join(save_path, "temp_window_verification_1s.png"), dpi=300)
 plt.close()
 
 print("All figures saved to:", save_path)
