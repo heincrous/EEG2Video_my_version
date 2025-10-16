@@ -33,8 +33,8 @@ from models.glfnet_mlp import glfnet_mlp
 # 1. Configuration Table
 # ==========================================
 CONFIG = {
-    "feature_type": "segment",         # "segment", "de", or "psd"
-    "encoder_name": "tsconv",
+    "feature_type": "psd",         # "segment", "de", or "psd"
+    "encoder_name": "glfnet_mlp",
     "subjects_to_train": [
         "sub1_session2.npy",
         "sub1.npy",
@@ -450,6 +450,10 @@ def main(cfg):
     activation    = model_cfg.get("activation", "NA")
     # accept both "normalization" and "normalisation"
     normalisation = model_cfg.get("normalization", model_cfg.get("normalisation", "NA"))
+
+    print(cfg["encoder_name"], "CONFIG seen by writer:")
+    for k, v in model_cfg.items():
+        print(f"  {k!r}: {v!r}")
 
     # Build filename without timestamp
     filename = (
