@@ -10,7 +10,6 @@ CONFIG = {
     "pool_stride": (1, 5),       # pooling stride
     "activation": "ELU",         # "ELU", "GELU", "SiLU", etc.
     "normalization": "BatchNorm",# "BatchNorm", "LayerNorm", "GroupNorm"
-    # training / input
     "input_dim": {"C": 62, "T": 100}  # default input shape
 }
 

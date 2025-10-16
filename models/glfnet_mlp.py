@@ -4,8 +4,8 @@
 CONFIG = {
     "dropout": 0.0,               # dropout probability
     "layer_widths": [512, 256],   # hidden layer sizes
-    "activation": "GELU",         # activation function
-    "normalization": None         # optional: "LayerNorm" or "BatchNorm1d"
+    "activation": "ELU",         # "ELU", "GELU", "SiLU", etc.
+    "normalization": "BatchNorm",# "BatchNorm", "LayerNorm", "GroupNorm"
 }
 
 

@@ -138,8 +138,10 @@ def select_model(cfg):
 
     if en == "glfnet":
         model = ModelClass(out_dim=cfg["num_classes"], emb_dim=64, C=cfg["channels"], T=cfg["time_len"])
-    elif en in ["shallownet", "deepnet", "eegnet", "tsconv", "conformer"]:
+    elif en in ["shallownet", "deepnet", "eegnet", "tsconv"]:
         model = ModelClass(out_dim=cfg["num_classes"], C=cfg["channels"], T=cfg["time_len"])
+    elif en == "conformer":
+        model = ModelClass(out_dim=cfg["num_classes"])
     elif en == "glfnet_mlp":
         model = ModelClass(out_dim=cfg["num_classes"], emb_dim=64, input_dim=310)
     elif en == "mlpnet":

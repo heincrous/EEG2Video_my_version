@@ -2,13 +2,11 @@
 # Config block (tunable but defaults unchanged)
 # ==========================================
 CONFIG = {
-    # model structure
-    "dropout": 0.0,             # authors used none
-    "layer_widths": [512, 256], # hidden layer sizes
-    "activation": "GELU",       # GELU matches original implementation
-    "normalization": None,      # no normalization layers in original
-    # training / input
-    "input_dim": {"C": 62, "T": 5},  # DE/PSD default shape
+    "dropout": 0.0,               # dropout probability
+    "layer_widths": [512, 256],   # hidden layer sizes
+    "activation": "GELU",         # activation type: "GELU", "ReLU", "SiLU", etc.
+    "normalization": None,        # "BatchNorm1d", "LayerNorm", or None
+    "input_dim": {"C": 62, "T": 5}  # default input shape
 }
 
 
@@ -31,18 +29,32 @@ class mlpnet(nn.Module):
         w = cfg["layer_widths"]
         p = cfg["dropout"]
 
-        # choose activation
+        # activation
         act_fn = getattr(nn, cfg["activation"])() if hasattr(nn, cfg["activation"]) else nn.GELU()
+
+        # normalization factory
+        def norm_layer(dim):
+            norm = cfg["normalization"]
+            if norm == "BatchNorm1d":
+                return nn.BatchNorm1d(dim)
+            elif norm == "LayerNorm":
+                return nn.LayerNorm(dim)
+            else:
+                return nn.Identity()
 
         # network definition
         self.net = nn.Sequential(
             nn.Flatten(),
             nn.Linear(in_dim, w[0]),
+            norm_layer(w[0]),
             act_fn,
             nn.Dropout(p),
+
             nn.Linear(w[0], w[1]),
+            norm_layer(w[1]),
             act_fn,
             nn.Dropout(p),
+
             nn.Linear(w[1], out_dim),
         )
 

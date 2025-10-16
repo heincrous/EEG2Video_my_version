@@ -4,9 +4,9 @@
 CONFIG = {
     "dropout": 0.5,               # dropout probability
     "layer_widths": [25, 50, 100, 200],  # conv channel sizes
-    "kernel_size": (1, 10),       # temporal convolution kernel
-    "activation": "ELU",          # activation type
-    "normalization": "BatchNorm"  # normalization type
+    "kernel_size": (1, 5),        # temporal convolution kernel
+    "activation": "ELU",          # "ELU", "GELU", "SiLU", etc.
+    "normalization": "BatchNorm"  # "BatchNorm", "LayerNorm", "GroupNorm"
 }
 
 

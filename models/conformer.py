@@ -8,8 +8,8 @@ CONFIG = {
     "kernel_size": (1, 25),  # temporal patch kernel
     "pool_size": (1, 75),    # pooling window
     "pool_stride": (1, 15),  # pooling stride
-    "activation": "ELU",     # activation function
-    "normalization": "BatchNorm"  # normalization type
+    "activation": "ELU",         # "ELU", "GELU", "SiLU", etc.
+    "normalization": "BatchNorm",# "BatchNorm", "LayerNorm", "GroupNorm"
 }
 
 
