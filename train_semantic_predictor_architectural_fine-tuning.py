@@ -1,13 +1,10 @@
 # ==========================================
 # EEG → CLIP Semantic Predictor (DE-Only, MSE Loss)
 # ==========================================
-# Trains on DE features for one subject.
-# Uses ONLY MSE loss.
-# Keeps original metric computations fully intact.
-# Adds toggles for optimizer, scheduler, learning rate experiments.
-# Scaler fit identical to reference (fits on ALL EEG before splitting).
-# No checkpoints or embedding saving — only metrics in .txt file.
-# Supports both "architectural" and "optimisation" modes.
+# For DE_1per1s (always 6D EEG: [7,40,5,2,62,100])
+# Always averages across trials (axis=3)
+# Uses only MSE loss and verified metric calculations
+# Supports both "architectural" and "optimisation" modes
 # ==========================================
 
 import os
@@ -24,14 +21,13 @@ from tqdm import tqdm
 # ==========================================
 # Experiment Mode Toggle
 # ==========================================
-# Choose one: "architectural" or "optimisation"
-EXPERIMENT_MODE = "architectural"  # or "architectural"
+EXPERIMENT_MODE = "architectural"  # or "optimisation"
 
 if EXPERIMENT_MODE == "architectural":
-    EXPERIMENT_TYPE = "activation"  # or "dropout", "layer_width", etc.
+    EXPERIMENT_TYPE = "activation"
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/architectural_fine-tuning"
 else:
-    EXPERIMENT_TYPE = "scheduler"   # or "optimizer", "learning_rate", etc.
+    EXPERIMENT_TYPE = "scheduler"
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/optimisation"
 
 
@@ -39,13 +35,11 @@ else:
 # Config block
 # ==========================================
 CONFIG = {
-    # === Model structure ===
     "dropout": 0.0,
     "layer_widths": [10000, 10000, 10000, 10000],
     "activation": "ReLU",
     "normalization": "None",
 
-    # === Training and data parameters ===
     "feature_type": "EEG_DE_1per1s",
     "subject_name": "sub1.npy",
     "class_subset": [0, 11, 24, 30, 33],
@@ -53,12 +47,11 @@ CONFIG = {
     "epochs": 200,
     "batch_size": 128,
     "lr": 0.0005,
-    "optimizer": "adam",      # ["adam", "adamw"]
-    "scheduler": "cosine",     # ["constant", "cosine"]
-    "weight_decay": 0.0,      # only used for AdamW
+    "optimizer": "adam",
+    "scheduler": "cosine",
+    "weight_decay": 0.0,
     "device": "cuda:0" if torch.cuda.is_available() else "cpu",
 
-    # === Directory paths ===
     "eeg_root": "/content/drive/MyDrive/EEG2Video_data/processed",
     "clip_path": "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy",
     "result_root": RESULT_ROOT,
@@ -73,25 +66,21 @@ class CLIPSemanticMLP(nn.Module):
         super().__init__()
         w = cfg["layer_widths"]
         p = cfg["dropout"]
-
         act_fn = getattr(nn, cfg["activation"])() if hasattr(nn, cfg["activation"]) else nn.ReLU()
 
         def norm_layer(size):
             if cfg["normalization"] == "BatchNorm":
                 return nn.BatchNorm1d(size)
-            elif cfg["normalization"] == "LayerNorm":
+            if cfg["normalization"] == "LayerNorm":
                 return nn.LayerNorm(size)
-            elif cfg["normalization"] == "GroupNorm":
+            if cfg["normalization"] == "GroupNorm":
                 return nn.GroupNorm(4, size)
-            else:
-                return nn.Identity()
+            return nn.Identity()
 
         layers = []
         in_dim = input_dim
         for width in w:
-            layers.append(nn.Linear(in_dim, width))
-            layers.append(norm_layer(width))
-            layers.append(act_fn)
+            layers += [nn.Linear(in_dim, width), norm_layer(width), act_fn]
             if p > 0:
                 layers.append(nn.Dropout(p))
             in_dim = width
@@ -115,7 +104,7 @@ class EEGTextDataset:
 
 
 # ==========================================
-# Data Loading (unchanged)
+# Data Loading (always 6D averaging)
 # ==========================================
 def load_de_data(cfg):
     eeg_path = os.path.join(cfg["eeg_root"], cfg["feature_type"], cfg["subject_name"])
@@ -124,13 +113,10 @@ def load_de_data(cfg):
     eeg = np.load(eeg_path, allow_pickle=True)
     clip = np.load(clip_path, allow_pickle=True)
 
-    if eeg.ndim == 6 and eeg.shape[3] == 2:
-        print("Detected 6D DE file — averaging trials.")
-        eeg = eeg.mean(axis=3)
-    elif eeg.ndim == 5:
-        print("Detected 5D DE file — already averaged.")
-    else:
-        raise ValueError(f"Unexpected EEG shape: {eeg.shape}")
+    if eeg.ndim != 6:
+        raise ValueError(f"Expected 6D EEG array, got shape {eeg.shape}")
+    print("Averaging across trials (axis=3).")
+    eeg = eeg.mean(axis=3)  # → shape [7, 40, 5, 62, 100]
 
     print(f"Loaded EEG {cfg['subject_name']} shape: {eeg.shape}")
     print(f"Loaded CLIP shape: {clip.shape}")
@@ -138,58 +124,52 @@ def load_de_data(cfg):
 
 
 # ==========================================
-# Data Preparation (scaler fit on ALL EEG)
+# Data Preparation
 # ==========================================
 def prepare_data(eeg, clip, cfg):
-    eeg = eeg[:, cfg["class_subset"]]
-    clip = clip[:, cfg["class_subset"]]
+    eeg = eeg[:, cfg["class_subset"]]      # select classes
+    clip = clip[:, cfg["class_subset"]]    # match classes
 
     train_eeg, val_eeg, test_eeg = eeg[:5], eeg[5:6], eeg[6:]
     train_clip, val_clip, test_clip = clip[:5], clip[5:6], clip[6:]
 
-    def flatten_eeg(x): return rearrange(x, "b c s ch t -> (b c s) (ch t)")
-    def flatten_clip(x): return rearrange(x, "b c s tok dim -> (b c s) (tok dim)")
+    flatten_eeg = lambda x: rearrange(x, "b c s ch t -> (b c s) (ch t)")
+    flatten_clip = lambda x: rearrange(x, "b c s tok dim -> (b c s) (tok dim)")
 
-    train_eeg_flat = flatten_eeg(train_eeg)
-    val_eeg_flat = flatten_eeg(val_eeg)
-    test_eeg_flat = flatten_eeg(test_eeg)
-    train_clip_flat = flatten_clip(train_clip)
-    val_clip_flat = flatten_clip(val_clip)
-    test_clip_flat = flatten_clip(test_clip)
+    train_eeg, val_eeg, test_eeg = map(flatten_eeg, [train_eeg, val_eeg, test_eeg])
+    train_clip, val_clip, test_clip = map(flatten_clip, [train_clip, val_clip, test_clip])
 
     scaler = StandardScaler()
     scaler.fit(eeg.reshape(-1, eeg.shape[-2] * eeg.shape[-1]))
-    train_eeg_flat = scaler.transform(train_eeg_flat)
-    val_eeg_flat = scaler.transform(val_eeg_flat)
-    test_eeg_flat = scaler.transform(test_eeg_flat)
+    train_eeg = scaler.transform(train_eeg)
+    val_eeg = scaler.transform(val_eeg)
+    test_eeg = scaler.transform(test_eeg)
 
-    print(f"[Scaler] mean={np.mean(train_eeg_flat):.5f}, std={np.std(train_eeg_flat):.5f}")
-    return train_eeg_flat, val_eeg_flat, test_eeg_flat, train_clip_flat, val_clip_flat, test_clip_flat
+    print(f"[Scaler] mean={np.mean(train_eeg):.5f}, std={np.std(train_eeg):.5f}")
+    return train_eeg, val_eeg, test_eeg, train_clip, val_clip, test_clip
 
 
 # ==========================================
-# Optimiser / Scheduler (unchanged)
+# Optimiser / Scheduler
 # ==========================================
 def build_optimizer(model, cfg):
     if cfg["optimizer"].lower() == "adam":
         return torch.optim.Adam(model.parameters(), lr=cfg["lr"], weight_decay=0.0)
-    elif cfg["optimizer"].lower() == "adamw":
+    if cfg["optimizer"].lower() == "adamw":
         return torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
-    else:
-        raise ValueError("Unsupported optimizer type.")
+    raise ValueError("Unsupported optimizer type.")
 
 
 def build_scheduler(optimizer, cfg):
     if cfg["scheduler"].lower() == "cosine":
-        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg["epochs"] * 1)
-    elif cfg["scheduler"].lower() == "constant":
+        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg["epochs"])
+    if cfg["scheduler"].lower() == "constant":
         return None
-    else:
-        raise ValueError("Unsupported scheduler type.")
+    raise ValueError("Unsupported scheduler type.")
 
 
 # ==========================================
-# Evaluation (100% identical metric logic)
+# Evaluation (verified metric logic)
 # ==========================================
 def evaluate_model(model, eeg_flat, clip_flat, cfg):
     device = cfg["device"]
@@ -200,32 +180,35 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
         preds_tensor = model(eeg_tensor)
         mse_loss = F.mse_loss(preds_tensor, gt_tensor).item()
         preds = preds_tensor.cpu().numpy()
-    gt = clip_flat
 
-    preds /= np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8
+    gt = clip_flat
+    preds_norm = preds / (np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8)
     gt_norm = gt / (np.linalg.norm(gt, axis=1, keepdims=True) + 1e-8)
 
     num_classes = len(cfg["class_subset"])
     samples_per_class = 5
     labels = np.repeat(np.arange(num_classes), samples_per_class)
 
-    avg_cosine = np.mean(np.sum(preds * gt_norm, axis=1))
-    class_means = np.zeros((num_classes, preds.shape[1]))
+    avg_cosine = float(np.mean(np.sum(preds_norm * gt_norm, axis=1)))
+
+    # Compute class means
+    class_means = np.zeros((num_classes, preds_norm.shape[1]))
     for c in range(num_classes):
         class_means[c] = gt_norm[labels == c].mean(axis=0)
         class_means[c] /= np.linalg.norm(class_means[c]) + 1e-8
 
-    sims = np.dot(preds, class_means.T)
-    acc = (np.argmax(sims, axis=1) == labels).mean()
+    sims = np.dot(preds_norm, class_means.T)
+    acc = float((np.argmax(sims, axis=1) == labels).mean())
 
-    within = [np.dot(preds[i], class_means[labels[i]]) for i in range(len(preds))]
-    between = [np.mean(np.dot(class_means[np.arange(num_classes) != labels[i]], preds[i])) for i in range(len(preds))]
-    avg_within, avg_between = np.mean(within), np.mean(between)
+    within = [np.dot(preds_norm[i], class_means[labels[i]]) for i in range(len(preds_norm))]
+    between = [np.mean(np.dot(class_means[np.arange(num_classes) != labels[i]], preds_norm[i])) for i in range(len(preds_norm))]
+    avg_within, avg_between = float(np.mean(within)), float(np.mean(between))
 
-    global_mean = class_means.mean(axis=0)
-    num = np.sum([np.sum((m - global_mean) ** 2) for m in class_means])
-    den = np.sum([np.sum((preds[labels == c] - class_means[c]) ** 2) for c in range(num_classes)])
-    fisher_score = num / (den + 1e-8)
+    # Fisher score = between-class variance / within-class variance
+    global_mean = np.mean(class_means, axis=0)
+    sb = np.sum((class_means - global_mean) ** 2)
+    sw = np.sum([(preds_norm[labels == c] - class_means[c]) ** 2 for c in range(num_classes)])
+    fisher_score = float(sb / (sw + 1e-8))
 
     print(
         f"  MSE Loss: {mse_loss:.6f}\n"
@@ -241,7 +224,7 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
 
 
 # ==========================================
-# Training (unchanged)
+# Training
 # ==========================================
 def train_model(model, train_loader, val_eeg, val_clip, cfg):
     device = cfg["device"]
@@ -250,7 +233,7 @@ def train_model(model, train_loader, val_eeg, val_clip, cfg):
 
     for epoch in tqdm(range(1, cfg["epochs"] + 1)):
         model.train()
-        epoch_loss = 0
+        total_loss = 0
         for eeg, clip in train_loader:
             eeg, clip = eeg.float().to(device), clip.float().to(device)
             optimizer.zero_grad()
@@ -259,16 +242,16 @@ def train_model(model, train_loader, val_eeg, val_clip, cfg):
             optimizer.step()
             if scheduler:
                 scheduler.step()
-            epoch_loss += loss.item()
+            total_loss += loss.item()
 
         if epoch % 10 == 0:
-            avg_loss = epoch_loss / len(train_loader)
+            avg_loss = total_loss / len(train_loader)
             print(f"\n[Epoch {epoch:03d}/{cfg['epochs']}] Avg Loss: {avg_loss:.6f}")
             evaluate_model(model, val_eeg, val_clip, cfg)
 
 
 # ==========================================
-# Main (saves metrics only)
+# Main
 # ==========================================
 if __name__ == "__main__":
     cfg = CONFIG
@@ -293,12 +276,8 @@ if __name__ == "__main__":
     save_path = os.path.join(exp_dir, filename)
 
     with open(save_path, "w") as f:
-        header = (
-            "EEG → CLIP Semantic Predictor "
-            f"({'Architectural Fine-Tuning' if EXPERIMENT_MODE == 'architectural' else 'Optimisation'})\n"
-            "==========================================\n\n"
-        )
-        f.write(header)
+        f.write(f"EEG → CLIP Semantic Predictor ({'Architectural Fine-Tuning' if EXPERIMENT_MODE == 'architectural' else 'Optimisation'})\n")
+        f.write("==========================================\n\n")
         f.write(f"Experiment Type: {EXPERIMENT_TYPE}\n\n")
         f.write("Configuration Used:\n")
         for k, v in cfg.items():
