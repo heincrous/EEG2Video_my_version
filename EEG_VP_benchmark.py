@@ -78,30 +78,40 @@ def load_feature_data(sub_file, cfg):
 
 
 def preprocess_data(data, cfg):
-    """Average, reshape, split, and normalize EEG features."""
+    """Split EEG data into train (1–5), val (6), test (7) using ONE StandardScaler fit on all blocks."""
     if cfg["feature_type"] == "window":
-        data = data.mean(axis=3)  # (7,40,5,62,100)
+        data = data.mean(axis=3)       # (7, 40, 5, 62, 100)
     else:
-        data = data.mean(axis=3)  # (7,40,5,62,5)
+        data = data.mean(axis=3)       # (7, 40, 5, 62, 5)
 
-    data = rearrange(data, "b c d f g -> b c (d f g)")
+    # Rearrange so that each block has samples of shape (62, features)
+    data = rearrange(data, "b c d f g -> b (c d f g)")  # flatten within each block
 
-    train_data = data[:6]
-    test_data = data[6]
-    train_labels = create_labels(cfg["num_classes"], cfg["clips_per_class"], 6)
-    test_labels = create_labels(cfg["num_classes"], cfg["clips_per_class"])
-
-    train_data = train_data.reshape(-1, cfg["channels"] * 5)
-    test_data = test_data.reshape(-1, cfg["channels"] * 5)
-
+    # Fit ONE global StandardScaler on all blocks jointly
     scaler = StandardScaler()
-    train_data = scaler.fit_transform(train_data)
-    test_data = scaler.transform(test_data)
+    data_scaled = scaler.fit_transform(data.reshape(-1, data.shape[-1]))
+    data_scaled = data_scaled.reshape(data.shape)
 
-    norm_train = train_data.reshape(train_data.shape[0], cfg["channels"], 5)
-    norm_test = test_data.reshape(test_data.shape[0], cfg["channels"], 5)
+    # Restore per-block structure
+    data_scaled = data_scaled.reshape(7, 40, 5, cfg["channels"], 5)
+    data_scaled = rearrange(data_scaled, "b c d f g -> b (c d) f g")
 
-    return norm_train, norm_test, train_labels, test_labels
+    # --- Split blocks ---
+    train_data = data_scaled[:5]
+    val_data   = data_scaled[5]
+    test_data  = data_scaled[6]
+
+    # --- Make labels ---
+    train_labels = create_labels(cfg["num_classes"], cfg["clips_per_class"], 5)
+    val_labels   = create_labels(cfg["num_classes"], cfg["clips_per_class"])
+    test_labels  = create_labels(cfg["num_classes"], cfg["clips_per_class"])
+
+    # Flatten to (samples, channels, features)
+    train_data = train_data.reshape(-1, cfg["channels"], 5)
+    val_data   = val_data.reshape(-1, cfg["channels"], 5)
+    test_data  = test_data.reshape(-1, cfg["channels"], 5)
+
+    return train_data, val_data, test_data, train_labels, val_labels, test_labels
 
 
 def Get_Dataloader(features, labels, istrain, batch_size):
@@ -309,16 +319,32 @@ def main(cfg):
 
     for sub in subjects:
         data = load_feature_data(sub, cfg)
-        train_data, test_data, train_labels, test_labels = preprocess_data(data, cfg)
-        train_iter = Get_Dataloader(train_data, train_labels, True, cfg["batch_size"])
-        test_iter = Get_Dataloader(test_data, test_labels, False, cfg["batch_size"])
+
+        # updated: preprocess now returns train, val, test sets
+        train_data, val_data, test_data, train_labels, val_labels, test_labels = preprocess_data(data, cfg)
+
+        # create dataloaders
+        train_iter = Get_Dataloader(train_data, train_labels, True,  cfg["batch_size"])
+        val_iter   = Get_Dataloader(val_data,   val_labels,   False, cfg["batch_size"])
+        test_iter  = Get_Dataloader(test_data,  test_labels,  False, cfg["batch_size"])
+
+        # select model
         model = select_model(cfg)
 
         print(f"\n=== Training {sub} ===")
-        top1, top5 = train_and_eval(model, train_iter, test_iter, cfg)
-        all_top1.append(top1)
-        all_top5.append(top5)
-        print(f"Subject {sub}: Top-1={top1:.4f}, Top-5={top5:.4f}\n")
+
+        # train and validate
+        top1_val, top5_val = train_and_eval(model, train_iter, val_iter, cfg)
+        print(f"Validation (Block 6): Top-1={top1_val:.4f}, Top-5={top5_val:.4f}")
+
+        # final evaluation on test block
+        top1_test, top5_test = train_and_eval(model, test_iter, test_iter, cfg)
+        print(f"Test (Block 7): Top-1={top1_test:.4f}, Top-5={top5_test:.4f}\n")
+
+        # store test results for ranking summary
+        all_top1.append(top1_test)
+        all_top5.append(top5_test)
+
 
     # ==========================================
     # Final Results Summary
