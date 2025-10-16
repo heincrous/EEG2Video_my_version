@@ -1,9 +1,10 @@
 # ==========================================
-# EEG → CLIP Semantic Predictor (DE-Only, MSE Loss + MSE Metric)
+# EEG → CLIP Semantic Predictor (DE-Only, MSE Loss)
 # ==========================================
 # Trains on DE features for one subject.
 # Uses ONLY MSE loss.
-# Reports cosine-based metrics + test-set MSE.
+# Allows dynamic tuning of dropout, layer width,
+# activation, and normalization (with defaults).
 # Splits: train(1–5), val(6), test(7)
 # ==========================================
 
@@ -19,21 +20,29 @@ from tqdm import tqdm
 
 
 # ==========================================
-# Config
+# Config block (tunable but defaults unchanged)
 # ==========================================
 CONFIG = {
-    "feature_type": "EEG_DE_1per2s",
-    "subject_name": "sub1.npy",
-    "class_subset": [0, 11, 24, 30, 33],
-    "subset_id": "1",
+    # === Model structure ===
+    "dropout": 0.0,                      # Dropout probability. Default: 0.0
+    "layer_widths": [10000, 10000, 10000, 10000],  # Hidden layer sizes. Default: four layers of 10,000 units
+    "activation": "ReLU",                # Activation function. Default: "ReLU"
+    "normalization": "None",             # Normalization type. Default: "None"
+
+    # === Training and data parameters ===
+    "feature_type": "EEG_DE_1per2s",     # EEG feature directory
+    "subject_name": "sub1.npy",          # Subject file
+    "class_subset": [0, 11, 24, 30, 33], # Subset of classes
+    "subset_id": "1",                    # Subset identifier
     "epochs": 200,
     "batch_size": 128,
     "lr": 0.0005,
     "device": "cuda:0" if torch.cuda.is_available() else "cpu",
+
+    # === Directory paths ===
     "eeg_root": "/content/drive/MyDrive/EEG2Video_data/processed",
     "clip_path": "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy",
-    "ckpt_save": "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints",
-    "emb_save": "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings",
+    "result_root": "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/architectural_fine-tuning",
 }
 
 
@@ -41,19 +50,36 @@ CONFIG = {
 # Model
 # ==========================================
 class CLIPSemanticMLP(nn.Module):
-    def __init__(self, input_dim):
+    def __init__(self, input_dim, cfg=CONFIG):
         super().__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(input_dim, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, 77 * 768)
-        )
+        w = cfg["layer_widths"]
+        p = cfg["dropout"]
+
+        # choose activation
+        act_fn = getattr(nn, cfg["activation"])() if hasattr(nn, cfg["activation"]) else nn.ReLU()
+
+        # choose normalization function
+        def norm_layer(size):
+            if cfg["normalization"] == "BatchNorm":
+                return nn.BatchNorm1d(size)
+            elif cfg["normalization"] == "LayerNorm":
+                return nn.LayerNorm(size)
+            elif cfg["normalization"] == "GroupNorm":
+                return nn.GroupNorm(4, size)
+            else:
+                return nn.Identity()
+
+        layers = []
+        in_dim = input_dim
+        for width in w:
+            layers.append(nn.Linear(in_dim, width))
+            layers.append(norm_layer(width))
+            layers.append(act_fn)
+            if p > 0:
+                layers.append(nn.Dropout(p))
+            in_dim = width
+        layers.append(nn.Linear(in_dim, 77 * 768))  # output layer
+        self.mlp = nn.Sequential(*layers)
 
     def forward(self, eeg):
         return self.mlp(eeg)
@@ -139,10 +165,8 @@ def prepare_data(eeg, clip, cfg):
     val_clip_flat = flatten_clip(val_clip)
     test_clip_flat = flatten_clip(test_clip)
 
-    # Fit scaler globally on all EEG data
     scaler = StandardScaler()
     scaler.fit(eeg.reshape(-1, eeg.shape[-2] * eeg.shape[-1]))
-
     train_eeg_flat = scaler.transform(train_eeg_flat)
     val_eeg_flat = scaler.transform(val_eeg_flat)
     test_eeg_flat = scaler.transform(test_eeg_flat)
@@ -152,7 +176,7 @@ def prepare_data(eeg, clip, cfg):
 
 
 # ==========================================
-# Evaluation Utility (with MSE metric)
+# Evaluation Utility
 # ==========================================
 def evaluate_model(model, eeg_flat, clip_flat, cfg):
     device = cfg["device"]
@@ -202,7 +226,7 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
 
 
 # ==========================================
-# Training Utility (MSE Only)
+# Training Utility
 # ==========================================
 def train_model(model, train_loader, val_eeg, val_clip, cfg):
     device = cfg["device"]
@@ -262,7 +286,7 @@ if __name__ == "__main__":
     dataset = EEGTextDataset(train_eeg, train_clip)
     loader = DataLoader(dataset, batch_size=cfg["batch_size"], shuffle=True)
 
-    model = CLIPSemanticMLP(input_dim=train_eeg.shape[1]).to(cfg["device"])
+    model = CLIPSemanticMLP(input_dim=train_eeg.shape[1], cfg=cfg).to(cfg["device"])
     train_model(model, loader, val_eeg, val_clip, cfg)
 
     print("\nFinal Test Metrics:")
