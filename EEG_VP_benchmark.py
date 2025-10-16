@@ -320,28 +320,35 @@ def main(cfg):
     for sub in subjects:
         data = load_feature_data(sub, cfg)
 
-        # updated: preprocess now returns train, val, test sets
+        # Split into train, val, test
         train_data, val_data, test_data, train_labels, val_labels, test_labels = preprocess_data(data, cfg)
 
-        # create dataloaders
         train_iter = Get_Dataloader(train_data, train_labels, True,  cfg["batch_size"])
         val_iter   = Get_Dataloader(val_data,   val_labels,   False, cfg["batch_size"])
         test_iter  = Get_Dataloader(test_data,  test_labels,  False, cfg["batch_size"])
 
-        # select model
         model = select_model(cfg)
-
         print(f"\n=== Training {sub} ===")
 
-        # train and validate
+        # Train model once, monitor val loss
         top1_val, top5_val = train_and_eval(model, train_iter, val_iter, cfg)
         print(f"Validation (Block 6): Top-1={top1_val:.4f}, Top-5={top5_val:.4f}")
 
-        # final evaluation on test block
-        top1_test, top5_test = train_and_eval(model, test_iter, test_iter, cfg)
+        # Evaluate *only*, no retraining on test
+        model.eval()
+        top1_all, top5_all = [], []
+        with torch.no_grad():
+            for X, y in test_iter:
+                X, y = X.to(cfg["device"]), y.to(cfg["device"])
+                y_hat = model(X)
+                top1, top5 = topk_accuracy(y_hat, y, topk=(1, 5))
+                top1_all.append(top1)
+                top5_all.append(top5)
+
+        top1_test = np.mean(top1_all)
+        top5_test = np.mean(top5_all)
         print(f"Test (Block 7): Top-1={top1_test:.4f}, Top-5={top5_test:.4f}\n")
 
-        # store test results for ranking summary
         all_top1.append(top1_test)
         all_top5.append(top5_test)
 
