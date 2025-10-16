@@ -34,7 +34,7 @@ from models.glfnet_mlp import glfnet_mlp
 # ==========================================
 CONFIG = {
     "feature_type": "de",       # "window", "de", or "psd"
-    "encoder_name": "mlp",   # used for training
+    "encoder_name": "mlpnet",      # used for training
     "subjects_to_train": [
         "sub1_session2.npy",
         "sub1.npy",
