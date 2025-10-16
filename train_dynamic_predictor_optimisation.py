@@ -56,7 +56,7 @@ CONFIG = {
 
     # --- Training parameters ---
     "batch_size"        : 128,
-    "num_epochs"        : 100,
+    "num_epochs"        : 200,
     "lr"                : 0.0001,
     "optimizer"         : "adamw",          # ["adam", "adamw"]
     "weight_decay"      : 0.25,
