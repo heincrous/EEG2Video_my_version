@@ -35,7 +35,7 @@ EXPERIMENT_TYPE = "activation"
 # ==========================================
 CONFIG = {
     # --- Core setup ---
-    "feature_types": ["psd"],   # choose any subset: ["segment"], ["de", "psd"], ["segment", "de"], etc.
+    "feature_types": ["de"],   # choose any subset: ["segment"], ["de", "psd"], ["segment", "de"], etc.
     "subjects_to_train": [
         "sub1_session2.npy",
         "sub1.npy",
@@ -49,7 +49,7 @@ CONFIG = {
         "sub13.npy"
     ],
     # "subjects_to_train": "all",
-    "dry_run": True,
+    "dry_run": False,
 
     # --- Data parameters ---
     "num_classes": 40,
