@@ -63,7 +63,7 @@ CONFIG = {
 
     # --- Training parameters ---
     "batch_size": 256,
-    "num_epochs": 200,
+    "num_epochs": 100,
     "lr": 0.0005,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
 }
