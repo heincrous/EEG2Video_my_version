@@ -62,7 +62,7 @@ CONFIG = {
     "emb_dim": 64,
 
     # --- Training parameters ---
-    "batch_size": 256,
+    "batch_size": 128,
     "num_epochs": 100,
     "lr": 0.0005,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
