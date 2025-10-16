@@ -152,43 +152,56 @@ def select_model(cfg):
 
 
 # ==========================================
-# 4. Functional Dry Run Module
+# 4. Functional Dry Run Module (Fixed + Filtered)
 # ==========================================
 def simulate_preprocessed_dummy(ft, cfg):
-    """Simulate preprocessing to produce tensors shaped exactly like real inputs."""
+    """Simulate realistic preprocessing and produce correctly shaped tensors."""
     C = cfg["channels"]
+    T = cfg["time_len"]
     device = cfg["device"]
 
     if ft == "window":
-        # (7,40,5,7,62,100) → avg axis=3 → (7,40,5,62,100)
-        raw = torch.randn(7, 40, 5, 7, 62, 100)
-        avgd = raw.mean(axis=3)
-        flat = rearrange(avgd, "b c d f g -> b c (d f g)")
-        flat = flat[:1]  # one block
-        flat = flat.reshape(-1, C, 5)
-        return torch.tensor(flat, dtype=torch.float32).to(device)
+        # Raw EEG window data: (7 blocks, 40 classes, 5 clips, 7 subjects, 62 ch, 100 time)
+        raw = torch.randn(7, 40, 5, 7, C, T)
+        avgd = raw.mean(axis=3)  # average across subject axis → (7, 40, 5, 62, 100)
+
+        # Merge block, class, and clip → (7*40*5, 62, 100)
+        flat = rearrange(avgd, "b c d f g -> (b c d) f g")
+
+        # Normalize (simulate StandardScaler)
+        flat = (flat - flat.mean()) / (flat.std() + 1e-6)
+
+        # Add channel dim for CNN input: (batch=1, 1, 62, 100)
+        flat = flat.unsqueeze(0)
+        return flat.to(device)
+
     else:
-        # (7,40,5,2,62,5) → avg axis=3 → (7,40,5,62,5)
-        raw = torch.randn(7, 40, 5, 2, 62, 5)
-        avgd = raw.mean(axis=3)
-        flat = rearrange(avgd, "b c d f g -> b c (d f g)")
-        flat = flat[:1]
-        flat = flat.reshape(-1, C, 5)
-        return torch.tensor(flat, dtype=torch.float32).to(device)
+        # DE / PSD simulated: (7 blocks, 40 classes, 5 clips, 2 subjects, 62 ch, 5 freqs)
+        raw = torch.randn(7, 40, 5, 2, C, 5)
+        avgd = raw.mean(axis=3)  # → (7, 40, 5, 62, 5)
+
+        # Merge block, class, and clip → (7*40*5, 62, 5)
+        flat = rearrange(avgd, "b c d f g -> (b c d) f g")
+
+        # Normalize
+        flat = (flat - flat.mean()) / (flat.std() + 1e-6)
+
+        return flat.to(device)
 
 
 def dry_run_all_models(cfg):
-    """Perform full preprocessing-simulated forward passes for all models and features."""
+    """Perform full preprocessing-simulated forward passes for all valid model-feature pairs."""
     print("\n=== Running Full Functional Dry Run (All Models + Features) ===")
     device = cfg["device"]
 
-    model_names = [
-        "shallownet", "deepnet", "eegnet", "tsconv",
-        "conformer", "glfnet", "mlpnet", "glfnet_mlp"
-    ]
-    feature_types = ["window", "de", "psd"]
+    # mapping which models to test per feature type
+    model_groups = {
+        "window": ["shallownet", "deepnet", "eegnet", "tsconv", "conformer", "glfnet"],
+        "de": ["mlpnet", "glfnet_mlp"],
+        "psd": ["mlpnet", "glfnet_mlp"],
+    }
 
-    for ft in feature_types:
+    for ft, model_names in model_groups.items():
         print(f"\n--- Testing feature type: {ft.upper()} ---")
         dummy_input = simulate_preprocessed_dummy(ft, cfg)
         print(f"Dummy preprocessed input shape: {list(dummy_input.shape)}")
