@@ -1,5 +1,5 @@
 # ==========================================
-# EEG2Video Preprocessing Figures Generator (Corrected)
+# EEG2Video Preprocessing Figures Generator (Shaded Overlap Visualization)
 # ==========================================
 import os
 import numpy as np
@@ -63,45 +63,66 @@ plt.savefig(os.path.join(save_path, "feat_distribution_PSD.png"), dpi=300)
 plt.close()
 
 # ==========================================
-# 3. Temporal Window Verification – 0.5 s (EEG_windows_100)
+# 3. Temporal Segmentation (Shaded) – 0.5 s Windows (EEG_windows_100)
 # ==========================================
 fs = 200
 block, cls, clip, ch = 0, 0, 0, 0
 windows = win_100[block, cls, clip, :, ch, :]  # (7,100)
-step = 100 // 2  # 50% overlap -> 50 samples = 0.25 s
+win_len = windows.shape[-1]
+step = win_len // 2  # 50% overlap -> 50 samples = 0.25 s
+duration = (win_len + (windows.shape[0]-1)*step) / fs
+
+# build continuous composite signal for visualization
+t_signal = np.linspace(0, duration, win_len + (windows.shape[0]-1)*step)
+continuous = np.zeros(len(t_signal))
+count = np.zeros(len(t_signal))
+for i, w in enumerate(windows):
+    start = i * step
+    continuous[start:start+win_len] += w
+    count[start:start+win_len] += 1
+continuous /= np.maximum(count, 1)
 
 plt.figure(figsize=(8,3))
-colors = plt.cm.tab10(np.linspace(0,1,windows.shape[0]))
-for i, w in enumerate(windows):
+plt.plot(t_signal, continuous, color='black', lw=1)
+for i in range(windows.shape[0]):
     start = i * step / fs
-    end = start + w.shape[-1] / fs
-    t = np.linspace(start, end, w.shape[-1])
-    plt.plot(t, w, color=colors[i], lw=0.8)
-plt.title("Temporal Segmentation – 0.5 s Overlapping Windows")
+    end = start + win_len / fs
+    plt.axvspan(start, end, color=plt.cm.tab10(i/float(windows.shape[0])), alpha=0.2)
+plt.title("0.5 s Window Segmentation with 50% Overlap (Shaded View)")
 plt.xlabel("Time (s)")
 plt.ylabel("Amplitude (µV)")
 plt.tight_layout()
-plt.savefig(os.path.join(save_path, "temp_window_verification_0.5s.png"), dpi=300)
+plt.savefig(os.path.join(save_path, "temp_window_shaded_0.5s.png"), dpi=300)
 plt.close()
 
 # ==========================================
-# 4. Temporal Window Verification – 1 s (EEG_windows_200)
+# 4. Temporal Segmentation (Shaded) – 1 s Windows (EEG_windows_200)
 # ==========================================
 windows = win_200[block, cls, clip, :, ch, :]  # (3,200)
-step = 200 // 2  # 50% overlap -> 100 samples = 0.5 s
+win_len = windows.shape[-1]
+step = win_len // 2  # 50% overlap -> 100 samples = 0.5 s
+duration = (win_len + (windows.shape[0]-1)*step) / fs
+
+t_signal = np.linspace(0, duration, win_len + (windows.shape[0]-1)*step)
+continuous = np.zeros(len(t_signal))
+count = np.zeros(len(t_signal))
+for i, w in enumerate(windows):
+    start = i * step
+    continuous[start:start+win_len] += w
+    count[start:start+win_len] += 1
+continuous /= np.maximum(count, 1)
 
 plt.figure(figsize=(8,3))
-colors = plt.cm.tab10(np.linspace(0,1,windows.shape[0]))
-for i, w in enumerate(windows):
+plt.plot(t_signal, continuous, color='black', lw=1)
+for i in range(windows.shape[0]):
     start = i * step / fs
-    end = start + w.shape[-1] / fs
-    t = np.linspace(start, end, w.shape[-1])
-    plt.plot(t, w, color=colors[i], lw=0.8)
-plt.title("Temporal Segmentation – 1 s Overlapping Windows")
+    end = start + win_len / fs
+    plt.axvspan(start, end, color=plt.cm.tab10(i/float(windows.shape[0])), alpha=0.2)
+plt.title("1 s Window Segmentation with 50% Overlap (Shaded View)")
 plt.xlabel("Time (s)")
 plt.ylabel("Amplitude (µV)")
 plt.tight_layout()
-plt.savefig(os.path.join(save_path, "temp_window_verification_1s.png"), dpi=300)
+plt.savefig(os.path.join(save_path, "temp_window_shaded_1s.png"), dpi=300)
 plt.close()
 
 print("All figures saved to:", save_path)
