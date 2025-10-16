@@ -320,10 +320,23 @@ def main(cfg):
         all_top5.append(top5)
         print(f"Subject {sub}: Top-1={top1:.4f}, Top-5={top5:.4f}\n")
 
+    # ==========================================
+    # Final Results Summary
+    # ==========================================
     print("=== Final Results ===")
     print(f"Mean Top-1: {np.mean(all_top1):.4f} ± {np.std(all_top1):.4f}")
     print(f"Mean Top-5: {np.mean(all_top5):.4f} ± {np.std(all_top5):.4f}")
 
+    # ==========================================
+    # Ranked Subject Performance Summary
+    # ==========================================
+    print("\n=== Ranked Subject Performance (Top-1 Accuracy) ===")
+    subject_scores = list(zip(subjects, all_top1, all_top5))
+    subject_scores.sort(key=lambda x: x[1], reverse=True)
 
-if __name__ == "__main__":
-    main(CONFIG)
+    for rank, (sub, top1, top5) in enumerate(subject_scores, 1):
+        print(f"{rank:2d}. {sub:15s} | Top-1: {top1:.4f} | Top-5: {top5:.4f}")
+
+    best_sub, best_top1, best_top5 = subject_scores[0]
+    print(f"\nBest Performing Subject: {best_sub} | Top-1: {best_top1:.4f} | Top-5: {best_top5:.4f}")
+

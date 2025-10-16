@@ -130,10 +130,13 @@ class TransformerEncoder(nn.Sequential):
 class ClassificationHead(nn.Module):
     def __init__(self, emb_size, out_dim):
         super().__init__()
-        self.fc = nn.Linear(280, out_dim)
+        self.fc = None  # will be defined dynamically
+        self.out_dim = out_dim  # store target output dimension
 
     def forward(self, x):
         x = x.contiguous().view(x.size(0), -1)
+        if self.fc is None:
+            self.fc = nn.Linear(x.size(1), self.out_dim, device=x.device)
         return self.fc(x)
 
 
