@@ -1,9 +1,9 @@
 # ==========================================
-# EEG → CLIP Semantic Predictor (DE-Only, MSE Loss)
+# EEG → CLIP Semantic Predictor (DE-Only, MSE Loss + MSE Metric)
 # ==========================================
 # Trains on DE features for one subject.
 # Uses ONLY MSE loss.
-# Keeps all metrics, model, and saving logic intact.
+# Reports cosine-based metrics + test-set MSE.
 # Splits: train(1–5), val(6), test(7)
 # ==========================================
 
@@ -23,7 +23,7 @@ from tqdm import tqdm
 # ==========================================
 CONFIG = {
     "feature_type": "EEG_DE_1per2s",
-    "subject_name": "sub1.npy",  # change here
+    "subject_name": "sub1.npy",
     "class_subset": [0, 11, 24, 30, 33],
     "subset_id": "1",
     "epochs": 200,
@@ -97,17 +97,22 @@ def cleanup_previous_run(cfg):
 
 
 # ==========================================
-# Data Loading (DE-only)
+# Data Loading (DE-only, handles both 5D and 6D)
 # ==========================================
 def load_de_data(cfg):
     eeg_path = os.path.join(cfg["eeg_root"], cfg["feature_type"], cfg["subject_name"])
     clip_path = cfg["clip_path"]
 
-    eeg = np.load(eeg_path, allow_pickle=True)  # (7,40,5,2,62,5)
+    eeg = np.load(eeg_path, allow_pickle=True)
     clip = np.load(clip_path, allow_pickle=True)
 
-    if eeg.ndim != 6 or eeg.shape[3] != 2:
-        raise ValueError(f"Unexpected DE EEG shape: {eeg.shape}")
+    if eeg.ndim == 6 and eeg.shape[3] == 2:
+        print("Detected 6D DE file — averaging trials.")
+        eeg = eeg.mean(axis=3)
+    elif eeg.ndim == 5:
+        print("Detected 5D DE file — already averaged.")
+    else:
+        raise ValueError(f"Unexpected EEG shape: {eeg.shape}")
 
     print(f"Loaded EEG {cfg['subject_name']} shape: {eeg.shape}")
     print(f"Loaded CLIP shape: {clip.shape}")
@@ -115,21 +120,15 @@ def load_de_data(cfg):
 
 
 # ==========================================
-# Data Preparation (train/val/test split + scaling)
+# Data Preparation (train/val/test split + global scaling)
 # ==========================================
 def prepare_data(eeg, clip, cfg):
-    # Average trials → (7,40,5,62,5)
-    eeg = eeg.mean(axis=3)
-
-    # Restrict to subset
     eeg = eeg[:, cfg["class_subset"]]
     clip = clip[:, cfg["class_subset"]]
 
-    # Split blocks: train(1–5), val(6), test(7)
     train_eeg, val_eeg, test_eeg = eeg[:5], eeg[5:6], eeg[6:]
     train_clip, val_clip, test_clip = clip[:5], clip[5:6], clip[6:]
 
-    # Flatten per sample
     def flatten_eeg(x): return rearrange(x, "b c s ch t -> (b c s) (ch t)")
     def flatten_clip(x): return rearrange(x, "b c s tok dim -> (b c s) (tok dim)")
 
@@ -140,30 +139,33 @@ def prepare_data(eeg, clip, cfg):
     val_clip_flat = flatten_clip(val_clip)
     test_clip_flat = flatten_clip(test_clip)
 
-    # Global scaling (fit on all EEG)
+    # Fit scaler globally on all EEG data
     scaler = StandardScaler()
     scaler.fit(eeg.reshape(-1, eeg.shape[-2] * eeg.shape[-1]))
 
-    def scale(x): return scaler.transform(x)
-    train_eeg_flat = scale(train_eeg_flat)
-    val_eeg_flat = scale(val_eeg_flat)
-    test_eeg_flat = scale(test_eeg_flat)
+    train_eeg_flat = scaler.transform(train_eeg_flat)
+    val_eeg_flat = scaler.transform(val_eeg_flat)
+    test_eeg_flat = scaler.transform(test_eeg_flat)
 
     print(f"[Scaler] mean={np.mean(train_eeg_flat):.5f}, std={np.std(train_eeg_flat):.5f}")
     return train_eeg_flat, val_eeg_flat, test_eeg_flat, train_clip_flat, val_clip_flat, test_clip_flat
 
 
 # ==========================================
-# Evaluation Utility
+# Evaluation Utility (with MSE metric)
 # ==========================================
 def evaluate_model(model, eeg_flat, clip_flat, cfg):
     device = cfg["device"]
     model.eval()
     with torch.no_grad():
-        preds = model(torch.tensor(eeg_flat, dtype=torch.float32, device=device)).cpu().numpy()
-        gt = clip_flat
+        eeg_tensor = torch.tensor(eeg_flat, dtype=torch.float32, device=device)
+        gt_tensor = torch.tensor(clip_flat, dtype=torch.float32, device=device)
+        preds_tensor = model(eeg_tensor)
+        mse_loss = F.mse_loss(preds_tensor, gt_tensor).item()
+        preds = preds_tensor.cpu().numpy()
+    gt = clip_flat
 
-    preds = preds / (np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8)
+    preds /= np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8
     gt_norm = gt / (np.linalg.norm(gt, axis=1, keepdims=True) + 1e-8)
 
     num_classes = len(cfg["class_subset"])
@@ -171,15 +173,13 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
     labels = np.repeat(np.arange(num_classes), samples_per_class)
 
     avg_cosine = np.mean(np.sum(preds * gt_norm, axis=1))
-
     class_means = np.zeros((num_classes, preds.shape[1]))
     for c in range(num_classes):
         class_means[c] = gt_norm[labels == c].mean(axis=0)
         class_means[c] /= np.linalg.norm(class_means[c]) + 1e-8
 
     sims = np.dot(preds, class_means.T)
-    pred_classes = np.argmax(sims, axis=1)
-    acc = (pred_classes == labels).mean()
+    acc = (np.argmax(sims, axis=1) == labels).mean()
 
     within = [np.dot(preds[i], class_means[labels[i]]) for i in range(len(preds))]
     between = [np.mean(np.dot(class_means[np.arange(num_classes) != labels[i]], preds[i])) for i in range(len(preds))]
@@ -191,6 +191,7 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
     fisher_score = num / (den + 1e-8)
 
     print(
+        f"  MSE Loss: {mse_loss:.6f}\n"
         f"  Avg cosine(pred,gt): {avg_cosine:.4f}\n"
         f"  Within-class cosine: {avg_within:.4f}\n"
         f"  Between-class cosine: {avg_between:.4f}\n"
@@ -214,10 +215,7 @@ def train_model(model, train_loader, val_eeg, val_clip, cfg):
         for eeg, clip in train_loader:
             eeg, clip = eeg.float().to(device), clip.float().to(device)
             optimizer.zero_grad()
-
-            pred = model(eeg)
-            loss = F.mse_loss(pred, clip)  # MSE only
-
+            loss = F.mse_loss(model(eeg), clip)
             loss.backward()
             optimizer.step()
             scheduler.step()
@@ -225,21 +223,16 @@ def train_model(model, train_loader, val_eeg, val_clip, cfg):
 
         if epoch % 10 == 0:
             avg_loss = epoch_loss / len(train_loader)
-            print("\n" + "="*65)
-            print(f"[Epoch {epoch:03d}/{cfg['epochs']}]  Avg Loss: {avg_loss:.6f}")
-            print("-"*65)
-            print("Validation metrics:")
+            print(f"\n[Epoch {epoch:03d}/{cfg['epochs']}] Avg Loss: {avg_loss:.6f}")
             evaluate_model(model, val_eeg, val_clip, cfg)
-            print("="*65 + "\n")
 
 
 # ==========================================
 # Save Utility
 # ==========================================
 def save_outputs(model, test_eeg, cfg):
-    device = cfg["device"]
     with torch.no_grad():
-        preds = model(torch.tensor(test_eeg, dtype=torch.float32, device=device)).cpu().numpy()
+        preds = model(torch.tensor(test_eeg, dtype=torch.float32, device=cfg["device"])).cpu().numpy()
     preds = preds.reshape(-1, 77, 768)
 
     tag = cfg["feature_type"]
@@ -251,9 +244,7 @@ def save_outputs(model, test_eeg, cfg):
 
     torch.save({'state_dict': model.state_dict()}, os.path.join(cfg["ckpt_save"], ckpt_name))
     np.save(os.path.join(cfg["emb_save"], emb_name), preds)
-
-    print(f"Saved → {ckpt_name}")
-    print(f"Saved → {emb_name} (shape: {preds.shape})")
+    print(f"Saved → {ckpt_name}\nSaved → {emb_name} (shape: {preds.shape})")
 
 
 # ==========================================
@@ -273,6 +264,7 @@ if __name__ == "__main__":
 
     model = CLIPSemanticMLP(input_dim=train_eeg.shape[1]).to(cfg["device"])
     train_model(model, loader, val_eeg, val_clip, cfg)
+
     print("\nFinal Test Metrics:")
     evaluate_model(model, test_eeg, test_clip, cfg)
     save_outputs(model, test_eeg, cfg)
