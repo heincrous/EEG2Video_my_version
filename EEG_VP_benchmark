@@ -1,9 +1,9 @@
 # ==========================================
-# EEG Classification Script (Modular Structure)
+# EEG Classification Script (Full Modular + Functional Dry Run)
 # ==========================================
-# Trains individual subject EEG classifiers
-# Blocks 1–6 → train, Block 7 → test
-# Data already ordered by class (0–39, 5 clips each)
+# Performs comprehensive dry-run forward passes on all models
+# with simulated preprocessing for all feature types.
+# Can also train EEG classifiers per subject when dry_run=False.
 # ==========================================
 
 
@@ -23,6 +23,7 @@ from models.deepnet import deepnet
 from models.conformer import conformer
 from models.tsconv import tsconv
 from models.glfnet import glfnet
+from models.mlpnet import mlpnet
 from models.glfnet_mlp import glfnet_mlp
 
 
@@ -31,8 +32,9 @@ from models.glfnet_mlp import glfnet_mlp
 # ==========================================
 CONFIG = {
     "feature_type": "window",       # "window", "de", or "psd"
-    "encoder_name": "glfnet",       # default encoder; override if desired
-    "subjects_to_train": "all",     # or ["sub3.npy", "sub6.npy"]
+    "encoder_name": "glfnet",       # used for training
+    "subjects_to_train": "all",
+    "dry_run": True,                # perform preprocessing + forward passes
 
     # --- Data parameters ---
     "num_classes": 40,
@@ -77,34 +79,25 @@ def load_feature_data(sub_file, cfg):
 
 def preprocess_data(data, cfg):
     """Average, reshape, split, and normalize EEG features."""
-
-    # --- Average windows or feature channels ---
     if cfg["feature_type"] == "window":
-        # shape (7, 40, 5, 7, 62, 100) → average over the 7 window samples
-        data = data.mean(axis=3)  # now (7, 40, 5, 62, 100)
+        data = data.mean(axis=3)  # (7,40,5,62,100)
     else:
-        # shape (7, 40, 5, 2, 62, 5) → average over the 2 feature samples
-        data = data.mean(axis=3)  # now (7, 40, 5, 62, 5)
+        data = data.mean(axis=3)  # (7,40,5,62,5)
 
-    # --- Flatten for model input ---
-    data = rearrange(data, "b c d f g -> b c (d f g)")  # same for both
+    data = rearrange(data, "b c d f g -> b c (d f g)")
 
-    # --- Split by blocks ---
     train_data = data[:6]
     test_data = data[6]
     train_labels = create_labels(cfg["num_classes"], cfg["clips_per_class"], 6)
     test_labels = create_labels(cfg["num_classes"], cfg["clips_per_class"])
 
-    # --- Flatten per sample (channels × 5) ---
     train_data = train_data.reshape(-1, cfg["channels"] * 5)
     test_data = test_data.reshape(-1, cfg["channels"] * 5)
 
-    # --- Normalize ---
     scaler = StandardScaler()
     train_data = scaler.fit_transform(train_data)
     test_data = scaler.transform(test_data)
 
-    # --- Reshape back to (samples, channels, 5) ---
     norm_train = train_data.reshape(train_data.shape[0], cfg["channels"], 5)
     norm_test = test_data.reshape(test_data.shape[0], cfg["channels"], 5)
 
@@ -124,13 +117,12 @@ def select_model(cfg):
     ft = cfg["feature_type"]
     en = cfg["encoder_name"]
 
-    # Auto-assign encoder
-    if ft in ["de", "psd"] and en not in ["mlp", "glfnet_mlp"]:
-        en = "glfnet_mlp"
-    elif ft == "window" and en in ["mlp", "glfnet_mlp"]:
+    # enforce correct encoder usage by feature type
+    if ft == "window" and en in ["mlpnet", "glfnet_mlp"]:
         en = "glfnet"
+    elif ft in ["de", "psd"] and en not in ["mlpnet", "glfnet_mlp"]:
+        en = "glfnet_mlp"
 
-    # Map encoder names to actual classes
     model_map = {
         "shallownet": shallownet,
         "eegnet": eegnet,
@@ -138,21 +130,87 @@ def select_model(cfg):
         "conformer": conformer,
         "tsconv": tsconv,
         "glfnet": glfnet,
+        "mlpnet": mlpnet,
         "glfnet_mlp": glfnet_mlp,
     }
 
     ModelClass = model_map[en]
-    if ft == "window":
+
+    if en == "glfnet":
+        model = ModelClass(out_dim=cfg["num_classes"], emb_dim=64, C=cfg["channels"], T=cfg["time_len"])
+    elif en in ["shallownet", "deepnet", "eegnet", "tsconv", "conformer"]:
+        model = ModelClass(out_dim=cfg["num_classes"], C=cfg["channels"], T=cfg["time_len"])
+    elif en == "glfnet_mlp":
         model = ModelClass(out_dim=cfg["num_classes"], emb_dim=64, input_dim=310)
-    else:
+    elif en == "mlpnet":
         model = ModelClass(out_dim=cfg["num_classes"], input_dim=310)
+    else:
+        raise ValueError(f"Unknown encoder: {en}")
 
     print(f"Using encoder: {en} | Feature type: {ft}")
     return model
 
 
 # ==========================================
-# 4. Training and Evaluation Module
+# 4. Functional Dry Run Module
+# ==========================================
+def simulate_preprocessed_dummy(ft, cfg):
+    """Simulate preprocessing to produce tensors shaped exactly like real inputs."""
+    C = cfg["channels"]
+    device = cfg["device"]
+
+    if ft == "window":
+        # (7,40,5,7,62,100) → avg axis=3 → (7,40,5,62,100)
+        raw = torch.randn(7, 40, 5, 7, 62, 100)
+        avgd = raw.mean(axis=3)
+        flat = rearrange(avgd, "b c d f g -> b c (d f g)")
+        flat = flat[:1]  # one block
+        flat = flat.reshape(-1, C, 5)
+        return torch.tensor(flat, dtype=torch.float32).to(device)
+    else:
+        # (7,40,5,2,62,5) → avg axis=3 → (7,40,5,62,5)
+        raw = torch.randn(7, 40, 5, 2, 62, 5)
+        avgd = raw.mean(axis=3)
+        flat = rearrange(avgd, "b c d f g -> b c (d f g)")
+        flat = flat[:1]
+        flat = flat.reshape(-1, C, 5)
+        return torch.tensor(flat, dtype=torch.float32).to(device)
+
+
+def dry_run_all_models(cfg):
+    """Perform full preprocessing-simulated forward passes for all models and features."""
+    print("\n=== Running Full Functional Dry Run (All Models + Features) ===")
+    device = cfg["device"]
+
+    model_names = [
+        "shallownet", "deepnet", "eegnet", "tsconv",
+        "conformer", "glfnet", "mlpnet", "glfnet_mlp"
+    ]
+    feature_types = ["window", "de", "psd"]
+
+    for ft in feature_types:
+        print(f"\n--- Testing feature type: {ft.upper()} ---")
+        dummy_input = simulate_preprocessed_dummy(ft, cfg)
+        print(f"Dummy preprocessed input shape: {list(dummy_input.shape)}")
+
+        for name in model_names:
+            try:
+                temp_cfg = cfg.copy()
+                temp_cfg["feature_type"] = ft
+                temp_cfg["encoder_name"] = name
+                model = select_model(temp_cfg).to(device)
+                model.eval()
+                with torch.no_grad():
+                    out = model(dummy_input)
+                print(f"{name:12s} | Output shape: {list(out.shape)} | OK")
+            except Exception as e:
+                print(f"{name:12s} | ERROR: {str(e)}")
+
+    print("\n=== Dry Run Complete ===\n")
+
+
+# ==========================================
+# 5. Training and Evaluation Module
 # ==========================================
 def cal_accuracy(y_hat, y):
     if len(y_hat.shape) > 1 and y_hat.shape[1] > 1:
@@ -213,9 +271,13 @@ def train_and_eval(model, train_iter, test_iter, cfg):
 
 
 # ==========================================
-# 5. Main Execution
+# 6. Main Execution
 # ==========================================
 def main(cfg):
+    if cfg["dry_run"]:
+        dry_run_all_models(cfg)
+        return
+
     dir_map = {
         "window": cfg["window_dir"],
         "de": cfg["de_dir"],
