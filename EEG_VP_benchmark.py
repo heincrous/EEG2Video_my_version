@@ -340,3 +340,6 @@ def main(cfg):
     best_sub, best_top1, best_top5 = subject_scores[0]
     print(f"\nBest Performing Subject: {best_sub} | Top-1: {best_top1:.4f} | Top-5: {best_top5:.4f}")
 
+
+if __name__ == "__main__":
+    main(CONFIG)
