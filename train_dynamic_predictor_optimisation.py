@@ -34,18 +34,7 @@ EXPERIMENT_TYPE = "learning_rate"
 CONFIG = {
     "feature_type"      : "DE",
     "encoder_name"      : "glfnet_mlp",
-    "subjects_to_train": [
-        "sub1_session2.npy",
-        "sub1.npy",
-        "sub18.npy",
-        "sub19.npy",
-        "sub6.npy",
-        "sub15.npy",
-        "sub20.npy",
-        "sub7.npy",
-        "sub10.npy",
-        "sub13.npy",
-    ],
+    "subjects_to_train" : ["sub1.npy"],
 
     # --- Data parameters ---
     "num_classes"       : 2,
