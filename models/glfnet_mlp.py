@@ -3,9 +3,9 @@
 # ==========================================
 CONFIG = {
     "dropout": 0.0,               # dropout probability; 0 default
-    "layer_widths": [512, 256],   # hidden layer sizes; [512, 256] default
+    "layer_widths": [1024, 512],   # hidden layer sizes; [512, 256] default
     "activation": "ELU",          # "ELU", "GELU", "SiLU"; ELU default
-    "normalization": "GroupNorm", # "BatchNorm", "LayerNorm", "GroupNorm"; BatchNorm default
+    "normalization": "BatchNorm", # "BatchNorm", "LayerNorm", "GroupNorm"; BatchNorm default
 }
 
 
