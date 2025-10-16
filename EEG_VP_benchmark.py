@@ -31,10 +31,10 @@ from models.glfnet_mlp import glfnet_mlp
 # 1. Configuration Table
 # ==========================================
 CONFIG = {
-    "feature_type": "window",       # "window", "de", or "psd"
+    "feature_type": "de",       # "window", "de", or "psd"
     "encoder_name": "glfnet",       # used for training
     "subjects_to_train": "all",
-    "dry_run": True,                # perform preprocessing + forward passes
+    "dry_run": False,                # perform preprocessing + forward passes
 
     # --- Data parameters ---
     "num_classes": 40,
@@ -45,9 +45,9 @@ CONFIG = {
 
     # --- Paths ---
     "data_root": "/content/drive/MyDrive/EEG2Video_data/processed/",
-    "window_dir": "EEG_window_features/",
-    "de_dir": "EEG_DE_features/",
-    "psd_dir": "EEG_PSD_features/",
+    "window_dir": "EEG_window_100/",
+    "de_dir": "EEG_DE_1per1s/",
+    "psd_dir": "EEG_PSD_1per1s/",
 
     # --- Training parameters ---
     "batch_size": 256,
