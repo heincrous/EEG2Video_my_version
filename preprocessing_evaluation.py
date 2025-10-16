@@ -25,14 +25,15 @@ def load_first_subject(folder):
     return np.load(files[0])
 
 # === Load arrays ===
-DE      = load_first_subject(de_path)     # (40,5,62,200)
-PSD     = load_first_subject(psd_path)    # (40,5,62,200)
-win_100 = load_first_subject(win100_path) # (40,5,7,62,100)
-win_200 = load_first_subject(win200_path) # (40,5,3,62,200)
+DE      = load_first_subject(de_path)     # (7,40,5,62,200)
+PSD     = load_first_subject(psd_path)    # (7,40,5,62,200)
+win_100 = load_first_subject(win100_path) # (7,40,5,7,62,200)
+win_200 = load_first_subject(win200_path) # (7,40,5,3,62,200)
 
 # ==========================================
 # 1. DE Feature Distribution – Mean ± SD
 # ==========================================
+# Aggregate across blocks, classes, clips, and time
 de_mean = DE.mean(axis=(0,1,2,4))   # mean per channel
 de_std  = DE.std(axis=(0,1,2,4))
 
@@ -66,13 +67,14 @@ plt.close()
 # 3. Temporal Window Verification – 1 s (EEG_windows_100)
 # ==========================================
 fs = 200  # sampling rate
-s, c, t, ch = 0, 0, 0, 0  # subject, concept, trial, channel
-windows = win_100[c, t, :, :, :]  # (7,62,100)
+block, cls, clip, ch = 0, 0, 0, 0  # first block, class, clip, channel
+
+windows = win_100[block, cls, clip, :, ch, :]  # (7, 200)
 time = np.arange(windows.shape[-1]) / fs
 
 plt.figure(figsize=(8,3))
-for i, w in enumerate(windows):
-    plt.plot(time + i * 0.5, w[ch], lw=0.8)  # select channel ch
+for i in range(windows.shape[0]):
+    plt.plot(time + i * 0.5, windows[i], lw=0.8)
 plt.title("Temporal Segmentation – 1 s Overlapping Windows")
 plt.xlabel("Time (s)")
 plt.ylabel("Amplitude (µV)")
@@ -80,16 +82,15 @@ plt.tight_layout()
 plt.savefig(os.path.join(save_path, "temp_window_verification_1s.png"), dpi=300)
 plt.close()
 
-
 # ==========================================
 # 4. Temporal Window Verification – 0.5 s (EEG_windows_200)
 # ==========================================
-windows = win_200[c, t, :, :, :]  # (3,62,200)
+windows = win_200[block, cls, clip, :, ch, :]  # (3, 200)
 time = np.arange(windows.shape[-1]) / fs
 
 plt.figure(figsize=(8,3))
-for i, w in enumerate(windows):
-    plt.plot(time + i * 0.25, w[ch], lw=0.8)  # select channel ch
+for i in range(windows.shape[0]):
+    plt.plot(time + i * 0.25, windows[i], lw=0.8)
 plt.title("Temporal Segmentation – 0.5 s Overlapping Windows")
 plt.xlabel("Time (s)")
 plt.ylabel("Amplitude (µV)")
