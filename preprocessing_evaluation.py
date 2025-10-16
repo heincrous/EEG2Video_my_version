@@ -1,5 +1,5 @@
 # ==========================================
-# EEG2Video Preprocessing Figures Generator (Accurate Overlap Visualization - Final)
+# EEG2Video Preprocessing Figures Generator (Accurate Overlap Visualization - Scaled)
 # ==========================================
 import os
 import numpy as np
@@ -16,7 +16,7 @@ psd_path    = os.path.join(base_path, "EEG_PSD_1per2s")
 win100_path = os.path.join(base_path, "EEG_windows_100")  # 0.5 s windows
 win200_path = os.path.join(base_path, "EEG_windows_200")  # 1.0 s windows
 
-# === Helper: load first subject file ===
+# === Helper ===
 def load_first_subject(folder):
     files = sorted(glob(os.path.join(folder, "*.npy")))
     if not files:
@@ -24,7 +24,7 @@ def load_first_subject(folder):
     print(f"Loaded: {os.path.basename(files[0])}")
     return np.load(files[0])
 
-# === Load arrays ===
+# === Load ===
 DE      = load_first_subject(de_path)
 PSD     = load_first_subject(psd_path)
 win_100 = load_first_subject(win100_path)
@@ -33,11 +33,11 @@ win_200 = load_first_subject(win200_path)
 # ==========================================
 # 1. DE Feature Distribution – Mean ± SD
 # ==========================================
-de_mean = DE.mean(axis=(0, 1, 2, 4))
-de_std  = DE.std(axis=(0, 1, 2, 4))
+de_mean = DE.mean(axis=(0,1,2,4))
+de_std  = DE.std(axis=(0,1,2,4))
 
-plt.figure(figsize=(8, 4))
-plt.bar(np.arange(1, 63), de_mean, yerr=de_std, capsize=2, color='steelblue')
+plt.figure(figsize=(8,4))
+plt.bar(np.arange(1,63), de_mean, yerr=de_std, capsize=2, color='steelblue')
 plt.title("DE Feature Mean ± SD Across Channels")
 plt.xlabel("EEG Channel Index")
 plt.ylabel("Amplitude")
@@ -49,11 +49,11 @@ plt.close()
 # ==========================================
 # 2. PSD Feature Distribution – Mean ± SD
 # ==========================================
-psd_mean = PSD.mean(axis=(0, 1, 2, 4))
-psd_std  = PSD.std(axis=(0, 1, 2, 4))
+psd_mean = PSD.mean(axis=(0,1,2,4))
+psd_std  = PSD.std(axis=(0,1,2,4))
 
-plt.figure(figsize=(8, 4))
-plt.bar(np.arange(1, 63), psd_mean, yerr=psd_std, capsize=2, color='mediumseagreen')
+plt.figure(figsize=(8,4))
+plt.bar(np.arange(1,63), psd_mean, yerr=psd_std, capsize=2, color='mediumseagreen')
 plt.title("PSD Feature Mean ± SD Across Channels")
 plt.xlabel("EEG Channel Index")
 plt.ylabel("Power Spectral Density (a.u.)")
@@ -67,20 +67,23 @@ plt.close()
 # ==========================================
 fs = 200
 block, cls, clip, ch = 0, 0, 0, 0
-win_len = 100
-step = 50  # overlap 50 samples
+win_len, step = 100, 50
 windows = win_100[block, cls, clip, :, ch, :]  # (7,100)
-colors = plt.cm.tab10(np.linspace(0, 1, windows.shape[0]))
 
-plt.figure(figsize=(8, 3))
-for i, w in enumerate(windows):
+# scale to enhance visibility
+std_scale = np.std(windows)
+windows_scaled = windows / std_scale  
+
+colors = plt.cm.tab10(np.linspace(0,1,windows.shape[0]))
+plt.figure(figsize=(8,3))
+for i, w in enumerate(windows_scaled):
     start = i * step / fs
-    t = np.arange(start, start + win_len / fs, 1 / fs)
+    t = np.arange(start, start + win_len / fs, 1/fs)
     plt.plot(t, w, color=colors[i], lw=0.9, label=f"Win {i+1}")
 
 plt.title("EEG Windows – 0.5 s (100 samples, 50 overlap)")
 plt.xlabel("Time (s)")
-plt.ylabel("Amplitude (µV)")
+plt.ylabel("Scaled Amplitude (a.u.)")
 plt.legend(fontsize=7, ncol=7)
 plt.grid(alpha=0.3)
 plt.tight_layout()
@@ -88,22 +91,25 @@ plt.savefig(os.path.join(save_path, "accurate_window_overlap_0.5s.png"), dpi=300
 plt.close()
 
 # ==========================================
-# 4. Accurate Window Visualization – 1 s (EEG_windows_200)
+# 4. Accurate Window Visualization – 1.0 s (EEG_windows_200)
 # ==========================================
-win_len = 200
-step = 100  # overlap 100 samples
+win_len, step = 200, 100
 windows = win_200[block, cls, clip, :, ch, :]  # (3,200)
-colors = plt.cm.tab10(np.linspace(0, 1, windows.shape[0]))
 
-plt.figure(figsize=(8, 3))
-for i, w in enumerate(windows):
+# scale for visibility
+std_scale = np.std(windows)
+windows_scaled = windows / std_scale
+
+colors = plt.cm.tab10(np.linspace(0,1,windows.shape[0]))
+plt.figure(figsize=(8,3))
+for i, w in enumerate(windows_scaled):
     start = i * step / fs
-    t = np.arange(start, start + win_len / fs, 1 / fs)
+    t = np.arange(start, start + win_len / fs, 1/fs)
     plt.plot(t, w, color=colors[i], lw=0.9, label=f"Win {i+1}")
 
 plt.title("EEG Windows – 1 s (200 samples, 100 overlap)")
 plt.xlabel("Time (s)")
-plt.ylabel("Amplitude (µV)")
+plt.ylabel("Scaled Amplitude (a.u.)")
 plt.legend(fontsize=8, ncol=3)
 plt.grid(alpha=0.3)
 plt.tight_layout()
