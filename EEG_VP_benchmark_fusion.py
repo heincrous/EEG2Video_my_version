@@ -418,8 +418,8 @@ def main(cfg):
     print(f"Mean Top-1: {mean_top1:.4f} ± {std_top1:.4f}")
     print(f"Mean Top-5: {mean_top5:.4f} ± {std_top5:.4f}")
 
-    # ==========================================
-    # Save configuration and results (Fusion)
+        # ==========================================
+    # Save configuration and results (Fusion – Auto encoder detection)
     # ==========================================
     base_dir = "/content/drive/MyDrive/EEG2Video_results/EEG_VP_benchmark"
     fusion_dir = os.path.join(base_dir, "fusion")
@@ -429,10 +429,11 @@ def main(cfg):
     glfnet_cfg = getattr(importlib.import_module("models.glfnet"), "CONFIG", {})
     glfnet_mlp_cfg = getattr(importlib.import_module("models.glfnet_mlp"), "CONFIG", {})
 
-    # Extract key values for naming
+    # Helper
     def get_cfg_val(cfg_dict, key, default="NA"):
         return cfg_dict.get(key, cfg_dict.get(key.lower(), default))
 
+    # Extract parameter sets
     lw_seg = "-".join(str(x) for x in glfnet_cfg.get("layer_widths", [])) if "layer_widths" in glfnet_cfg else str(glfnet_cfg.get("layer_width", "NA"))
     lw_de  = "-".join(str(x) for x in glfnet_mlp_cfg.get("layer_widths", [])) if "layer_widths" in glfnet_mlp_cfg else str(glfnet_mlp_cfg.get("layer_width", "NA"))
 
@@ -441,16 +442,29 @@ def main(cfg):
     act_seg     = get_cfg_val(glfnet_cfg, "activation")
     act_de      = get_cfg_val(glfnet_mlp_cfg, "activation")
 
-    # accept both "normalization" and "normalisation"
     norm_seg = glfnet_cfg.get("normalization", glfnet_cfg.get("normalisation", "NA"))
     norm_de  = glfnet_mlp_cfg.get("normalization", glfnet_mlp_cfg.get("normalisation", "NA"))
+
+    # ==========================================
+    # Dynamic encoder inclusion based on features used
+    # ==========================================
+    used_encoders = []
+    if any(ft in ["segment"] for ft in cfg["feature_types"]):
+        used_encoders.append("glfnet")
+    if any(ft in ["de", "psd"] for ft in cfg["feature_types"]):
+        used_encoders.append("glfnet_mlp")
+
+    encoder_name_part = []
+    if "glfnet" in used_encoders:
+        encoder_name_part.append(f"glf_lw{lw_seg}_do{dropout_seg}_act{act_seg}_norm{norm_seg}")
+    if "glfnet_mlp" in used_encoders:
+        encoder_name_part.append(f"mlp_lw{lw_de}_do{dropout_de}_act{act_de}_norm{norm_de}")
+    encoder_name_part = "_".join(encoder_name_part)
 
     # Build filename
     fusion_name = "_".join(cfg["feature_types"])
     filename = (
-        f"fusion_{fusion_name}_"
-        f"glf_lw{lw_seg}_do{dropout_seg}_act{act_seg}_norm{norm_seg}_"
-        f"mlp_lw{lw_de}_do{dropout_de}_act{act_de}_norm{norm_de}_"
+        f"fusion_{fusion_name}_{encoder_name_part}_"
         f"emb{cfg['emb_dim']}_lr{cfg['lr']}_bs{cfg['batch_size']}_ep{cfg['num_epochs']}.txt"
     )
 
@@ -470,13 +484,16 @@ def main(cfg):
         f.write(f"Epoch Count: {cfg['num_epochs']}\n\n")
 
         f.write("Encoder Configs:\n")
-        f.write("[GLFNet]\n")
-        for k, v in glfnet_cfg.items():
-            f.write(f"{k}: {v}\n")
-        f.write("\n[GLFNet_MLP]\n")
-        for k, v in glfnet_mlp_cfg.items():
-            f.write(f"{k}: {v}\n")
-        f.write("\n")
+        if "glfnet" in used_encoders:
+            f.write("[GLFNet]\n")
+            for k, v in glfnet_cfg.items():
+                f.write(f"{k}: {v}\n")
+            f.write("\n")
+        if "glfnet_mlp" in used_encoders:
+            f.write("[GLFNet_MLP]\n")
+            for k, v in glfnet_mlp_cfg.items():
+                f.write(f"{k}: {v}\n")
+            f.write("\n")
 
         f.write("Results:\n")
         f.write(f"Mean Top-1 Accuracy: {mean_top1:.4f} ± {std_top1:.4f}\n")
