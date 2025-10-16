@@ -25,7 +25,7 @@ from models.glfnet_mlp import glfnet_mlp
 # Experiment Toggle
 # ==========================================
 # Choose one: "optimizer", "scheduler", "learning_rate"
-EXPERIMENT_TYPE = "optimizer"
+EXPERIMENT_TYPE = "scheduler"
 
 
 # ==========================================
