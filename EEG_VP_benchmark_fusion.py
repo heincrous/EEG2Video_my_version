@@ -42,7 +42,7 @@ CONFIG = {
         "sub13.npy"
     ],
     # "subjects_to_train": "all",
-    "dry_run": True,
+    "dry_run": False,
 
     # --- Data parameters ---
     "num_classes": 40,
