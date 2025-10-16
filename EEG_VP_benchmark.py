@@ -33,8 +33,8 @@ from models.glfnet_mlp import glfnet_mlp
 # 1. Configuration Table
 # ==========================================
 CONFIG = {
-    "feature_type": "window",         # "window", "de", or "psd"
-    "encoder_name": "glfnet_mlp",      # used for training
+    "feature_type": "segment",         # "segment", "de", or "psd"
+    "encoder_name": "glfnet",      # used for training
     "subjects_to_train": [
         "sub1_session2.npy",
         "sub1.npy",
@@ -53,20 +53,20 @@ CONFIG = {
     # --- Data parameters ---
     "num_classes": 40,
     "channels": 62,
-    "time_len": 100,
+    "time_len": 400,
     "num_blocks": 7,
     "clips_per_class": 5,
 
     # --- Paths ---
     "data_root": "/content/drive/MyDrive/EEG2Video_data/processed/",
-    "window_dir": "EEG_windows_100/",
+    "segment_dir": "EEG_segments/",
     "de_dir": "EEG_DE_1per1s/",
     "psd_dir": "EEG_PSD_1per1s/",
 
     # --- Training parameters ---
-    "batch_size": 1024, # use 1024 for windows
-    "num_epochs": 200, # use 200 for windows
-    "lr": 0.01, # use 0.005 for windows
+    "batch_size": 512,
+    "num_epochs": 100,
+    "lr": 0.0005,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
 }
 
@@ -80,31 +80,34 @@ def create_labels(num_classes, clips_per_class, blocks=1):
 
 
 def load_feature_data(sub_file, cfg):
-    dir_map = {
-        "window": cfg["window_dir"],
-        "de": cfg["de_dir"],
-        "psd": cfg["psd_dir"],
-    }
-    path = os.path.join(cfg["data_root"], dir_map[cfg["feature_type"]], sub_file)
+    if cfg["feature_type"] == "segment":
+        path = os.path.join(cfg["data_root"], cfg["segment_dir"], sub_file)
+    elif cfg["feature_type"] == "de":
+        path = os.path.join(cfg["data_root"], cfg["de_dir"], sub_file)
+    elif cfg["feature_type"] == "psd":
+        path = os.path.join(cfg["data_root"], cfg["psd_dir"], sub_file)
+    else:
+        raise ValueError("Unsupported feature type")
+
     data = np.load(path)
     print(f"Loaded {sub_file} | shape {data.shape}")
     return data
 
 
 def preprocess_data(data, cfg):
-    """Split EEG data into train/val/test (blocks 1–5, 6, 7) using ONE global StandardScaler, preserving structure."""
-    if cfg["feature_type"] == "window":
-        data = data.mean(axis=3)  # (7, 40, 5, 62, 100)
+    """Split EEG segment data (7,40,5,62,400) into train/val/test using one global StandardScaler."""
+    if cfg["feature_type"] == "segment":
+        b, c, d, f, g = data.shape  # (7, 40, 5, 62, 400)
     else:
-        data = data.mean(axis=3)  # (7, 40, 5, 62, 5)
+        data = data.mean(axis=3)     # only for DE/PSD
+        b, c, d, f, g = data.shape   # (7, 40, 5, 62, 5)
 
     # reshape to (blocks, samples_per_block, channels, features)
-    b, c, d, f, g = data.shape  # (7, 40, 5, 62, 5)
-    data = data.reshape(b, c * d, f, g)  # (7, 200, 62, 5)
+    data = data.reshape(b, c * d, f, g)  # (7, 200, 62, 400) for segments
 
-    # fit one scaler on all blocks
+    # fit one scaler on all blocks (flatten across features)
     scaler = StandardScaler()
-    flat_all = data.reshape(-1, g)  # flatten feature dimension only
+    flat_all = data.reshape(-1, g)
     scaler.fit(flat_all)
     scaled = scaler.transform(flat_all).reshape(b, c * d, f, g)
 
@@ -117,7 +120,7 @@ def preprocess_data(data, cfg):
     val_labels   = create_labels(cfg["num_classes"], cfg["clips_per_class"])
     test_labels  = create_labels(cfg["num_classes"], cfg["clips_per_class"])
 
-    # reshape to (samples, channels, features)
+    # flatten blocks into single samples
     train_data = train_data.reshape(-1, f, g)
     val_data   = val_data.reshape(-1, f, g)
     test_data  = test_data.reshape(-1, f, g)
@@ -139,7 +142,7 @@ def select_model(cfg):
     en = cfg["encoder_name"]
 
     # enforce correct encoder usage by feature type
-    if ft == "window" and en in ["mlpnet", "glfnet_mlp"]:
+    if ft == "segment" and en in ["mlpnet", "glfnet_mlp"]:
         en = "glfnet"
     elif ft in ["de", "psd"] and en not in ["mlpnet", "glfnet_mlp"]:
         en = "glfnet_mlp"
@@ -198,18 +201,17 @@ def simulate_preprocessed_dummy(ft, cfg):
     T = cfg["time_len"]
     device = cfg["device"]
 
-    if ft == "window":
-        # Raw EEG window data: (7 blocks, 40 classes, 5 clips, 7 subjects, 62 ch, 100 time)
-        raw = torch.randn(7, 40, 5, 7, C, T)
-        avgd = raw.mean(axis=3)  # → (7, 40, 5, 62, 100)
+    if ft == "segment":
+        # Simulated EEG segment data: (7 blocks, 40 classes, 5 clips, 62 ch, 400 time)
+        raw = torch.randn(7, 40, 5, C, T)
 
-        # Merge block, class, and clip → (1400, 62, 100)
-        flat = rearrange(avgd, "b c d f g -> (b c d) f g")
+        # Merge block, class, and clip → (1400, 62, 400)
+        flat = rearrange(raw, "b c d f g -> (b c d) f g")
 
-        # Normalize
+        # Normalize globally
         flat = (flat - flat.mean()) / (flat.std() + 1e-6)
 
-        # Add channel dimension for CNN input → (1400, 1, 62, 100)
+        # Add channel dimension for CNN input → (1400, 1, 62, 400)
         flat = flat.unsqueeze(1)
 
         return flat.to(device)
@@ -235,7 +237,7 @@ def dry_run_all_models(cfg):
 
     # mapping which models to test per feature type
     model_groups = {
-        "window": ["shallownet", "deepnet", "eegnet", "tsconv", "conformer", "glfnet"],
+        "segment": ["shallownet", "deepnet", "eegnet", "tsconv", "conformer", "glfnet"],
         "de": ["mlpnet", "glfnet_mlp"],
         "psd": ["mlpnet", "glfnet_mlp"],
     }
@@ -299,8 +301,8 @@ def train_and_eval(model, train_iter, test_iter, cfg):
             X, y = X.to(device), y.to(device)
 
             # handle CNN vs MLP inputs
-            if cfg["feature_type"] == "window":
-                X = X.unsqueeze(1)  # (B,1,62,100) for CNN encoders
+            if cfg["feature_type"] == "segment":
+                X = X.unsqueeze(1)  # CNN input (B,1,62,400)
             elif cfg["feature_type"] in ["de", "psd"] and X.ndim == 3:
                 pass  # keep as (B,62,5) for MLPs
 
@@ -321,7 +323,7 @@ def train_and_eval(model, train_iter, test_iter, cfg):
     with torch.no_grad():
         for X, y in test_iter:
             X, y = X.to(device), y.to(device)
-            if cfg["feature_type"] == "window":
+            if cfg["feature_type"] == "segment":
                 X = X.unsqueeze(1)
             y_hat = model(X)
 
@@ -329,7 +331,7 @@ def train_and_eval(model, train_iter, test_iter, cfg):
             top1_all.append(top1)
             top5_all.append(top5)
 
-    print(f"Top-1 Acc: {np.mean(top1_all):.4f} | Top-5 Acc: {np.mean(top5_all):.4f}")
+    # print(f"Top-1 Acc: {np.mean(top1_all):.4f} | Top-5 Acc: {np.mean(top5_all):.4f}")
     return np.mean(top1_all), np.mean(top5_all)
 
 
@@ -341,12 +343,15 @@ def main(cfg):
         dry_run_all_models(cfg)
         return
 
-    dir_map = {
-        "window": cfg["window_dir"],
-        "de": cfg["de_dir"],
-        "psd": cfg["psd_dir"],
-    }
-    data_dir = os.path.join(cfg["data_root"], dir_map[cfg["feature_type"]])
+    if cfg["feature_type"] == "segment":
+        data_dir = os.path.join(cfg["data_root"], cfg["segment_dir"])
+    elif cfg["feature_type"] == "de":
+        data_dir = os.path.join(cfg["data_root"], cfg["de_dir"])
+    elif cfg["feature_type"] == "psd":
+        data_dir = os.path.join(cfg["data_root"], cfg["psd_dir"])
+    else:
+        raise ValueError("Unsupported feature type")
+
     subjects = os.listdir(data_dir)
     if cfg["subjects_to_train"] != "all":
         subjects = [s for s in subjects if s in cfg["subjects_to_train"]]
@@ -369,7 +374,7 @@ def main(cfg):
 
         # Train model once, monitor val loss
         top1_val, top5_val = train_and_eval(model, train_iter, val_iter, cfg)
-        print(f"Validation (Block 6): Top-1={top1_val:.4f}, Top-5={top5_val:.4f}")
+        # print(f"Validation (Block 6): Top-1={top1_val:.4f}, Top-5={top5_val:.4f}")
 
         # Evaluate *only*, no retraining on test
         model.eval()
@@ -377,7 +382,7 @@ def main(cfg):
         with torch.no_grad():
             for X, y in test_iter:
                 X, y = X.to(cfg["device"]), y.to(cfg["device"])
-                if cfg["feature_type"] == "window":
+                if cfg["feature_type"] == "segment":
                     X = X.unsqueeze(1)
                 y_hat = model(X)
 
