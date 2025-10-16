@@ -51,13 +51,13 @@ CONFIG = {
     "checkpoint_dir"    : "/content/drive/MyDrive/EEG2Video_checkpoints/dynamic_predictor/",
 
     # --- Model parameters ---
-    "emb_dim"           : 64,
+    "emb_dim"           : 128,
     "input_dim"         : 62 * 5,
 
     # --- Training parameters ---
     "batch_size"        : 128,
     "num_epochs"        : 100,
-    "lr"                : 0.005,
+    "lr"                : 0.0005,
     "optimizer"         : "adamw",          # ["adam", "adamw"]
     "weight_decay"      : 0.0,
     "scheduler"         : "constant",       # ["constant", "cosine"]
