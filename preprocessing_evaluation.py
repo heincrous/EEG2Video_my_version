@@ -77,7 +77,7 @@ for i, w in enumerate(windows):
     t = np.arange(start, start + win_len / fs, 1 / fs)
     plt.plot(t, w + i * 8e-5, color=colors[i], lw=0.9, label=f"Win {i+1}")
 
-plt.title("EEG Windows (100 samples, 50 overlap) — Overlap Highlighted by Vertical Offset")
+plt.title("EEG Windows (100 samples, 50 overlap)")
 plt.xlabel("Time (s)")
 plt.ylabel("Amplitude + offset (µV)")
 plt.legend(fontsize=7, ncol=7)
@@ -99,7 +99,7 @@ for i, w in enumerate(windows):
     t = np.arange(start, start + win_len / fs, 1 / fs)
     plt.plot(t, w + i * 8e-5, color=colors[i], lw=0.9, label=f"Win {i+1}")
 
-plt.title("EEG Windows (200 samples, 100 overlap) — Overlap Highlighted by Vertical Offset")
+plt.title("EEG Windows (200 samples, 100 overlap)")
 plt.xlabel("Time (s)")
 plt.ylabel("Amplitude + offset (µV)")
 plt.legend(fontsize=8, ncol=3)
