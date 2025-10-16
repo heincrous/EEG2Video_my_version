@@ -33,18 +33,19 @@ from models.glfnet_mlp import glfnet_mlp
 CONFIG = {
     "feature_type": "de",       # "window", "de", or "psd"
     "encoder_name": "glfnet",   # used for training
-    "subjects_to_train": [
-        "sub1.npy",
-        "sub18.npy",
-        "sub19.npy",
-        "sub16.npy",
-        "sub13.npy",
-        "sub20.npy",
-        "sub7.npy",
-        "sub11.npy",
-        "sub12.npy",
-        "sub15.npy"
-    ],
+    # "subjects_to_train": [
+    #     "sub1.npy",
+    #     "sub18.npy",
+    #     "sub19.npy",
+    #     "sub16.npy",
+    #     "sub13.npy",
+    #     "sub20.npy",
+    #     "sub7.npy",
+    #     "sub11.npy",
+    #     "sub12.npy",
+    #     "sub15.npy"
+    # ],
+    "subjects_to_train": "all",
     "dry_run": False,            # perform preprocessing + forward passes
 
     # --- Data parameters ---
