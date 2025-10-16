@@ -57,9 +57,9 @@ CONFIG = {
     # --- Training parameters ---
     "batch_size"        : 128,
     "num_epochs"        : 100,
-    "lr"                : 0.0005,
-    "optimizer"         : "adam",          # ["adam", "adamw"]
-    "weight_decay"      : 0.0,
+    "lr"                : 0.0001,
+    "optimizer"         : "adamw",          # ["adam", "adamw"]
+    "weight_decay"      : 0.25,
     "scheduler"         : "cosine",       # ["constant", "cosine"]
     "device"            : "cuda" if torch.cuda.is_available() else "cpu",
 }
