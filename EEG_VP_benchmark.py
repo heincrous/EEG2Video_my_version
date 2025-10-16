@@ -33,8 +33,8 @@ from models.glfnet_mlp import glfnet_mlp
 # 1. Configuration Table
 # ==========================================
 CONFIG = {
-    "feature_type": "de",         # "segment", "de", or "psd"
-    "encoder_name": "glfnet_mlp",
+    "feature_type": "segment",         # "segment", "de", or "psd"
+    "encoder_name": "tsconv",
     "subjects_to_train": [
         "sub1_session2.npy",
         "sub1.npy",
@@ -64,7 +64,7 @@ CONFIG = {
     "psd_dir": "EEG_PSD_1per1s/",
 
     # --- Training parameters ---
-    "batch_size": 256,
+    "batch_size": 512,
     "num_epochs": 100,
     "lr": 0.0005,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
