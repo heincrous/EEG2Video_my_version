@@ -4,6 +4,7 @@
 # For DE_1per1s (always 6D EEG: [7,40,5,2,62,100])
 # Always averages across trials (axis=3)
 # Uses only MSE loss and verified metric calculations
+# Scaler fit on ALL EEG before splitting
 # Supports both "architectural" and "optimisation" modes
 # ==========================================
 
@@ -24,10 +25,10 @@ from tqdm import tqdm
 EXPERIMENT_MODE = "architectural"  # or "optimisation"
 
 if EXPERIMENT_MODE == "architectural":
-    EXPERIMENT_TYPE = "activation"
+    EXPERIMENT_TYPE = "activation"  # or "dropout", "layer_width", etc.
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/architectural_fine-tuning"
 else:
-    EXPERIMENT_TYPE = "scheduler"
+    EXPERIMENT_TYPE = "scheduler"   # or "optimizer", "learning_rate", etc.
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/optimisation"
 
 
@@ -116,7 +117,7 @@ def load_de_data(cfg):
     if eeg.ndim != 6:
         raise ValueError(f"Expected 6D EEG array, got shape {eeg.shape}")
     print("Averaging across trials (axis=3).")
-    eeg = eeg.mean(axis=3)  # → shape [7, 40, 5, 62, 100]
+    eeg = eeg.mean(axis=3)  # -> [7, 40, 5, 62, 100]
 
     print(f"Loaded EEG {cfg['subject_name']} shape: {eeg.shape}")
     print(f"Loaded CLIP shape: {clip.shape}")
@@ -124,29 +125,34 @@ def load_de_data(cfg):
 
 
 # ==========================================
-# Data Preparation
+# Data Preparation (scaler fit on ALL EEG)
 # ==========================================
 def prepare_data(eeg, clip, cfg):
-    eeg = eeg[:, cfg["class_subset"]]      # select classes
-    clip = clip[:, cfg["class_subset"]]    # match classes
+    eeg = eeg[:, cfg["class_subset"]]
+    clip = clip[:, cfg["class_subset"]]
 
     train_eeg, val_eeg, test_eeg = eeg[:5], eeg[5:6], eeg[6:]
     train_clip, val_clip, test_clip = clip[:5], clip[5:6], clip[6:]
 
-    flatten_eeg = lambda x: rearrange(x, "b c s ch t -> (b c s) (ch t)")
-    flatten_clip = lambda x: rearrange(x, "b c s tok dim -> (b c s) (tok dim)")
+    def flatten_eeg(x): return rearrange(x, "b c s ch t -> (b c s) (ch t)")
+    def flatten_clip(x): return rearrange(x, "b c s tok dim -> (b c s) (tok dim)")
 
-    train_eeg, val_eeg, test_eeg = map(flatten_eeg, [train_eeg, val_eeg, test_eeg])
-    train_clip, val_clip, test_clip = map(flatten_clip, [train_clip, val_clip, test_clip])
+    train_eeg_flat = flatten_eeg(train_eeg)
+    val_eeg_flat = flatten_eeg(val_eeg)
+    test_eeg_flat = flatten_eeg(test_eeg)
+    train_clip_flat = flatten_clip(train_clip)
+    val_clip_flat = flatten_clip(val_clip)
+    test_clip_flat = flatten_clip(test_clip)
 
+    # === Scaler fit on all EEG before split (matches stable reference) ===
     scaler = StandardScaler()
     scaler.fit(eeg.reshape(-1, eeg.shape[-2] * eeg.shape[-1]))
-    train_eeg = scaler.transform(train_eeg)
-    val_eeg = scaler.transform(val_eeg)
-    test_eeg = scaler.transform(test_eeg)
+    train_eeg_flat = scaler.transform(train_eeg_flat)
+    val_eeg_flat = scaler.transform(val_eeg_flat)
+    test_eeg_flat = scaler.transform(test_eeg_flat)
 
-    print(f"[Scaler] mean={np.mean(train_eeg):.5f}, std={np.std(train_eeg):.5f}")
-    return train_eeg, val_eeg, test_eeg, train_clip, val_clip, test_clip
+    print(f"[Scaler] mean={np.mean(train_eeg_flat):.5f}, std={np.std(train_eeg_flat):.5f}")
+    return train_eeg_flat, val_eeg_flat, test_eeg_flat, train_clip_flat, val_clip_flat, test_clip_flat
 
 
 # ==========================================
@@ -162,14 +168,14 @@ def build_optimizer(model, cfg):
 
 def build_scheduler(optimizer, cfg):
     if cfg["scheduler"].lower() == "cosine":
-        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg["epochs"])
+        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg["epochs"] * 1)
     if cfg["scheduler"].lower() == "constant":
         return None
     raise ValueError("Unsupported scheduler type.")
 
 
 # ==========================================
-# Evaluation (verified metric logic)
+# Evaluation (copied exactly from stable reference)
 # ==========================================
 def evaluate_model(model, eeg_flat, clip_flat, cfg):
     device = cfg["device"]
@@ -180,35 +186,32 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
         preds_tensor = model(eeg_tensor)
         mse_loss = F.mse_loss(preds_tensor, gt_tensor).item()
         preds = preds_tensor.cpu().numpy()
-
     gt = clip_flat
-    preds_norm = preds / (np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8)
+
+    preds /= np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8
     gt_norm = gt / (np.linalg.norm(gt, axis=1, keepdims=True) + 1e-8)
 
     num_classes = len(cfg["class_subset"])
     samples_per_class = 5
     labels = np.repeat(np.arange(num_classes), samples_per_class)
 
-    avg_cosine = float(np.mean(np.sum(preds_norm * gt_norm, axis=1)))
-
-    # Compute class means
-    class_means = np.zeros((num_classes, preds_norm.shape[1]))
+    avg_cosine = np.mean(np.sum(preds * gt_norm, axis=1))
+    class_means = np.zeros((num_classes, preds.shape[1]))
     for c in range(num_classes):
         class_means[c] = gt_norm[labels == c].mean(axis=0)
         class_means[c] /= np.linalg.norm(class_means[c]) + 1e-8
 
-    sims = np.dot(preds_norm, class_means.T)
-    acc = float((np.argmax(sims, axis=1) == labels).mean())
+    sims = np.dot(preds, class_means.T)
+    acc = (np.argmax(sims, axis=1) == labels).mean()
 
-    within = [np.dot(preds_norm[i], class_means[labels[i]]) for i in range(len(preds_norm))]
-    between = [np.mean(np.dot(class_means[np.arange(num_classes) != labels[i]], preds_norm[i])) for i in range(len(preds_norm))]
-    avg_within, avg_between = float(np.mean(within)), float(np.mean(between))
+    within = [np.dot(preds[i], class_means[labels[i]]) for i in range(len(preds))]
+    between = [np.mean(np.dot(class_means[np.arange(num_classes) != labels[i]], preds[i])) for i in range(len(preds))]
+    avg_within, avg_between = np.mean(within), np.mean(between)
 
-    # Fisher score = between-class variance / within-class variance
-    global_mean = np.mean(class_means, axis=0)
-    sb = np.sum((class_means - global_mean) ** 2)
-    sw = np.sum([(preds_norm[labels == c] - class_means[c]) ** 2 for c in range(num_classes)])
-    fisher_score = float(sb / (sw + 1e-8))
+    global_mean = class_means.mean(axis=0)
+    num = np.sum([np.sum((m - global_mean) ** 2) for m in class_means])
+    den = np.sum([np.sum((preds[labels == c] - class_means[c]) ** 2) for c in range(num_classes)])
+    fisher_score = num / (den + 1e-8)
 
     print(
         f"  MSE Loss: {mse_loss:.6f}\n"
