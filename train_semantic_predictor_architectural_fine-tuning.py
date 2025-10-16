@@ -191,48 +191,68 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
     samples_per_class = 5
     labels = np.repeat(np.arange(num_classes), samples_per_class)
 
-    # Normalize
+    # === Normalize embeddings ===
     preds_norm = preds / (np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8)
     gt_norm = clip_flat / (np.linalg.norm(clip_flat, axis=1, keepdims=True) + 1e-8)
 
-    # === Compute true and predicted class means ===
-    gt_means = np.zeros((num_classes, gt_norm.shape[1]))
-    pred_means = np.zeros((num_classes, preds_norm.shape[1]))
-    for c in range(num_classes):
-        gt_means[c] = gt_norm[labels == c].mean(axis=0)
-        gt_means[c] /= np.linalg.norm(gt_means[c]) + 1e-8
-        pred_means[c] = preds_norm[labels == c].mean(axis=0)
-        pred_means[c] /= np.linalg.norm(pred_means[c]) + 1e-8
-
-    # === Accuracy: predicted class mean vs. true CLIP class mean ===
-    sims = np.dot(pred_means, gt_means.T)
-    acc = (np.argmax(sims, axis=1) == np.arange(num_classes)).mean()
-
-    # === Within / Between based on true semantic CLIP means ===
-    within = [np.dot(preds_norm[i], gt_means[labels[i]]) for i in range(len(preds_norm))]
-    between = [
-        np.mean(np.dot(gt_means[np.arange(num_classes) != labels[i]], preds_norm[i]))
-        for i in range(len(preds_norm))
-    ]
-    avg_within, avg_between = np.mean(within), np.mean(between)
-
-    # === Fisher Score (semantic version) ===
-    global_mean = gt_means.mean(axis=0)
-    sb = np.sum((pred_means - global_mean) ** 2)  # between-class variance (pred means vs global)
-    sw = np.sum([(preds_norm[labels == c] - pred_means[c]) ** 2 for c in range(num_classes)])
-    fisher_score = sb / (sw + 1e-8)
-
-    # === Avg cosine(pred, gt) ===
+    # === 1. Average cosine similarity (pred vs ground truth) ===
     avg_cosine = np.mean(np.sum(preds_norm * gt_norm, axis=1))
 
+    # === 2. Compute per-class true CLIP means (for semantic accuracy) ===
+    class_means_gt = np.zeros((num_classes, gt_norm.shape[1]))
+    for c in range(num_classes):
+        class_means_gt[c] = gt_norm[labels == c].mean(axis=0)
+        class_means_gt[c] /= np.linalg.norm(class_means_gt[c]) + 1e-8
+
+    # === 3. Compute per-class predicted means ===
+    class_means_pred = np.zeros((num_classes, preds_norm.shape[1]))
+    for c in range(num_classes):
+        class_means_pred[c] = preds_norm[labels == c].mean(axis=0)
+        class_means_pred[c] /= np.linalg.norm(class_means_pred[c]) + 1e-8
+
+    # === 4. Semantic accuracy (predicted mean vs. true CLIP mean) ===
+    sims = np.dot(class_means_pred, class_means_gt.T)
+    acc = (np.argmax(sims, axis=1) == np.arange(num_classes)).mean()
+
+    # === 5. Within-class cosine (prediction consistency) ===
+    # Average pairwise cosine between all predicted samples in same class
+    within_class_scores = []
+    for c in range(num_classes):
+        class_preds = preds_norm[labels == c]
+        if class_preds.shape[0] > 1:
+            cos_sim_matrix = np.dot(class_preds, class_preds.T)
+            # exclude self-similarity (diagonal)
+            n = len(class_preds)
+            mean_cos = (np.sum(cos_sim_matrix) - np.trace(cos_sim_matrix)) / (n * (n - 1))
+            within_class_scores.append(mean_cos)
+    avg_within = np.mean(within_class_scores)
+
+    # === 6. Between-class cosine (mean predictions across classes) ===
+    between_scores = []
+    for c in range(num_classes):
+        others = np.delete(np.arange(num_classes), c)
+        mean_cos = np.mean(np.dot(class_means_pred[c], class_means_pred[others].T))
+        between_scores.append(mean_cos)
+    avg_between = np.mean(between_scores)
+
+    # === 7. Fisher-style separability on predicted embeddings ===
+    global_mean = np.mean(class_means_pred, axis=0)
+    sb = np.sum([np.sum((class_means_pred[c] - global_mean) ** 2) for c in range(num_classes)])
+    sw = np.sum([
+        np.sum((preds_norm[labels == c] - class_means_pred[c]) ** 2)
+        for c in range(num_classes)
+    ])
+    fisher_score = sb / (sw + 1e-8)
+
+    # === Print ===
     print(
         f"  MSE Loss: {mse_loss:.6f}\n"
-        f"  Avg cosine(pred,gt): {avg_cosine:.4f}\n"
-        f"  Within-class cosine (vs true mean): {avg_within:.4f}\n"
-        f"  Between-class cosine (vs other means): {avg_between:.4f}\n"
-        f"  Fisher Score (semantic): {fisher_score:.4f}\n"
+        f"  Avg cosine(pred, gt): {avg_cosine:.4f}\n"
+        f"  Within-class cosine (pred vs pred): {avg_within:.4f}\n"
+        f"  Between-class cosine (mean pred vs other mean preds): {avg_between:.4f}\n"
+        f"  Fisher Score (pred-space): {fisher_score:.4f}\n"
         f"  Δ (Within−Between): {avg_within - avg_between:.4f}\n"
-        f"  Classification Accuracy (semantic): {acc*100:.2f}%"
+        f"  Classification Accuracy (semantic): {acc * 100:.2f}%"
     )
 
     return mse_loss, avg_cosine, avg_within, avg_between, fisher_score, acc

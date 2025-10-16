@@ -1,13 +1,13 @@
 # ==========================================
-# EEG → CLIP Semantic Predictor (DE-Only, MSE Loss)
+# EEG → CLIP Semantic Predictor
+#
+# Data shape reference:
+# segments:        (7, 40, 5, 62, 400)
+# 1 per 1 s:       (7, 40, 5, 2, 62, 5)
+# 1 per 2 s:       (7, 40, 5, 62, 5)
+# windows_100:     (7, 40, 5, 7, 62, 100)
+# windows_200:     (7, 40, 5, 3, 62, 200)
 # ==========================================
-# Trains on DE features for one subject.
-# Uses ONLY MSE loss.
-# Allows dynamic tuning of dropout, layer width,
-# activation, and normalization (with defaults).
-# Splits: train(1–5), val(6), test(7)
-# ==========================================
-
 import os
 import torch
 import numpy as np
@@ -20,67 +20,45 @@ from tqdm import tqdm
 
 
 # ==========================================
-# Config block (tunable but defaults unchanged)
+# Config
 # ==========================================
-CONFIG = {
-    # model structure
-    "dropout": 0.0,                  # dropout probability (default: 0.0)
-    "layer_widths": [10000, 10000, 10000, 10000],  # hidden layer sizes
-    "activation": "ReLU",            # "ReLU", "ELU", "GELU", "SiLU", etc.
-    "normalization": "None",         # "BatchNorm", "LayerNorm", "GroupNorm", "None"
+FEATURE_TYPE   = "EEG_DE_1per2s"  # single feature if fusion is empty
+FEATURE_FUSION = []  # e.g. ["EEG_DE_1per2s", "EEG_PSD_1per2s", "EEG_windows_100"]
+SUBJECT_NAME  = "sub1.npy"
+CLASS_SUBSET  = [0, 11, 24, 30, 33] # [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
+SUBSET_ID     = "1"
 
-    # training / data
-    "feature_type": "EEG_DE_1per2s",
-    "subject_name": "sub1.npy",
-    "class_subset": [0, 11, 24, 30, 33],
-    "subset_id": "1",
-    "epochs": 200,
-    "batch_size": 128,
-    "lr": 0.0005,
-    "device": "cuda:0" if torch.cuda.is_available() else "cpu",
+EPOCHS        = 200
+BATCH_SIZE    = 32
+LR            = 1e-4
+DEVICE        = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-    # paths
-    "eeg_root": "/content/drive/MyDrive/EEG2Video_data/processed",
-    "clip_path": "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy",
-    "ckpt_save": "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints",
-    "emb_save": "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings",
-}
+EEG_PATH_ROOT   = "/content/drive/MyDrive/EEG2Video_data/processed"
+CLIP_PATH        = os.path.join(EEG_PATH_ROOT, "CLIP_embeddings", "CLIP_embeddings.npy")
+CKPT_SAVE_PATH  = "/content/drive/MyDrive/EEG2Video_checkpoints/semantic_checkpoints"
+EMB_SAVE_PATH   = "/content/drive/MyDrive/EEG2Video_outputs/semantic_embeddings"
+
+os.makedirs(CKPT_SAVE_PATH, exist_ok=True)
+os.makedirs(EMB_SAVE_PATH, exist_ok=True)
 
 
 # ==========================================
 # Model
 # ==========================================
 class CLIPSemanticMLP(nn.Module):
-    def __init__(self, input_dim, cfg=CONFIG):
+    def __init__(self, input_dim):
         super().__init__()
-        w = cfg["layer_widths"]
-        p = cfg["dropout"]
-
-        # choose activation
-        act_fn = getattr(nn, cfg["activation"])() if hasattr(nn, cfg["activation"]) else nn.ReLU()
-
-        # choose normalization function
-        def norm_layer(size):
-            if cfg["normalization"] == "BatchNorm":
-                return nn.BatchNorm1d(size)
-            elif cfg["normalization"] == "LayerNorm":
-                return nn.LayerNorm(size)
-            elif cfg["normalization"] == "GroupNorm":
-                return nn.GroupNorm(4, size)
-            else:
-                return nn.Identity()
-
-        layers = []
-        in_dim = input_dim
-        for width in w:
-            layers.append(nn.Linear(in_dim, width))
-            layers.append(norm_layer(width))
-            layers.append(act_fn)
-            if p > 0:
-                layers.append(nn.Dropout(p))
-            in_dim = width
-        layers.append(nn.Linear(in_dim, 77 * 768))  # output layer
-        self.mlp = nn.Sequential(*layers)
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, 77 * 768)
+        )
 
     def forward(self, eeg):
         return self.mlp(eeg)
@@ -88,7 +66,7 @@ class CLIPSemanticMLP(nn.Module):
 
 class EEGTextDataset:
     def __init__(self, eeg, text):
-        self.eeg = eeg
+        self.eeg  = eeg
         self.text = text
 
     def __len__(self):
@@ -99,124 +77,196 @@ class EEGTextDataset:
 
 
 # ==========================================
-# Cleanup Utility
+# Clean-up Utility
 # ==========================================
-def cleanup_previous_run(cfg):
-    tag = cfg["feature_type"]
-    subj = cfg["subject_name"].replace(".npy", "")
-    subset = cfg["subset_id"]
-
-    prefix_ckpt = f"semantic_predictor_{tag}_{subj}_subset{subset}"
-    prefix_emb = f"pred_embeddings_{tag}_{subj}_subset{subset}"
+def cleanup_previous_run():
+    tag = "_".join(FEATURE_FUSION) if FEATURE_FUSION else FEATURE_TYPE
+    prefix_ckpt = f"semantic_predictor_{tag}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}"
+    prefix_emb  = f"pred_embeddings_{tag}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}"
 
     deleted = 0
-    for root, _, files in os.walk(cfg["ckpt_save"]):
+    for root, _, files in os.walk(CKPT_SAVE_PATH):
         for f in files:
             if f.startswith(prefix_ckpt):
                 os.remove(os.path.join(root, f))
                 deleted += 1
-    for root, _, files in os.walk(cfg["emb_save"]):
+    for root, _, files in os.walk(EMB_SAVE_PATH):
         for f in files:
             if f.startswith(prefix_emb):
                 os.remove(os.path.join(root, f))
                 deleted += 1
-    print(f"🧹 Deleted {deleted} old file(s) for subset {subset} ({tag}).")
+    print(f"🧹 Deleted {deleted} old file(s) for subset {SUBSET_ID} ({tag}).")
 
 
 # ==========================================
-# Data Loading (DE-only, handles both 5D and 6D)
+# Data Loading Utility
 # ==========================================
-def load_de_data(cfg):
-    eeg_path = os.path.join(cfg["eeg_root"], cfg["feature_type"], cfg["subject_name"])
-    clip_path = cfg["clip_path"]
+def load_data():
+    # ----- Single feature -----
+    if not FEATURE_FUSION:
+        print(f"Loading EEG features from: {FEATURE_TYPE}/{SUBJECT_NAME}")
+        eeg_path = os.path.join(EEG_PATH_ROOT, FEATURE_TYPE, SUBJECT_NAME)
+        eeg_data = np.load(eeg_path, allow_pickle=True)
+        clip_data = np.load(CLIP_PATH, allow_pickle=True)
 
-    eeg = np.load(eeg_path, allow_pickle=True)
-    clip = np.load(clip_path, allow_pickle=True)
+        if eeg_data.ndim == 6 and eeg_data.shape[3] in [2, 3, 7]:
+            eeg_data = eeg_data.mean(axis=3)
+        elif eeg_data.ndim != 5:
+            raise ValueError(f"Unexpected EEG shape: {eeg_data.shape}")
 
-    if eeg.ndim == 6 and eeg.shape[3] == 2:
-        print("Detected 6D DE file — averaging trials.")
-        eeg = eeg.mean(axis=3)
-    elif eeg.ndim == 5:
-        print("Detected 5D DE file — already averaged.")
+        print(f"Loaded EEG shape: {eeg_data.shape}")
+        print(f"CLIP shape: {clip_data.shape}")
+        return eeg_data, clip_data
+
+    # ----- Multi-feature fusion -----
+    eeg_list = []
+    print(f"Loading EEG features for fusion: {FEATURE_FUSION}")
+    for ftype in FEATURE_FUSION:
+        path = os.path.join(EEG_PATH_ROOT, ftype, SUBJECT_NAME)
+        eeg = np.load(path, allow_pickle=True)
+
+        if eeg.ndim == 6 and eeg.shape[3] in [2, 3, 7]:
+            eeg = eeg.mean(axis=3)
+        elif eeg.ndim == 7:
+            eeg = eeg.mean(axis=3)
+        elif eeg.ndim != 5:
+            raise ValueError(f"Unexpected EEG shape for {ftype}: {eeg.shape}")
+
+        eeg_list.append(eeg)
+        print(f"  {ftype}: shape {eeg.shape}")
+
+    # Align temporal dimension (pad to longest)
+    max_t = max(eeg.shape[-1] for eeg in eeg_list)
+    padded_list = []
+    for eeg in eeg_list:
+        t = eeg.shape[-1]
+        if t < max_t:
+            pad_width = [(0,0)] * eeg.ndim
+            pad_width[-1] = (0, max_t - t)
+            eeg = np.pad(eeg, pad_width, mode='constant')
+        padded_list.append(eeg)
+    eeg_list = padded_list
+    print(f"Padded feature lengths: {[e.shape[-1] for e in eeg_list]}")
+
+    # Concatenate along last axis
+    eeg_data = np.concatenate(eeg_list, axis=-1)
+    clip_data = np.load(CLIP_PATH, allow_pickle=True)
+
+    print(f"Fused EEG shape: {eeg_data.shape}")
+    print(f"CLIP shape: {clip_data.shape}")
+    return eeg_data, clip_data
+
+
+# ==========================================
+# Data Shaping Utility
+# ==========================================
+def prepare_data(eeg_data, clip_data):
+    # Split 6 train, 1 test blocks
+    train_eeg, test_eeg = eeg_data[:6], eeg_data[6:]
+    train_clip, test_clip = clip_data[:6], clip_data[6:]
+
+    # Apply subset BEFORE scaling
+    train_eeg  = train_eeg[:, CLASS_SUBSET]
+    test_eeg   = test_eeg[:, CLASS_SUBSET]
+    train_clip = train_clip[:, CLASS_SUBSET]
+    test_clip  = test_clip[:, CLASS_SUBSET]
+
+    # train_clip = np.repeat(train_clip[:, :, :1, :, :], 5, axis=2)
+    # test_clip  = np.repeat(test_clip[:, :, :1, :, :], 5, axis=2)
+    # print("Applied authors' scheme: repeated first clip embedding 5× per class.")
+
+    # Flatten EEG & CLIP
+    train_eeg_flat  = rearrange(train_eeg,  "b c s ch t -> (b c s) (ch t)")
+    test_eeg_flat   = rearrange(test_eeg,   "b c s ch t -> (b c s) (ch t)")
+    train_clip_flat = rearrange(train_clip, "b c s tok dim -> (b c s) (tok dim)")
+    test_clip_flat  = rearrange(test_clip,  "b c s tok dim -> (b c s) (tok dim)")
+
+    # Scaling
+    if not FEATURE_FUSION:
+        print("Scaling EEG features (single-feature mode)...")
+        scaler = StandardScaler()
+        scaler.fit(train_eeg_flat)
+        train_eeg_flat = scaler.transform(train_eeg_flat)
+        test_eeg_flat  = scaler.transform(test_eeg_flat)
+
     else:
-        raise ValueError(f"Unexpected EEG shape: {eeg.shape}")
+        print("Scaling fused features separately using training EEG only...")
+        n_feats = len(FEATURE_FUSION)
+        total_len = train_eeg_flat.shape[1]
+        chunk_size = total_len // n_feats
 
-    print(f"Loaded EEG {cfg['subject_name']} shape: {eeg.shape}")
-    print(f"Loaded CLIP shape: {clip.shape}")
-    return eeg, clip
+        scaled_train_parts, scaled_test_parts = [], []
+        for i in range(n_feats):
+            start = i * chunk_size
+            end = (i + 1) * chunk_size if i < n_feats - 1 else total_len
+            scaler = StandardScaler()
+            scaler.fit(train_eeg_flat[:, start:end])  # fit only on training EEG
+            scaled_train_parts.append(scaler.transform(train_eeg_flat[:, start:end]))
+            scaled_test_parts.append(scaler.transform(test_eeg_flat[:, start:end]))
 
+        train_eeg_flat = np.concatenate(scaled_train_parts, axis=1)
+        test_eeg_flat  = np.concatenate(scaled_test_parts, axis=1)
 
-# ==========================================
-# Data Preparation (train/val/test split + global scaling)
-# ==========================================
-def prepare_data(eeg, clip, cfg):
-    eeg = eeg[:, cfg["class_subset"]]
-    clip = clip[:, cfg["class_subset"]]
+    # ===== Scaling sanity checks =====
+    print(f"[EEG scaler] train mean={np.mean(train_eeg_flat):.5f}, std={np.std(train_eeg_flat):.5f}")
+    print(f"[EEG scaler] test  mean={np.mean(test_eeg_flat):.5f}, std={np.std(test_eeg_flat):.5f}")
+    print(f"[CLIP check]  train mean={np.mean(train_clip_flat):.5f}, std={np.std(train_clip_flat):.5f}")
 
-    train_eeg, val_eeg, test_eeg = eeg[:5], eeg[5:6], eeg[6:]
-    train_clip, val_clip, test_clip = clip[:5], clip[5:6], clip[6:]
-
-    def flatten_eeg(x): return rearrange(x, "b c s ch t -> (b c s) (ch t)")
-    def flatten_clip(x): return rearrange(x, "b c s tok dim -> (b c s) (tok dim)")
-
-    train_eeg_flat = flatten_eeg(train_eeg)
-    val_eeg_flat = flatten_eeg(val_eeg)
-    test_eeg_flat = flatten_eeg(test_eeg)
-    train_clip_flat = flatten_clip(train_clip)
-    val_clip_flat = flatten_clip(val_clip)
-    test_clip_flat = flatten_clip(test_clip)
-
-    scaler = StandardScaler()
-    scaler.fit(eeg.reshape(-1, eeg.shape[-2] * eeg.shape[-1]))
-    train_eeg_flat = scaler.transform(train_eeg_flat)
-    val_eeg_flat = scaler.transform(val_eeg_flat)
-    test_eeg_flat = scaler.transform(test_eeg_flat)
-
-    print(f"[Scaler] mean={np.mean(train_eeg_flat):.5f}, std={np.std(train_eeg_flat):.5f}")
-    return train_eeg_flat, val_eeg_flat, test_eeg_flat, train_clip_flat, val_clip_flat, test_clip_flat
+    return train_eeg_flat, test_eeg_flat, train_clip_flat, test_clip_flat
 
 
 # ==========================================
 # Evaluation Utility
 # ==========================================
-def evaluate_model(model, eeg_flat, clip_flat, cfg):
-    device = cfg["device"]
+def evaluate_model(model, test_eeg_flat, test_clip_flat):
     model.eval()
     with torch.no_grad():
-        eeg_tensor = torch.tensor(eeg_flat, dtype=torch.float32, device=device)
-        gt_tensor = torch.tensor(clip_flat, dtype=torch.float32, device=device)
-        preds_tensor = model(eeg_tensor)
-        mse_loss = F.mse_loss(preds_tensor, gt_tensor).item()
-        preds = preds_tensor.cpu().numpy()
-    gt = clip_flat
+        test_preds = model(torch.tensor(test_eeg_flat, dtype=torch.float32, device=DEVICE)).cpu().numpy()
+        gt = test_clip_flat
 
-    preds /= np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8
+    # === Normalize for cosine computations ===
+    preds = test_preds / (np.linalg.norm(test_preds, axis=1, keepdims=True) + 1e-8)
     gt_norm = gt / (np.linalg.norm(gt, axis=1, keepdims=True) + 1e-8)
 
-    num_classes = len(cfg["class_subset"])
+    num_classes = len(CLASS_SUBSET)
     samples_per_class = 5
     labels = np.repeat(np.arange(num_classes), samples_per_class)
 
+    # === 1. Average cosine similarity (pred vs ground truth) ===
     avg_cosine = np.mean(np.sum(preds * gt_norm, axis=1))
+
+    # === 2. Compute per-class means from GT embeddings ===
     class_means = np.zeros((num_classes, preds.shape[1]))
     for c in range(num_classes):
         class_means[c] = gt_norm[labels == c].mean(axis=0)
         class_means[c] /= np.linalg.norm(class_means[c]) + 1e-8
 
-    sims = np.dot(preds, class_means.T)
-    acc = (np.argmax(sims, axis=1) == labels).mean()
+    # === 3. Compute class assignments for each predicted embedding ===
+    sims = np.dot(preds, class_means.T)        # (N × num_classes)
+    pred_classes = np.argmax(sims, axis=1)     # highest-similarity class
+    correct = (pred_classes == labels).sum()
+    acc = correct / len(labels)
 
-    within = [np.dot(preds[i], class_means[labels[i]]) for i in range(len(preds))]
-    between = [np.mean(np.dot(class_means[np.arange(num_classes) != labels[i]], preds[i])) for i in range(len(preds))]
-    avg_within, avg_between = np.mean(within), np.mean(between)
+    # === 4. Within / Between class similarity ===
+    within_scores = [np.dot(preds[i], class_means[labels[i]]) for i in range(len(preds))]
+    between_scores = [
+        np.mean(np.dot(class_means[np.arange(num_classes) != labels[i]], preds[i]))
+        for i in range(len(preds))
+    ]
 
+    avg_within = np.mean(within_scores)
+    avg_between = np.mean(between_scores)
+
+    # === 5. Fisher-style separability ===
     global_mean = class_means.mean(axis=0)
-    num = np.sum([np.sum((m - global_mean) ** 2) for m in class_means])
-    den = np.sum([np.sum((preds[labels == c] - class_means[c]) ** 2) for c in range(num_classes)])
-    fisher_score = num / (den + 1e-8)
+    numerator = np.sum([np.sum((m - global_mean) ** 2) for m in class_means])
+    denominator = np.sum([
+        np.sum((preds[labels == c] - class_means[c]) ** 2)
+        for c in range(num_classes)
+    ])
+    fisher_score = numerator / (denominator + 1e-8)
 
     print(
-        f"  MSE Loss: {mse_loss:.6f}\n"
         f"  Avg cosine(pred,gt): {avg_cosine:.4f}\n"
         f"  Within-class cosine: {avg_within:.4f}\n"
         f"  Between-class cosine: {avg_between:.4f}\n"
@@ -229,67 +279,104 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
 # ==========================================
 # Training Utility
 # ==========================================
-def train_model(model, train_loader, val_eeg, val_clip, cfg):
-    device = cfg["device"]
-    optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg["epochs"] * len(train_loader))
-
-    for epoch in tqdm(range(1, cfg["epochs"] + 1)):
+def train_model(model, dataloader, optimizer, scheduler, test_eeg_flat, test_clip_flat):
+    tag = "_".join(FEATURE_FUSION) if FEATURE_FUSION else FEATURE_TYPE
+    print(f"Starting training for {tag} on subset {SUBSET_ID}...")
+    for epoch in tqdm(range(1, EPOCHS + 1)):
         model.train()
         epoch_loss = 0
-        for eeg, clip in train_loader:
-            eeg, clip = eeg.float().to(device), clip.float().to(device)
+        for eeg, clip in dataloader:
+            eeg, clip = eeg.float().to(DEVICE), clip.float().to(DEVICE)
             optimizer.zero_grad()
-            loss = F.mse_loss(model(eeg), clip)
+            pred = model(eeg)
+            
+            # ==========================================
+            # Weighted composite loss (toggleable)
+            # ==========================================
+            # Toggle between raw-space and normalized-space MSE
+            USE_NORMALIZED = True  # False = pure unnormalized MSE, True = combine with cosine
+
+            # Adjustable coefficients
+            L_MSE    = 0   # weight for MSE loss
+            L_COSINE = 1.0   # weight for cosine alignment
+            L_MAG    = 0   # weight for magnitude consistency
+
+            # === Choose MSE mode ===
+            if USE_NORMALIZED:
+                # When mixing with cosine, keep MSE on normalized vectors for consistency
+                pred_for_mse = F.normalize(pred, p=2, dim=1)
+                clip_for_mse = F.normalize(clip, p=2, dim=1)
+            else:
+                # Pure MSE mode (raw, unnormalized space)
+                pred_for_mse = pred
+                clip_for_mse = clip
+
+            # (1) MSE loss
+            mse_loss = F.mse_loss(pred_for_mse, clip_for_mse) if L_MSE > 0 else torch.tensor(0.0, device=DEVICE)
+
+            # (2) Cosine loss (always on normalized embeddings)
+            pred_norm = F.normalize(pred, p=2, dim=1)
+            clip_norm = F.normalize(clip, p=2, dim=1)
+            cosine_loss = (1 - torch.mean(torch.sum(pred_norm * clip_norm, dim=1))) if L_COSINE > 0 else torch.tensor(0.0, device=DEVICE)
+
+            # (3) Magnitude (norm) loss (always unnormalized)
+            pred_mag = torch.norm(pred, dim=1)
+            clip_mag = torch.norm(clip, dim=1)
+            mag_loss = F.mse_loss(pred_mag, clip_mag) if L_MAG > 0 else torch.tensor(0.0, device=DEVICE)
+
+            # === Combined total loss ===
+            loss = (L_MSE * mse_loss) + (L_COSINE * cosine_loss) + (L_MAG * mag_loss)
+
             loss.backward()
             optimizer.step()
             scheduler.step()
             epoch_loss += loss.item()
 
         if epoch % 10 == 0:
-            avg_loss = epoch_loss / len(train_loader)
-            print(f"\n[Epoch {epoch:03d}/{cfg['epochs']}] Avg Loss: {avg_loss:.6f}")
-            evaluate_model(model, val_eeg, val_clip, cfg)
+            avg_loss = epoch_loss / len(dataloader)
+            print("\n" + "="*65)
+            print(f"[Epoch {epoch:03d}/{EPOCHS}]  Avg Loss: {avg_loss:.6f}")
+            print("-"*65)
+            evaluate_model(model, test_eeg_flat, test_clip_flat)
+            print("="*65 + "\n")
 
 
 # ==========================================
-# Save Utility
+# Saving Utility
 # ==========================================
-def save_outputs(model, test_eeg, cfg):
+def save_outputs(model, test_eeg_flat):
     with torch.no_grad():
-        preds = model(torch.tensor(test_eeg, dtype=torch.float32, device=cfg["device"])).cpu().numpy()
-    preds = preds.reshape(-1, 77, 768)
+        preds = model(torch.tensor(test_eeg_flat, dtype=torch.float32, device=DEVICE)).cpu().numpy()
+    preds = preds.reshape(-1, 77, 768)  # store true token×embedding structure
 
-    tag = cfg["feature_type"]
-    subj = cfg["subject_name"].replace(".npy", "")
-    subset = cfg["subset_id"]
+    tag = "_".join(FEATURE_FUSION) if FEATURE_FUSION else FEATURE_TYPE
+    ckpt_name = f"semantic_predictor_{tag}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.pt"
+    emb_name  = f"pred_embeddings_{tag}_{SUBJECT_NAME.replace('.npy','')}_subset{SUBSET_ID}.npy"
 
-    ckpt_name = f"semantic_predictor_{tag}_{subj}_subset{subset}.pt"
-    emb_name = f"pred_embeddings_{tag}_{subj}_subset{subset}.npy"
+    torch.save({'state_dict': model.state_dict()}, os.path.join(CKPT_SAVE_PATH, ckpt_name))
+    np.save(os.path.join(EMB_SAVE_PATH, emb_name), preds)
 
-    torch.save({'state_dict': model.state_dict()}, os.path.join(cfg["ckpt_save"], ckpt_name))
-    np.save(os.path.join(cfg["emb_save"], emb_name), preds)
-    print(f"Saved → {ckpt_name}\nSaved → {emb_name} (shape: {preds.shape})")
+    print(f"Saved → {ckpt_name}")
+    print(f"Saved → {emb_name} (shape: {preds.shape})")
 
 
 # ==========================================
 # Main
 # ==========================================
 if __name__ == "__main__":
-    cfg = CONFIG
-    os.makedirs(cfg["ckpt_save"], exist_ok=True)
-    os.makedirs(cfg["emb_save"], exist_ok=True)
+    cleanup_previous_run()
+    eeg_data, clip_data = load_data()
+    train_eeg_flat, test_eeg_flat, train_clip_flat, test_clip_flat = prepare_data(eeg_data, clip_data)
 
-    cleanup_previous_run(cfg)
-    eeg, clip = load_de_data(cfg)
-    train_eeg, val_eeg, test_eeg, train_clip, val_clip, test_clip = prepare_data(eeg, clip, cfg)
+    input_dim = train_eeg_flat.shape[1]
+    dataset = EEGTextDataset(train_eeg_flat, train_clip_flat)
+    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
 
-    dataset = EEGTextDataset(train_eeg, train_clip)
-    loader = DataLoader(dataset, batch_size=cfg["batch_size"], shuffle=True)
+    model = CLIPSemanticMLP(input_dim=input_dim).to(DEVICE)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=EPOCHS * len(dataloader)
+    )
 
-    model = CLIPSemanticMLP(input_dim=train_eeg.shape[1], cfg=cfg).to(cfg["device"])
-    train_model(model, loader, val_eeg, val_clip, cfg)
-
-    print("\nFinal Test Metrics:")
-    evaluate_model(model, test_eeg, test_clip, cfg)
-    save_outputs(model, test_eeg, cfg)
+    train_model(model, dataloader, optimizer, scheduler, test_eeg_flat, test_clip_flat)
+    save_outputs(model, test_eeg_flat)
