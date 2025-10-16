@@ -191,41 +191,48 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
     samples_per_class = 5
     labels = np.repeat(np.arange(num_classes), samples_per_class)
 
-    # normalize both
+    # Normalize
     preds_norm = preds / (np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8)
     gt_norm = clip_flat / (np.linalg.norm(clip_flat, axis=1, keepdims=True) + 1e-8)
 
-    # per-class mean of *predictions*, not GT
-    class_means = np.zeros((num_classes, preds_norm.shape[1]))
+    # === Compute true and predicted class means ===
+    gt_means = np.zeros((num_classes, gt_norm.shape[1]))
+    pred_means = np.zeros((num_classes, preds_norm.shape[1]))
     for c in range(num_classes):
-        class_means[c] = preds_norm[labels == c].mean(axis=0)
-        class_means[c] /= np.linalg.norm(class_means[c]) + 1e-8
+        gt_means[c] = gt_norm[labels == c].mean(axis=0)
+        gt_means[c] /= np.linalg.norm(gt_means[c]) + 1e-8
+        pred_means[c] = preds_norm[labels == c].mean(axis=0)
+        pred_means[c] /= np.linalg.norm(pred_means[c]) + 1e-8
 
-    # similarities
-    sims = np.dot(preds_norm, class_means.T)
-    acc = (np.argmax(sims, axis=1) == labels).mean()
+    # === Accuracy: predicted class mean vs. true CLIP class mean ===
+    sims = np.dot(pred_means, gt_means.T)
+    acc = (np.argmax(sims, axis=1) == np.arange(num_classes)).mean()
 
-    within = [np.dot(preds_norm[i], class_means[labels[i]]) for i in range(len(preds_norm))]
-    between = [np.mean(np.dot(class_means[np.arange(num_classes) != labels[i]], preds_norm[i]))
-               for i in range(len(preds_norm))]
+    # === Within / Between based on true semantic CLIP means ===
+    within = [np.dot(preds_norm[i], gt_means[labels[i]]) for i in range(len(preds_norm))]
+    between = [
+        np.mean(np.dot(gt_means[np.arange(num_classes) != labels[i]], preds_norm[i]))
+        for i in range(len(preds_norm))
+    ]
     avg_within, avg_between = np.mean(within), np.mean(between)
 
-    # Fisher ratio
-    global_mean = np.mean(class_means, axis=0)
-    sb = np.sum((class_means - global_mean) ** 2)
-    sw = np.sum([(preds_norm[labels == c] - class_means[c]) ** 2 for c in range(num_classes)])
+    # === Fisher Score (semantic version) ===
+    global_mean = gt_means.mean(axis=0)
+    sb = np.sum((pred_means - global_mean) ** 2)  # between-class variance (pred means vs global)
+    sw = np.sum([(preds_norm[labels == c] - pred_means[c]) ** 2 for c in range(num_classes)])
     fisher_score = sb / (sw + 1e-8)
 
+    # === Avg cosine(pred, gt) ===
     avg_cosine = np.mean(np.sum(preds_norm * gt_norm, axis=1))
 
     print(
         f"  MSE Loss: {mse_loss:.6f}\n"
         f"  Avg cosine(pred,gt): {avg_cosine:.4f}\n"
-        f"  Within-class cosine: {avg_within:.4f}\n"
-        f"  Between-class cosine: {avg_between:.4f}\n"
-        f"  Fisher Score: {fisher_score:.4f}\n"
+        f"  Within-class cosine (vs true mean): {avg_within:.4f}\n"
+        f"  Between-class cosine (vs other means): {avg_between:.4f}\n"
+        f"  Fisher Score (semantic): {fisher_score:.4f}\n"
         f"  Δ (Within−Between): {avg_within - avg_between:.4f}\n"
-        f"  Classification Accuracy: {acc*100:.2f}%"
+        f"  Classification Accuracy (semantic): {acc*100:.2f}%"
     )
 
     return mse_loss, avg_cosine, avg_within, avg_between, fisher_score, acc
