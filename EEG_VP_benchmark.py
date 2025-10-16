@@ -163,24 +163,25 @@ def simulate_preprocessed_dummy(ft, cfg):
     if ft == "window":
         # Raw EEG window data: (7 blocks, 40 classes, 5 clips, 7 subjects, 62 ch, 100 time)
         raw = torch.randn(7, 40, 5, 7, C, T)
-        avgd = raw.mean(axis=3)  # average across subject axis → (7, 40, 5, 62, 100)
+        avgd = raw.mean(axis=3)  # → (7, 40, 5, 62, 100)
 
-        # Merge block, class, and clip → (7*40*5, 62, 100)
+        # Merge block, class, and clip → (1400, 62, 100)
         flat = rearrange(avgd, "b c d f g -> (b c d) f g")
 
-        # Normalize (simulate StandardScaler)
+        # Normalize
         flat = (flat - flat.mean()) / (flat.std() + 1e-6)
 
-        # Add channel dim for CNN input: (batch=1, 1, 62, 100)
-        flat = flat.unsqueeze(0)
+        # Add channel dimension for CNN input → (1400, 1, 62, 100)
+        flat = flat.unsqueeze(1)
+
         return flat.to(device)
 
     else:
-        # DE / PSD simulated: (7 blocks, 40 classes, 5 clips, 2 subjects, 62 ch, 5 freqs)
+        # DE / PSD simulated: (7, 40, 5, 2, 62, 5)
         raw = torch.randn(7, 40, 5, 2, C, 5)
         avgd = raw.mean(axis=3)  # → (7, 40, 5, 62, 5)
 
-        # Merge block, class, and clip → (7*40*5, 62, 5)
+        # Merge block, class, and clip → (1400, 62, 5)
         flat = rearrange(avgd, "b c d f g -> (b c d) f g")
 
         # Normalize
