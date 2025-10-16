@@ -159,6 +159,14 @@ def main(cfg):
         val_labels   = np.repeat(labels_all, 5)[40*5:40*6]
         test_labels  = np.repeat(labels_all, 5)[40*6:40*7]
 
+        # === Debug shapes ===
+        print("Train EEG shape:", processed["train"].shape)
+        print("Val EEG shape:", processed["val"].shape)
+        print("Test EEG shape:", processed["test"].shape)
+        print("Train labels:", len(train_labels))
+        print("Val labels:", len(val_labels))
+        print("Test labels:", len(test_labels))
+
         train_iter = Get_Dataloader(processed["train"], train_labels, True, cfg["batch_size"])
         test_iter  = Get_Dataloader(processed["test"],  test_labels,  False, cfg["batch_size"])
 
