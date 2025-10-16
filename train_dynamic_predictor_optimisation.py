@@ -60,7 +60,7 @@ CONFIG = {
     "lr"                : 0.0005,
     "optimizer"         : "adamw",          # ["adam", "adamw"]
     "weight_decay"      : 0.0,
-    "scheduler"         : "constant",       # ["constant", "cosine"]
+    "scheduler"         : "cosine",       # ["constant", "cosine"]
     "device"            : "cuda" if torch.cuda.is_available() else "cpu",
 }
 
