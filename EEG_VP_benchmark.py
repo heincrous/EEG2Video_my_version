@@ -297,8 +297,16 @@ def train_and_eval(model, train_iter, test_iter, cfg):
         model.train()
         for X, y in train_iter:
             X, y = X.to(device), y.to(device)
+
+            # handle CNN vs MLP inputs
+            if cfg["feature_type"] == "window":
+                X = X.unsqueeze(1)  # (B,1,62,100) for CNN encoders
+            elif cfg["feature_type"] in ["de", "psd"] and X.ndim == 3:
+                pass  # keep as (B,62,5) for MLPs
+
             optimizer.zero_grad()
             y_hat = model(X)
+
             loss = loss_fn(y_hat, y)
             loss.backward()
             optimizer.step()
@@ -313,7 +321,10 @@ def train_and_eval(model, train_iter, test_iter, cfg):
     with torch.no_grad():
         for X, y in test_iter:
             X, y = X.to(device), y.to(device)
+            if cfg["feature_type"] == "window":
+                X = X.unsqueeze(1)
             y_hat = model(X)
+
             top1, top5 = topk_accuracy(y_hat, y, topk=(1, 5))
             top1_all.append(top1)
             top5_all.append(top5)
@@ -366,7 +377,10 @@ def main(cfg):
         with torch.no_grad():
             for X, y in test_iter:
                 X, y = X.to(cfg["device"]), y.to(cfg["device"])
+                if cfg["feature_type"] == "window":
+                    X = X.unsqueeze(1)
                 y_hat = model(X)
+
                 top1, top5 = topk_accuracy(y_hat, y, topk=(1, 5))
                 top1_all.append(top1)
                 top5_all.append(top5)
