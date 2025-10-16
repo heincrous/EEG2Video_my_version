@@ -24,7 +24,7 @@ from models.glfnet_mlp import glfnet_mlp
 # Architectural Fine-Tuning Toggle
 # ==========================================
 # Choose ONE: "layer_width", "dropout", "activation", "normalisation"
-EXPERIMENT_TYPE = "activation"
+EXPERIMENT_TYPE = "normalisation"
 
 
 # ==========================================
