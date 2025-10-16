@@ -66,13 +66,13 @@ plt.close()
 # 3. Temporal Window Verification – 1 s (EEG_windows_100)
 # ==========================================
 fs = 200  # sampling rate
-s, c, t, ch = 0, 0, 0, 0
-windows = win_100[c, t, :, ch, :]  # (7,100)
+s, c, t, ch = 0, 0, 0, 0  # subject, concept, trial, channel
+windows = win_100[c, t, :, :, :]  # (7,62,100)
 time = np.arange(windows.shape[-1]) / fs
 
 plt.figure(figsize=(8,3))
 for i, w in enumerate(windows):
-    plt.plot(time + i * 0.5, w, lw=0.8)
+    plt.plot(time + i * 0.5, w[ch], lw=0.8)  # select channel ch
 plt.title("Temporal Segmentation – 1 s Overlapping Windows")
 plt.xlabel("Time (s)")
 plt.ylabel("Amplitude (µV)")
@@ -80,15 +80,16 @@ plt.tight_layout()
 plt.savefig(os.path.join(save_path, "temp_window_verification_1s.png"), dpi=300)
 plt.close()
 
+
 # ==========================================
 # 4. Temporal Window Verification – 0.5 s (EEG_windows_200)
 # ==========================================
-windows = win_200[c, t, :, ch, :]  # (3,200)
+windows = win_200[c, t, :, :, :]  # (3,62,200)
 time = np.arange(windows.shape[-1]) / fs
 
 plt.figure(figsize=(8,3))
 for i, w in enumerate(windows):
-    plt.plot(time + i * 0.25, w, lw=0.8)
+    plt.plot(time + i * 0.25, w[ch], lw=0.8)  # select channel ch
 plt.title("Temporal Segmentation – 0.5 s Overlapping Windows")
 plt.xlabel("Time (s)")
 plt.ylabel("Amplitude (µV)")
