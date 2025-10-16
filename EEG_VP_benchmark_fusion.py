@@ -41,7 +41,7 @@ CONFIG = {
         "sub10.npy",
         "sub13.npy"
     ],
-    "dry_run": False,
+    "dry_run": True,
 
     # --- Data parameters ---
     "num_classes": 40,
