@@ -35,7 +35,7 @@ EXPERIMENT_TYPE = "activation"
 # ==========================================
 CONFIG = {
     # --- Core setup ---
-    "feature_types": ["segment", "de", "psd"],   # choose any subset: ["segment"], ["de", "psd"], ["segment", "de"], etc.
+    "feature_types": ["psd"],   # choose any subset: ["segment"], ["de", "psd"], ["segment", "de"], etc.
     "subjects_to_train": [
         "sub1_session2.npy",
         "sub1.npy",
@@ -69,7 +69,7 @@ CONFIG = {
     "fusion_type": "attention",   # "concat" or "attention"
 
     # --- Training parameters ---
-    "batch_size": 512,
+    "batch_size": 256,
     "num_epochs": 100,
     "lr": 0.0005,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
