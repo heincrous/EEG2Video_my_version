@@ -64,9 +64,9 @@ CONFIG = {
     "psd_dir": "EEG_PSD_1per1s/",
 
     # --- Training parameters ---
-    "batch_size": 256,
-    "num_epochs": 100,
-    "lr": 0.0005,
+    "batch_size": 256, # use 1024 for windows
+    "num_epochs": 100, # use 200 for windows
+    "lr": 0.0005, # use 0.001 for windows
     "device": "cuda" if torch.cuda.is_available() else "cpu",
 }
 
