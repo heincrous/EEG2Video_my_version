@@ -149,7 +149,6 @@ def prepare_data(eeg, clip, cfg):
     return train_eeg, val_eeg, test_eeg, train_clip, val_clip, test_clip
 
 
-
 # ==========================================
 # Optimiser and Scheduler
 # ==========================================
@@ -186,8 +185,10 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
         mse_loss = F.mse_loss(preds_tensor, gt_tensor).item()
         preds = preds_tensor.cpu().numpy()
 
+    # === Correct label grouping ===
     num_classes = len(cfg["class_subset"])
-    samples_per_class = 5
+    total_samples = eeg_flat.shape[0]
+    samples_per_class = total_samples // num_classes
     labels = np.repeat(np.arange(num_classes), samples_per_class)
 
     # === Normalise embeddings ===
