@@ -49,7 +49,7 @@ Loss: MSE
 # Experiment Settings
 # ==========================================
 EXPERIMENT_MODE = "architectural"          # "epoch", "architectural", "optimisation"
-EXPERIMENT_TYPE = "Normalisation"     # any label (used only for naming)
+EXPERIMENT_TYPE = "layer_widths"     # any label (used only for naming)
 
 if EXPERIMENT_MODE == "architectural":
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/architectural_fine-tuning"
@@ -60,9 +60,9 @@ else:  # epoch
 
 CONFIG = {
     "dropout": 0.0,
-    "layer_widths": [10000, 10000, 10000, 10000],
+    "layer_widths": [4096, 4096, 4096, 4096], # [10000, 10000, 10000, 10000],
     "activation": "ReLU",
-    "normalization": "BatchNorm",
+    "normalization": "None",
     "feature_type": "EEG_DE_1per1s",
     "subject_name": "sub1.npy",
     "class_subset": [0, 9, 11, 15, 18, 22, 24, 30, 33, 38],
