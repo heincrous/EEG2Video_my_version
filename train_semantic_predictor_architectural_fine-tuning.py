@@ -60,7 +60,7 @@ else:  # epoch
 
 CONFIG = {
     "dropout": 0.0,
-    "layer_widths": [2048, 2048, 2048, 2048],
+    "layer_widths": [5096, 5096, 5096, 5096],
     "activation": "ReLU",
     "normalization": "None",
     "feature_type": "EEG_DE_1per1s",
