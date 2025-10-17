@@ -24,7 +24,7 @@ DEFAULT MODEL
 Architecture:
 Layer width: [10000, 10000, 10000, 10000]
 Dropout: 0.0
-Activation: GELU
+Activation: ReLU
 Normalization: None
 
 Optimisation:
@@ -61,7 +61,7 @@ else:  # epoch
 CONFIG = {
     "dropout": 0.0,
     "layer_widths": [10000, 10000, 10000, 10000],
-    "activation": "ReLU",
+    "activation": "ELU",
     "normalization": "None",
     "feature_type": "EEG_DE_1per1s",
     "subject_name": "sub1.npy",
