@@ -453,40 +453,6 @@ def run_inference_and_save(model, eeg_flat, cfg):
 # ==========================================
 # Cleanup Module
 # ==========================================
-def clean_old_predictions(cfg):
-    pred_dir = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/predictions"
-    os.makedirs(pred_dir, exist_ok=True)
-
-    subset_name = "_".join(map(str, cfg["class_subset"]))
-    target_pattern = f"{subset_name}.npy"
-
-    deleted_files = []
-    for f in os.listdir(pred_dir):
-        if f == target_pattern:
-            file_path = os.path.join(pred_dir, f)
-            os.remove(file_path)
-            deleted_files.append(file_path)
-
-    if deleted_files:
-        print(f"[Cleanup] Removed old prediction file(s): {deleted_files}")
-    else:
-        print(f"[Cleanup] No existing prediction file for subset {subset_name}.")
-
-def clean_old_result_files(cfg, exp_type, exp_mode):
-    exp_dir = os.path.join(cfg["result_root"], exp_type)
-    if not os.path.exists(exp_dir):
-        return
-    deleted = []
-    for f in os.listdir(exp_dir):
-        if f.endswith(".txt"):
-            path = os.path.join(exp_dir, f)
-            os.remove(path)
-            deleted.append(path)
-    if deleted:
-        print(f"[Cleanup] Removed old .txt result file(s): {deleted}")
-    else:
-        print("[Cleanup] No existing .txt result files to remove.")
-
 def clean_old_plots(cfg):
     plots_dir = cfg["result_root"]
     batch_size = cfg["batch_size"]
@@ -507,6 +473,42 @@ def clean_old_plots(cfg):
         print(f"[Cleanup] Removed old plot file(s): {deleted}")
     else:
         print("[Cleanup] No existing plot files to remove.")
+
+
+def clean_old_result_files(cfg, exp_type, exp_mode):
+    exp_dir = os.path.join(cfg["result_root"], exp_type)
+    if not os.path.exists(exp_dir):
+        return
+    deleted = []
+    for f in os.listdir(exp_dir):
+        if f.endswith(".txt"):
+            path = os.path.join(exp_dir, f)
+            os.remove(path)
+            deleted.append(path)
+    if deleted:
+        print(f"[Cleanup] Removed old .txt result file(s): {deleted}")
+    else:
+        print("[Cleanup] No existing .txt result files to remove.")
+
+
+def clean_old_predictions(cfg):
+    pred_dir = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/predictions"
+    os.makedirs(pred_dir, exist_ok=True)
+
+    subset_name = "_".join(map(str, cfg["class_subset"]))
+    target_pattern = f"{subset_name}.npy"
+
+    deleted_files = []
+    for f in os.listdir(pred_dir):
+        if f == target_pattern:
+            file_path = os.path.join(pred_dir, f)
+            os.remove(file_path)
+            deleted_files.append(file_path)
+
+    if deleted_files:
+        print(f"[Cleanup] Removed old prediction file(s): {deleted_files}")
+    else:
+        print(f"[Cleanup] No existing prediction file for subset {subset_name}.")
 
 
 # ==========================================
