@@ -62,7 +62,7 @@ CONFIG = {
     "dropout": 0.0,
     "layer_widths": [10000, 10000, 10000, 10000],
     "activation": "ReLU",
-    "normalization": "GroupNorm",
+    "normalization": "LayerNorm",
     "feature_type": "EEG_DE_1per1s",
     "subject_name": "sub1.npy",
     "class_subset": [0, 9, 11, 15, 18, 22, 24, 30, 33, 38],
