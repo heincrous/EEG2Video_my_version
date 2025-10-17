@@ -20,6 +20,33 @@ from tqdm import tqdm
 # ==========================================
 # Config Block
 # ==========================================
+"""
+DEFAULT MODEL
+
+Architecture:
+Layer width: [10000, 10000, 10000, 10000]
+Dropout: 0.0
+Activation: ReLU
+Normalization: None
+
+Optimisation:
+Optimiser: Adam
+Weight decay: 0.0
+Scheduler: cosine
+Learning rate: 0.0005
+
+Adam
+No weight decay
+No dropout
+ReLU activation
+
+Training:
+Epochs: 200
+Batch size: 32
+Loss: MSE
+*Optimise values based on default model
+"""
+
 EXPERIMENT_MODE = "architectural"  # or "optimisation"
 EXPERIMENT_TYPE = "activation" if EXPERIMENT_MODE == "architectural" else "scheduler"
 
