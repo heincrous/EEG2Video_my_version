@@ -480,16 +480,27 @@ def clean_old_result_files(cfg, exp_type, exp_mode):
     exp_dir = os.path.join(cfg["result_root"], exp_type)
     if not os.path.exists(exp_dir):
         return
-    deleted = []
-    for f in os.listdir(exp_dir):
-        if f.endswith(".txt"):
-            path = os.path.join(exp_dir, f)
-            os.remove(path)
-            deleted.append(path)
-    if deleted:
-        print(f"[Cleanup] Removed old .txt result file(s): {deleted}")
+
+    # === Recreate exact file name ===
+    if exp_mode == "architectural":
+        target_name = (
+            f"{exp_type}_lw{'-'.join(map(str, cfg['layer_widths']))}"
+            f"_do{cfg['dropout']}_act{cfg['activation']}_reg{cfg['normalization']}.txt"
+        )
+    elif exp_mode == "optimisation":
+        target_name = (
+            f"{exp_type}_opt{cfg['optimizer']}_wd{cfg['weight_decay']}"
+            f"_sched{cfg['scheduler']}_lr{cfg['lr']}.txt"
+        )
     else:
-        print("[Cleanup] No existing .txt result files to remove.")
+        return
+
+    target_path = os.path.join(exp_dir, target_name)
+    if os.path.exists(target_path):
+        os.remove(target_path)
+        print(f"[Cleanup] Removed old result file: {target_path}")
+    else:
+        print(f"[Cleanup] No existing .txt result file named {target_name}.")
 
 
 def clean_old_predictions(cfg):
