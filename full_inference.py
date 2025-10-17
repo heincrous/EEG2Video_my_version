@@ -18,7 +18,7 @@ BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 OUTPUT_ROOT        = "/content/drive/MyDrive/EEG2Video_results/inference"
 
-NUM_INFERENCE      = 50
+NUM_INFERENCE      = 100
 GUIDANCE_SCALE     = 12.5 # 8 worked decently
 
 
