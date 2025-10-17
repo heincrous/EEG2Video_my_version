@@ -191,14 +191,14 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
     labels = labels[:eeg_flat.shape[0]]
     print("labels:", labels.shape, "unique:", np.unique(labels, return_counts=True))
 
-    # === Normalise embeddings (feature-wise) ===
-    preds_norm = (preds - preds.mean(axis=0)) / (preds.std(axis=0) + 1e-8)
-    gt_norm    = (clip_flat - clip_flat.mean(axis=0)) / (clip_flat.std(axis=0) + 1e-8)
-
+    # === Normalise embeddings (L2 per vector) ===
+    preds_norm = preds / (np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8)
+    gt_norm = clip_flat / (np.linalg.norm(clip_flat, axis=1, keepdims=True) + 1e-8)
 
     # === (1) MSE already computed ===
     # === (2) Cosine(pred, gt) ===
-    avg_cosine = np.mean(np.sum(preds_norm * gt_norm, axis=1))
+    cosines = np.sum(preds_norm * gt_norm, axis=1)
+    avg_cosine = float(np.mean(cosines))
 
     # === Compute class means ===
     class_means_gt = np.zeros((num_classes, gt_norm.shape[1]))
@@ -215,7 +215,6 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
         class_preds = preds_norm[labels == c]
         if class_preds.shape[0] > 1:
             cos_vals = np.matmul(class_preds, class_preds.T)
-            # remove diagonal self-similarity
             cos_vals = cos_vals[np.triu_indices_from(cos_vals, k=1)]
             within_class_scores.append(np.mean(cos_vals))
     avg_within = float(np.mean(within_class_scores))
@@ -224,22 +223,16 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
     between_scores = []
     for i in range(num_classes):
         for j in range(i + 1, num_classes):
-            between_scores.append(
-                float(np.dot(class_means_pred[i], class_means_pred[j]))
-            )
+            between_scores.append(float(np.dot(class_means_pred[i], class_means_pred[j])))
     avg_between = float(np.mean(between_scores))
 
     # === (5) Fisher-style separability ===
     global_mean = np.mean(class_means_pred, axis=0)
-    sb = np.sum([np.sum((class_means_pred[c] - global_mean) ** 2) for c in range(num_classes)])
-    sw = np.sum([
-        np.sum((preds_norm[labels == c] - class_means_pred[c]) ** 2)
-        for c in range(num_classes)
-    ])
+    sb = np.sum([(class_means_pred[c] - global_mean) @ (class_means_pred[c] - global_mean) for c in range(num_classes)])
+    sw = np.sum([np.sum((preds_norm[labels == c] - class_means_pred[c]) ** 2) for c in range(num_classes)])
     fisher = sb / (sw + 1e-8)
 
     # === (6) Accuracy: per-sample nearest ground-truth class mean ===
-    # Compute similarities of each pred to all gt class means
     sims_to_gt = np.dot(preds_norm, class_means_gt.T)
     pred_class = np.argmax(sims_to_gt, axis=1)
     acc = np.mean(pred_class == labels)
