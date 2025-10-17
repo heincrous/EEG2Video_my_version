@@ -68,7 +68,7 @@ CONFIG = {
     "class_subset": [0, 9, 14, 11, 15, 18, 22, 24, 30, 33, 38],
     "subset_id": "1",
     "epochs": 100,
-    "batch_size": 64,
+    "batch_size": 128,
     "lr": 0.0005,
     "optimizer": "adam",
     "scheduler": "cosine",
