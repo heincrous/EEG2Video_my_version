@@ -184,11 +184,10 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
         mse_loss = F.mse_loss(preds_tensor, gt_tensor).item()
         preds = preds_tensor.cpu().numpy()
 
-    # === Label construction ===
+    # === Correct label mapping ===
     num_classes = len(cfg["class_subset"])
-    num_blocks_in_split = eeg_flat.shape[0] // (num_classes * 5)
-    samples_per_class = num_blocks_in_split * 5  # 5 clips per class per block
-    labels = np.repeat(np.arange(num_classes), samples_per_class)
+    b, s = 7, 5  # 7 blocks × 5 segments per class
+    labels = np.repeat(np.arange(num_classes), b * s)
 
     # === Normalise embeddings ===
     preds_norm = preds / (np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8)
