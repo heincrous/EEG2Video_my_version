@@ -207,24 +207,25 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
         class_means_pred[c] = preds_norm[labels == c].mean(axis=0)
         class_means_pred[c] /= np.linalg.norm(class_means_pred[c]) + 1e-8
 
-    # === (3) Within-class cosine ===
+    # === (3) Within-class cosine (pairwise) ===
     within_class_scores = []
     for c in range(num_classes):
         class_preds = preds_norm[labels == c]
-        if len(class_preds) > 1:
-            cos_mat = np.dot(class_preds, class_preds.T)
-            n = len(class_preds)
-            mean_cos = (np.sum(cos_mat) - np.trace(cos_mat)) / (n * (n - 1))
-            within_class_scores.append(mean_cos)
-    avg_within = np.mean(within_class_scores)
+        if class_preds.shape[0] > 1:
+            cos_vals = np.matmul(class_preds, class_preds.T)
+            # remove diagonal self-similarity
+            cos_vals = cos_vals[np.triu_indices_from(cos_vals, k=1)]
+            within_class_scores.append(np.mean(cos_vals))
+    avg_within = float(np.mean(within_class_scores))
 
-    # === (4) Between-class cosine ===
+    # === (4) Between-class cosine (mean predictions across classes) ===
     between_scores = []
-    for c in range(num_classes):
-        others = np.delete(np.arange(num_classes), c)
-        mean_cos = np.mean(np.dot(class_means_pred[c], class_means_pred[others].T))
-        between_scores.append(mean_cos)
-    avg_between = np.mean(between_scores)
+    for i in range(num_classes):
+        for j in range(i + 1, num_classes):
+            between_scores.append(
+                float(np.dot(class_means_pred[i], class_means_pred[j]))
+            )
+    avg_between = float(np.mean(between_scores))
 
     # === (5) Fisher-style separability ===
     global_mean = np.mean(class_means_pred, axis=0)
