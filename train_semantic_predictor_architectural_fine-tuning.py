@@ -186,8 +186,10 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
 
     # === Correct label mapping ===
     num_classes = len(cfg["class_subset"])
-    b, s = 7, 5  # 7 blocks × 5 segments per class
-    labels = np.repeat(np.arange(num_classes), b * s)
+
+    # infer blocks (b) and segments (s) automatically from data length
+    samples_per_class = eeg_flat.shape[0] // num_classes
+    labels = np.repeat(np.arange(num_classes), samples_per_class)
 
     # === Normalise embeddings ===
     preds_norm = preds / (np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8)
