@@ -48,8 +48,8 @@ Loss: MSE
 # ==========================================
 # Experiment Settings
 # ==========================================
-EXPERIMENT_MODE = "architectural"          # "epoch", "architectural", "optimisation"
-EXPERIMENT_TYPE = "normalisation"     # any label (used only for naming)
+EXPERIMENT_MODE = "optimisation"          # "epoch", "architectural", "optimisation"
+EXPERIMENT_TYPE = "optimiser"     # any label (used only for naming)
 
 if EXPERIMENT_MODE == "architectural":
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/architectural_fine-tuning"
@@ -62,7 +62,7 @@ CONFIG = {
     "dropout": 0.0,
     "layer_widths": [10000, 10000, 10000, 10000],
     "activation": "ReLU",
-    "normalization": "LayerNorm",
+    "normalisation": "None",
     "feature_type": "EEG_DE_1per1s",
     "subject_name": "sub1.npy",
     "class_subset": [0, 9, 11, 15, 18, 22, 24, 30, 33, 38],
@@ -70,9 +70,9 @@ CONFIG = {
     "epochs": 50,
     "batch_size": 32,
     "lr": 0.0005,
-    "optimizer": "adam",
+    "optimizer": "adamw",
     "scheduler": "cosine",
-    "weight_decay": 0.0,
+    "weight_decay": 0.25,
     "device": "cuda:0" if torch.cuda.is_available() else "cpu",
     "eeg_root": "/content/drive/MyDrive/EEG2Video_data/processed",
     "clip_path": "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy",
@@ -92,11 +92,11 @@ class CLIPSemanticMLP(nn.Module):
         act_fn = getattr(nn, cfg["activation"])() if hasattr(nn, cfg["activation"]) else nn.ReLU()
 
         def norm_layer(size):
-            if cfg["normalization"] == "BatchNorm":
+            if cfg["normalisation"] == "BatchNorm":
                 return nn.BatchNorm1d(size)
-            if cfg["normalization"] == "LayerNorm":
+            if cfg["normalisation"] == "LayerNorm":
                 return nn.LayerNorm(size)
-            if cfg["normalization"] == "GroupNorm":
+            if cfg["normalisation"] == "GroupNorm":
                 return nn.GroupNorm(4, size)
             return nn.Identity()
 
@@ -388,7 +388,7 @@ def save_results(cfg, metrics, exp_type, exp_mode):
     if exp_mode == "architectural":
         fname = (
             f"{exp_type}_lw{'-'.join(map(str, cfg['layer_widths']))}"
-            f"_do{cfg['dropout']}_act{cfg['activation']}_norm{cfg['normalization']}.txt"
+            f"_do{cfg['dropout']}_act{cfg['activation']}_norm{cfg['normalisation']}.txt"
         )
     elif exp_mode == "optimisation":
         fname = (
@@ -485,7 +485,7 @@ def clean_old_result_files(cfg, exp_type, exp_mode):
     if exp_mode == "architectural":
         target_name = (
             f"{exp_type}_lw{'-'.join(map(str, cfg['layer_widths']))}"
-            f"_do{cfg['dropout']}_act{cfg['activation']}_reg{cfg['normalization']}.txt"
+            f"_do{cfg['dropout']}_act{cfg['activation']}_reg{cfg['normalisation']}.txt"
         )
     elif exp_mode == "optimisation":
         target_name = (
