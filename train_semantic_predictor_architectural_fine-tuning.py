@@ -24,7 +24,7 @@ DEFAULT MODEL
 Architecture:
 Layer width: [10000, 10000, 10000, 10000]
 Dropout: 0.0
-Activation: ReLU
+Activation: ELU
 Normalization: None
 
 Optimisation:
@@ -370,7 +370,8 @@ def train_model(model, train_loader, val_eeg, val_clip, cfg):
             acc_history.append(acc)
             val_loss_history.append(val_mse)
 
-    save_training_plots(cosine_history, acc_history, val_loss_history, cfg)
+    if EXPERIMENT_MODE == "epoch":
+        save_training_plots(cosine_history, acc_history, val_loss_history, cfg)
 
 
 # ==========================================
