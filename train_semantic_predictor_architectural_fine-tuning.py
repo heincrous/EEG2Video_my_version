@@ -49,7 +49,7 @@ Loss: MSE
 # Experiment Settings
 # ==========================================
 EXPERIMENT_MODE = "optimisation"          # "epoch", "architectural", "optimisation"
-EXPERIMENT_TYPE = "learning_rate"     # any label (used only for naming)
+EXPERIMENT_TYPE = "scheduler"     # any label (used only for naming)
 
 if EXPERIMENT_MODE == "architectural":
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/architectural_fine-tuning"
@@ -69,9 +69,9 @@ CONFIG = {
     "subset_id": "1",
     "epochs": 50,
     "batch_size": 32,
-    "lr": 0.005,
+    "lr": 0.0005,
     "optimizer": "adamw",
-    "scheduler": "cosine",
+    "scheduler": "constant",
     "weight_decay": 0.0,
     "device": "cuda:0" if torch.cuda.is_available() else "cpu",
     "eeg_root": "/content/drive/MyDrive/EEG2Video_data/processed",
