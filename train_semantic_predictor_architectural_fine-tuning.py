@@ -184,11 +184,10 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
         mse_loss = F.mse_loss(preds_tensor, gt_tensor).item()
         preds = preds_tensor.cpu().numpy()
 
-    # === Correct label mapping ===
-    num_classes = len(cfg["class_subset"])
-    samples_per_class = eeg_flat.shape[0] // num_classes
-    labels = np.repeat(np.arange(num_classes), samples_per_class)
-    labels = labels[:eeg_flat.shape[0]]
+    # === Correct label mapping (block-major flatten) ===
+    b, c, s = 7, len(cfg["class_subset"]), 5  # blocks, classes, segments
+    block_labels = np.tile(np.arange(c), b * s)  # class order repeats per block×segment
+    labels = block_labels[:eeg_flat.shape[0]]
     print("labels:", labels.shape, "unique:", np.unique(labels, return_counts=True))
 
     # === Normalise embeddings (L2 per vector) ===
