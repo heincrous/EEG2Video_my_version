@@ -186,10 +186,10 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
 
     # === Correct label mapping ===
     num_classes = len(cfg["class_subset"])
-
-    # infer blocks (b) and segments (s) automatically from data length
     samples_per_class = eeg_flat.shape[0] // num_classes
     labels = np.repeat(np.arange(num_classes), samples_per_class)
+    labels = labels[:eeg_flat.shape[0]]
+    print("labels:", labels.shape, "unique:", np.unique(labels, return_counts=True))
 
     # === Normalise embeddings ===
     preds_norm = preds / (np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8)
@@ -277,6 +277,7 @@ def train_model(model, train_loader, val_eeg, val_clip, cfg):
 
         if epoch % 10 == 0:
             print(f"\n[Epoch {epoch}/{cfg['epochs']}] AvgLoss={epoch_loss/len(train_loader):.6f}")
+            print("val_eeg:", val_eeg.shape, "val_clip:", val_clip.shape)
             evaluate_model(model, val_eeg, val_clip, cfg)
 
 
