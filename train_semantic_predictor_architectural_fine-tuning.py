@@ -177,7 +177,6 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
     device = cfg["device"]
     model.eval()
 
-    # === Forward ===
     with torch.no_grad():
         eeg_tensor = torch.tensor(eeg_flat, dtype=torch.float32, device=device)
         gt_tensor = torch.tensor(clip_flat, dtype=torch.float32, device=device)
@@ -185,10 +184,10 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
         mse_loss = F.mse_loss(preds_tensor, gt_tensor).item()
         preds = preds_tensor.cpu().numpy()
 
-    # === Correct label grouping ===
+    # === Label construction ===
     num_classes = len(cfg["class_subset"])
-    total_samples = eeg_flat.shape[0]
-    samples_per_class = total_samples // num_classes
+    num_blocks_in_split = eeg_flat.shape[0] // (num_classes * 5)
+    samples_per_class = num_blocks_in_split * 5  # 5 clips per class per block
     labels = np.repeat(np.arange(num_classes), samples_per_class)
 
     # === Normalise embeddings ===
