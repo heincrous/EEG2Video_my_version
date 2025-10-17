@@ -59,7 +59,7 @@ else:  # epoch
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/plots"
 
 CONFIG = {
-    "dropout": 0.25,
+    "dropout": 0.5,
     "layer_widths": [10000, 10000, 10000, 10000],
     "activation": "ReLU",
     "normalization": "None",
