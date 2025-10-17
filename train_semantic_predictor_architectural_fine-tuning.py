@@ -2,12 +2,10 @@
 # EEG → CLIP Semantic Predictor (DE-Only, MSE Loss)
 # Modular Version
 # ==========================================
-
-# === Standard libraries ===
 import os
 import numpy as np
+import matplotlib.pyplot as plt
 
-# === Third-party libraries ===
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -47,13 +45,18 @@ Loss: MSE
 *Optimise values based on default model
 """
 
-EXPERIMENT_MODE = "architectural"  # or "optimisation"
-EXPERIMENT_TYPE = "activation" if EXPERIMENT_MODE == "architectural" else "scheduler"
+# ==========================================
+# Experiment Settings
+# ==========================================
+EXPERIMENT_MODE = "epoch"          # "epoch", "architectural", "optimisation"
+EXPERIMENT_TYPE = "activation"     # any label (used only for naming)
 
 if EXPERIMENT_MODE == "architectural":
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/architectural_fine-tuning"
-else:
+elif EXPERIMENT_MODE == "optimisation":
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/optimisation"
+else:  # epoch
+    RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/plots"
 
 CONFIG = {
     "dropout": 0.0,
@@ -74,6 +77,7 @@ CONFIG = {
     "eeg_root": "/content/drive/MyDrive/EEG2Video_data/processed",
     "clip_path": "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy",
     "result_root": RESULT_ROOT,
+    "run_inference": True,
 }
 
 
@@ -285,11 +289,8 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
 # ==========================================
 # Plot Training Metrics (Cosine & Accuracy)
 # ==========================================
-import os
-import matplotlib.pyplot as plt
-
 def save_training_plots(cosine_list, acc_list, cfg):
-    plots_dir = os.path.join(cfg["result_root"], "plots")
+    plots_dir = cfg["result_root"]
     os.makedirs(plots_dir, exist_ok=True)
 
     epochs = list(range(1, len(cosine_list) + 1))
@@ -463,17 +464,33 @@ def clean_old_predictions(cfg):
 # ==========================================
 def main():
     cfg = CONFIG
-    clean_old_predictions(cfg)
     eeg, clip = load_de_data(cfg)
     tr_eeg, va_eeg, te_eeg, tr_clip, va_clip, te_clip = prepare_data(eeg, clip, cfg)
     dataset = EEGTextDataset(tr_eeg, tr_clip)
     loader = DataLoader(dataset, batch_size=cfg["batch_size"], shuffle=True)
     model = CLIPSemanticMLP(input_dim=tr_eeg.shape[1], cfg=cfg).to(cfg["device"])
+
     train_model(model, loader, va_eeg, va_clip, cfg)
     print("\nFinal Test Evaluation:")
     metrics = evaluate_model(model, te_eeg, te_clip, cfg)
-    save_results(cfg, metrics, EXPERIMENT_TYPE, EXPERIMENT_MODE)
-    run_inference_and_save(model, te_eeg, cfg)
+
+    # === Save / Inference Logic ===
+    if EXPERIMENT_MODE == "epoch":
+        print("Experiment mode 'epoch' — only plots will be saved (no .txt files).")
+        if cfg["run_inference"]:
+            print("run_inference=True — running inference.")
+            clean_old_predictions(cfg)
+            run_inference_and_save(model, te_eeg, cfg)
+        else:
+            print("run_inference=False — skipping inference.")
+    else:
+        save_results(cfg, metrics, EXPERIMENT_TYPE, EXPERIMENT_MODE)
+        if cfg["run_inference"]:
+            print("run_inference=True — running inference.")
+            clean_old_predictions(cfg)
+            run_inference_and_save(model, te_eeg, cfg)
+        else:
+            print("run_inference=False — skipping inference.")
 
 
 if __name__ == "__main__":
