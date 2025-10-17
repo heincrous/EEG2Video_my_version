@@ -24,7 +24,7 @@ DEFAULT MODEL
 Architecture:
 Layer width: [10000, 10000, 10000, 10000]
 Dropout: 0.0
-Activation: ELU
+Activation: GELU
 Normalization: None
 
 Optimisation:
