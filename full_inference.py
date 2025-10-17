@@ -76,9 +76,15 @@ print(f"Loaded predictions shape: {sem_preds_all.shape}, total samples: {total_s
 # ==========================================
 # Negative Embedding (Mean of Predictions)
 # ==========================================
-mean_sem = sem_preds_all.mean(axis=(0,1), keepdims=True)  # → [1, 77, 768]
-neg_embeddings = torch.tensor(mean_sem, dtype=torch.float16).to(device)
-print("Using mean of all predictions as negative embedding.")
+mean_sem = sem_preds_all.mean(axis=(0, 1), keepdims=True)  # expected [1,77,768]
+neg_embeddings = torch.tensor(mean_sem, dtype=torch.float16)
+
+# enforce correct shape
+if neg_embeddings.ndim == 2:
+    neg_embeddings = neg_embeddings.unsqueeze(0)
+
+neg_embeddings = neg_embeddings.to(device)
+print(f"Using mean of all predictions as negative embedding. Shape: {tuple(neg_embeddings.shape)}")
 
 
 # ==========================================
@@ -108,7 +114,10 @@ def run_inference():
         print(f"\n[CLASS {class_id}] ------------------------------")
         for trial in range(trials_per_class):
             emb = flat_sem_preds[sample_idx]
-            semantic_emb = torch.tensor(emb, dtype=torch.float16).unsqueeze(0).to(device)
+            semantic_emb = torch.tensor(emb, dtype=torch.float16)
+            if semantic_emb.ndim == 2:
+                semantic_emb = semantic_emb.unsqueeze(0)
+            semantic_emb = semantic_emb.to(device)
             caption = str(blip_text[test_block, class_id, trial])
 
             # Generate video
