@@ -67,7 +67,7 @@ CONFIG = {
     "subject_name": "sub1.npy",
     "class_subset": [0, 9, 11, 15, 18, 22, 24, 30, 33, 38],
     "subset_id": "1",
-    "epochs": 100,
+    "epochs": 50,
     "batch_size": 32,
     "lr": 0.0005,
     "optimizer": "adam",
