@@ -407,7 +407,7 @@ def main():
     print("\nFinal Test Evaluation:")
     metrics = evaluate_model(model, te_eeg, te_clip, cfg)
     save_results(cfg, metrics, EXPERIMENT_TYPE, EXPERIMENT_MODE)
-    # run_inference_and_save(model, te_eeg, cfg)
+    run_inference_and_save(model, te_eeg, cfg)
 
 
 if __name__ == "__main__":
