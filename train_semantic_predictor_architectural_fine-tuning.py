@@ -65,10 +65,10 @@ CONFIG = {
     "normalization": "None",
     "feature_type": "EEG_DE_1per1s",
     "subject_name": "sub1.npy",
-    "class_subset": [0, 11, 24, 30, 33],
+    "class_subset": [0, 9, 14, 11, 15, 18, 22, 24, 30, 33, 38],
     "subset_id": "1",
-    "epochs": 200,
-    "batch_size": 8,
+    "epochs": 100,
+    "batch_size": 32,
     "lr": 0.0005,
     "optimizer": "adam",
     "scheduler": "cosine",
@@ -289,14 +289,26 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
 # ==========================================
 # Plot Training Metrics (Cosine & Accuracy)
 # ==========================================
-def save_training_plots(cosine_list, acc_list, cfg):
+def save_training_plots(cosine_list, acc_list, val_loss_list, cfg):
     plots_dir = cfg["result_root"]
     os.makedirs(plots_dir, exist_ok=True)
 
-    epochs = list(range(1, len(cosine_list) + 1))
+    epochs = list(range(10, 10 * len(cosine_list) + 1))
     batch_size = cfg["batch_size"]
 
-    # Plot 1: Cosine Similarity
+    # Plot 1: Validation MSE
+    plt.figure(figsize=(7, 5))
+    plt.plot(epochs, val_loss_list, marker="o", color="red")
+    plt.title(f"Validation MSE vs Epoch (Batch {batch_size})")
+    plt.xlabel("Epoch")
+    plt.ylabel("MSE Loss")
+    plt.grid(True)
+    plt.tight_layout()
+    val_path = os.path.join(plots_dir, f"val_loss_batch{batch_size}.png")
+    plt.savefig(val_path, dpi=300)
+    plt.close()
+
+    # Plot 2: Cosine Similarity
     plt.figure(figsize=(7, 5))
     plt.plot(epochs, cosine_list, marker="o", color="blue")
     plt.title(f"Cosine Similarity vs Epoch (Batch {batch_size})")
@@ -308,7 +320,7 @@ def save_training_plots(cosine_list, acc_list, cfg):
     plt.savefig(cos_path, dpi=300)
     plt.close()
 
-    # Plot 2: Accuracy
+    # Plot 3: Accuracy
     plt.figure(figsize=(7, 5))
     plt.plot(epochs, [a * 100 for a in acc_list], marker="o", color="green")
     plt.title(f"Semantic Accuracy vs Epoch (Batch {batch_size})")
@@ -320,6 +332,7 @@ def save_training_plots(cosine_list, acc_list, cfg):
     plt.savefig(acc_path, dpi=300)
     plt.close()
 
+    print(f"[Plot Saved] → {val_path}")
     print(f"[Plot Saved] → {cos_path}")
     print(f"[Plot Saved] → {acc_path}")
 
@@ -332,7 +345,7 @@ def train_model(model, train_loader, val_eeg, val_clip, cfg):
     optimizer = build_optimizer(model, cfg)
     scheduler = build_scheduler(optimizer, cfg, len(train_loader))
 
-    cosine_history, acc_history = [], []
+    cosine_history, acc_history, val_loss_history = [], [], []
 
     for epoch in tqdm(range(1, cfg["epochs"] + 1)):
         model.train()
@@ -352,11 +365,12 @@ def train_model(model, train_loader, val_eeg, val_clip, cfg):
         if epoch % 10 == 0:
             avg_loss = epoch_loss / len(train_loader)
             print(f"\n[Epoch {epoch}/{cfg['epochs']}] AvgLoss={avg_loss:.6f}")
-            _, avg_cosine, _, _, _, acc = evaluate_model(model, val_eeg, val_clip, cfg)
+            val_mse, avg_cosine, _, _, _, acc = evaluate_model(model, val_eeg, val_clip, cfg)
             cosine_history.append(avg_cosine)
             acc_history.append(acc)
+            val_loss_history.append(val_mse)
 
-    save_training_plots(cosine_history, acc_history, cfg)
+    save_training_plots(cosine_history, acc_history, val_loss_history, cfg)
 
 
 # ==========================================
@@ -458,6 +472,42 @@ def clean_old_predictions(cfg):
     else:
         print(f"[Cleanup] No existing prediction file for subset {subset_name}.")
 
+def clean_old_result_files(cfg, exp_type, exp_mode):
+    exp_dir = os.path.join(cfg["result_root"], exp_type)
+    if not os.path.exists(exp_dir):
+        return
+    deleted = []
+    for f in os.listdir(exp_dir):
+        if f.endswith(".txt"):
+            path = os.path.join(exp_dir, f)
+            os.remove(path)
+            deleted.append(path)
+    if deleted:
+        print(f"[Cleanup] Removed old .txt result file(s): {deleted}")
+    else:
+        print("[Cleanup] No existing .txt result files to remove.")
+
+def clean_old_plots(cfg):
+    plots_dir = cfg["result_root"]
+    batch_size = cfg["batch_size"]
+    targets = [
+        f"val_loss_batch{batch_size}.png",
+        f"cosine_batch{batch_size}.png",
+        f"accuracy_batch{batch_size}.png",
+    ]
+    deleted = []
+    if not os.path.exists(plots_dir):
+        return
+    for f in os.listdir(plots_dir):
+        if f in targets:
+            path = os.path.join(plots_dir, f)
+            os.remove(path)
+            deleted.append(path)
+    if deleted:
+        print(f"[Cleanup] Removed old plot file(s): {deleted}")
+    else:
+        print("[Cleanup] No existing plot files to remove.")
+
 
 # ==========================================
 # Main
@@ -469,6 +519,10 @@ def main():
     dataset = EEGTextDataset(tr_eeg, tr_clip)
     loader = DataLoader(dataset, batch_size=cfg["batch_size"], shuffle=True)
     model = CLIPSemanticMLP(input_dim=tr_eeg.shape[1], cfg=cfg).to(cfg["device"])
+
+    # === Cleanup before training ===
+    if EXPERIMENT_MODE == "epoch":
+        clean_old_plots(cfg)
 
     train_model(model, loader, va_eeg, va_clip, cfg)
     print("\nFinal Test Evaluation:")
@@ -484,6 +538,7 @@ def main():
         else:
             print("run_inference=False — skipping inference.")
     else:
+        clean_old_result_files(cfg, EXPERIMENT_TYPE, EXPERIMENT_MODE)
         save_results(cfg, metrics, EXPERIMENT_TYPE, EXPERIMENT_MODE)
         if cfg["run_inference"]:
             print("run_inference=True — running inference.")
