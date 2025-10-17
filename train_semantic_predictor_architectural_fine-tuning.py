@@ -191,7 +191,7 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
     samples_per_class = eeg_flat.shape[0] // num_classes
     labels = np.repeat(np.arange(num_classes), samples_per_class)
     labels = labels[:eeg_flat.shape[0]]
-    print("labels:", labels.shape, "unique:", np.unique(labels, return_counts=True))
+    # print("labels:", labels.shape, "unique:", np.unique(labels, return_counts=True))
 
     # === Normalize embeddings (L2 per vector) ===
     preds_norm = preds / (np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8)
@@ -202,11 +202,17 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
     cosines = np.sum(preds_norm * gt_norm, axis=1)
     avg_cosine = float(np.mean(cosines))
 
-    # === (3) Compute per-class mean embeddings ===
+    # === (3.1) Compute per-class mean embeddings ===
     class_means_pred = np.zeros((num_classes, preds_norm.shape[1]))
     for c in range(num_classes):
         class_means_pred[c] = preds_norm[labels == c].mean(axis=0)
         class_means_pred[c] /= np.linalg.norm(class_means_pred[c]) + 1e-8
+
+    # === (3.2) Compute ground-truth class means ===
+    class_means_gt = np.zeros((num_classes, gt_norm.shape[1]))
+    for c in range(num_classes):
+        class_means_gt[c] = gt_norm[labels == c].mean(axis=0)
+        class_means_gt[c] /= np.linalg.norm(class_means_gt[c]) + 1e-8
 
     # === (4) Within-class similarity (sample → its class mean) ===
     within_scores = []
@@ -234,7 +240,7 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
     fisher = sb / (sw + 1e-8)
 
     # === (7) Classification accuracy (nearest class mean) ===
-    sims_to_means = np.dot(preds_norm, class_means_pred.T)
+    sims_to_means = np.dot(preds_norm, class_means_gt.T)
     pred_class = np.argmax(sims_to_means, axis=1)
     acc = np.mean(pred_class == labels)
 
@@ -333,6 +339,37 @@ def save_results(cfg, metrics, exp_type, exp_mode):
 
 
 # ==========================================
+# Inference Module
+# ==========================================
+def run_inference_and_save(model, eeg_flat, cfg):
+    device = cfg["device"]
+    model.eval()
+
+    with torch.no_grad():
+        eeg_tensor = torch.tensor(eeg_flat, dtype=torch.float32, device=device)
+        preds_tensor = model(eeg_tensor)
+        preds = preds_tensor.cpu().numpy()
+
+    # === Reshape to [num_classes, 5, 77, 768] ===
+    num_classes = len(cfg["class_subset"])
+    preds = preds.reshape(num_classes, 5, 77, 768)
+
+    # === Save predictions ===
+    pred_dir = os.path.join(
+        "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/predictions"
+    )
+    os.makedirs(pred_dir, exist_ok=True)
+
+    subset_name = "_".join(map(str, cfg["class_subset"]))
+    save_path = os.path.join(pred_dir, f"{subset_name}.npy")
+    np.save(save_path, preds)
+
+    print(f"[Inference] Saved predictions → {save_path}")
+    print(f"[Inference] Shape: {preds.shape}")
+    return preds
+
+
+# ==========================================
 # Main
 # ==========================================
 def main():
@@ -346,6 +383,7 @@ def main():
     print("\nFinal Test Evaluation:")
     metrics = evaluate_model(model, te_eeg, te_clip, cfg)
     save_results(cfg, metrics, EXPERIMENT_TYPE, EXPERIMENT_MODE)
+    run_inference_and_save(model, te_eeg, cfg)
 
 
 if __name__ == "__main__":
