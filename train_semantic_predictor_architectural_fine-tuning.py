@@ -48,7 +48,7 @@ Loss: MSE
 # ==========================================
 # Experiment Settings
 # ==========================================
-EXPERIMENT_MODE = "epoch"          # "epoch", "architectural", "optimisation"
+EXPERIMENT_MODE = "architectural"          # "epoch", "architectural", "optimisation"
 EXPERIMENT_TYPE = "activation"     # any label (used only for naming)
 
 if EXPERIMENT_MODE == "architectural":
@@ -65,10 +65,10 @@ CONFIG = {
     "normalization": "None",
     "feature_type": "EEG_DE_1per1s",
     "subject_name": "sub1.npy",
-    "class_subset": [0, 9, 14, 11, 15, 18, 22, 24, 30, 33, 38],
+    "class_subset": [0, 9, 11, 15, 18, 22, 24, 30, 33, 38],
     "subset_id": "1",
-    "epochs": 100,
-    "batch_size": 128,
+    "epochs": 50,
+    "batch_size": 32,
     "lr": 0.0005,
     "optimizer": "adam",
     "scheduler": "cosine",
