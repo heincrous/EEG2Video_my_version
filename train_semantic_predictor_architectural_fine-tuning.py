@@ -164,7 +164,7 @@ def build_optimizer(model, cfg):
 def build_scheduler(optimizer, cfg):
     sched = cfg["scheduler"].lower()
     if sched == "cosine":
-        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg["epochs"])
+        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg["epochs"] * len(train_loader))
     if sched == "constant":
         return None
     raise ValueError("Unsupported scheduler type.")
@@ -265,9 +265,9 @@ def train_model(model, train_loader, val_eeg, val_clip, cfg):
             loss = F.mse_loss(model(eeg), clip)
             loss.backward()
             optimizer.step()
+            epoch_loss += loss.item()
             if scheduler:
                 scheduler.step()
-            epoch_loss += loss.item()
 
         if epoch % 10 == 0:
             print(f"\n[Epoch {epoch}/{cfg['epochs']}] AvgLoss={epoch_loss/len(train_loader):.6f}")
