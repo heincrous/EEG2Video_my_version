@@ -191,9 +191,10 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
     labels = labels[:eeg_flat.shape[0]]
     print("labels:", labels.shape, "unique:", np.unique(labels, return_counts=True))
 
-    # === Normalise embeddings ===
-    preds_norm = preds / (np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8)
-    gt_norm = clip_flat / (np.linalg.norm(clip_flat, axis=1, keepdims=True) + 1e-8)
+    # === Normalise embeddings (feature-wise) ===
+    preds_norm = (preds - preds.mean(axis=0)) / (preds.std(axis=0) + 1e-8)
+    gt_norm    = (clip_flat - clip_flat.mean(axis=0)) / (clip_flat.std(axis=0) + 1e-8)
+
 
     # === (1) MSE already computed ===
     # === (2) Cosine(pred, gt) ===
