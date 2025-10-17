@@ -184,15 +184,29 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
         mse_loss = F.mse_loss(preds_tensor, gt_tensor).item()
         preds = preds_tensor.cpu().numpy()
 
-    # === Correct label mapping (block-major flatten) ===
-    b, c, s = 7, len(cfg["class_subset"]), 5  # blocks, classes, segments
-    block_labels = np.tile(np.arange(c), b * s)  # class order repeats per block×segment
-    labels = block_labels[:eeg_flat.shape[0]]
+    # === Correct label mapping (for any split size) ===
+    num_classes = len(cfg["class_subset"])
+    b = eeg_flat.shape[0] // (num_classes * 5)  # number of blocks in this split (1 for val/test, 5 for train)
+    s = 5  # segments per class per block
+    labels = np.tile(np.arange(num_classes), b * s)
+    labels = labels[:eeg_flat.shape[0]]
     print("labels:", labels.shape, "unique:", np.unique(labels, return_counts=True))
+
 
     # === Normalise embeddings (L2 per vector) ===
     preds_norm = preds / (np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8)
     gt_norm = clip_flat / (np.linalg.norm(clip_flat, axis=1, keepdims=True) + 1e-8)
+
+    # === Debug prints for collapse inspection ===
+    print("---- Debug: collapse check ----")
+    print("preds_norm shape:", preds_norm.shape)
+    print("preds_norm mean (first 5 dims):", np.mean(preds_norm[:, :5], axis=0))
+    print("preds_norm std across samples:", np.std(preds_norm, axis=0).mean())
+    print("gt_norm std across samples:", np.std(gt_norm, axis=0).mean())
+    print("pairwise cosine range:",
+          np.min(np.matmul(preds_norm, preds_norm.T)),
+          np.max(np.matmul(preds_norm, preds_norm.T)))
+    print("------------------------------")
 
     # === (1) MSE already computed ===
     # === (2) Cosine(pred, gt) ===
