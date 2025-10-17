@@ -19,7 +19,7 @@ PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffus
 OUTPUT_ROOT        = "/content/drive/MyDrive/EEG2Video_results/inference"
 
 NUM_INFERENCE      = 50
-GUIDANCE_SCALE     = 12.5
+GUIDANCE_SCALE     = 8
 
 
 # ==========================================
