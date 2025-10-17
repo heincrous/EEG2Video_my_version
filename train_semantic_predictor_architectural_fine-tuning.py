@@ -370,10 +370,34 @@ def run_inference_and_save(model, eeg_flat, cfg):
 
 
 # ==========================================
+# Cleanup Module
+# ==========================================
+def clean_old_predictions(cfg):
+    pred_dir = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/predictions"
+    os.makedirs(pred_dir, exist_ok=True)
+
+    subset_name = "_".join(map(str, cfg["class_subset"]))
+    target_pattern = f"{subset_name}.npy"
+
+    deleted_files = []
+    for f in os.listdir(pred_dir):
+        if f == target_pattern:
+            file_path = os.path.join(pred_dir, f)
+            os.remove(file_path)
+            deleted_files.append(file_path)
+
+    if deleted_files:
+        print(f"[Cleanup] Removed old prediction file(s): {deleted_files}")
+    else:
+        print(f"[Cleanup] No existing prediction file for subset {subset_name}.")
+
+
+# ==========================================
 # Main
 # ==========================================
 def main():
     cfg = CONFIG
+    clean_old_predictions(cfg)
     eeg, clip = load_de_data(cfg)
     tr_eeg, va_eeg, te_eeg, tr_clip, va_clip, te_clip = prepare_data(eeg, clip, cfg)
     dataset = EEGTextDataset(tr_eeg, tr_clip)
