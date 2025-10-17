@@ -183,74 +183,61 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
         preds_tensor = model(eeg_tensor)
         mse_loss = F.mse_loss(preds_tensor, gt_tensor).item()
         preds = preds_tensor.cpu().numpy()
+        gt = clip_flat
 
-    # === Correct label mapping (for any split size) ===
+    # === Basic label mapping ===
     num_classes = len(cfg["class_subset"])
-    b = eeg_flat.shape[0] // (num_classes * 5)  # number of blocks in this split (1 for val/test, 5 for train)
-    s = 5  # segments per class per block
-    labels = np.tile(np.arange(num_classes), b * s)
+    samples_per_class = eeg_flat.shape[0] // num_classes
+    labels = np.repeat(np.arange(num_classes), samples_per_class)
     labels = labels[:eeg_flat.shape[0]]
     print("labels:", labels.shape, "unique:", np.unique(labels, return_counts=True))
 
-
-    # === Normalise embeddings (L2 per vector) ===
+    # === Normalize embeddings (L2 per vector) ===
     preds_norm = preds / (np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8)
-    gt_norm = clip_flat / (np.linalg.norm(clip_flat, axis=1, keepdims=True) + 1e-8)
-
-    # === Debug prints for collapse inspection ===
-    print("---- Debug: collapse check ----")
-    print("preds_norm shape:", preds_norm.shape)
-    print("preds_norm mean (first 5 dims):", np.mean(preds_norm[:, :5], axis=0))
-    print("preds_norm std across samples:", np.std(preds_norm, axis=0).mean())
-    print("gt_norm std across samples:", np.std(gt_norm, axis=0).mean())
-    print("pairwise cosine range:",
-          np.min(np.matmul(preds_norm, preds_norm.T)),
-          np.max(np.matmul(preds_norm, preds_norm.T)))
-    print("------------------------------")
+    gt_norm = gt / (np.linalg.norm(gt, axis=1, keepdims=True) + 1e-8)
 
     # === (1) MSE already computed ===
-    # === (2) Cosine(pred, gt) ===
+    # === (2) Average cosine(pred, gt) ===
     cosines = np.sum(preds_norm * gt_norm, axis=1)
     avg_cosine = float(np.mean(cosines))
 
-    # === Compute class means ===
-    class_means_gt = np.zeros((num_classes, gt_norm.shape[1]))
+    # === (3) Compute per-class mean embeddings ===
     class_means_pred = np.zeros((num_classes, preds_norm.shape[1]))
     for c in range(num_classes):
-        class_means_gt[c] = gt_norm[labels == c].mean(axis=0)
-        class_means_gt[c] /= np.linalg.norm(class_means_gt[c]) + 1e-8
         class_means_pred[c] = preds_norm[labels == c].mean(axis=0)
         class_means_pred[c] /= np.linalg.norm(class_means_pred[c]) + 1e-8
 
-    # === (3) Within-class cosine (pairwise) ===
-    within_class_scores = []
-    for c in range(num_classes):
-        class_preds = preds_norm[labels == c]
-        if class_preds.shape[0] > 1:
-            cos_vals = np.matmul(class_preds, class_preds.T)
-            cos_vals = cos_vals[np.triu_indices_from(cos_vals, k=1)]
-            within_class_scores.append(np.mean(cos_vals))
-    avg_within = float(np.mean(within_class_scores))
+    # === (4) Within-class similarity (sample → its class mean) ===
+    within_scores = []
+    for i, p in enumerate(preds_norm):
+        c = labels[i]
+        within_scores.append(np.dot(p, class_means_pred[c]))
+    avg_within = float(np.mean(within_scores))
 
-    # === (4) Between-class cosine (mean predictions across classes) ===
+    # === (5) Between-class similarity (sample → other class means) ===
     between_scores = []
-    for i in range(num_classes):
-        for j in range(i + 1, num_classes):
-            between_scores.append(float(np.dot(class_means_pred[i], class_means_pred[j])))
+    for i, p in enumerate(preds_norm):
+        c = labels[i]
+        other_means = class_means_pred[np.arange(num_classes) != c]
+        sims = np.dot(other_means, p)
+        between_scores.extend(sims)
     avg_between = float(np.mean(between_scores))
 
-    # === (5) Fisher-style separability ===
-    global_mean = np.mean(class_means_pred, axis=0)
-    sb = np.sum([(class_means_pred[c] - global_mean) @ (class_means_pred[c] - global_mean) for c in range(num_classes)])
-    sw = np.sum([np.sum((preds_norm[labels == c] - class_means_pred[c]) ** 2) for c in range(num_classes)])
+    # === (6) Fisher-style separability ===
+    global_mean = class_means_pred.mean(axis=0)
+    sb = np.sum([np.sum((m - global_mean) ** 2) for m in class_means_pred])
+    sw = np.sum([
+        np.sum((preds_norm[labels == c] - class_means_pred[c]) ** 2)
+        for c in range(num_classes)
+    ])
     fisher = sb / (sw + 1e-8)
 
-    # === (6) Accuracy: per-sample nearest ground-truth class mean ===
-    sims_to_gt = np.dot(preds_norm, class_means_gt.T)
-    pred_class = np.argmax(sims_to_gt, axis=1)
+    # === (7) Classification accuracy (nearest class mean) ===
+    sims_to_means = np.dot(preds_norm, class_means_pred.T)
+    pred_class = np.argmax(sims_to_means, axis=1)
     acc = np.mean(pred_class == labels)
 
-    # === Print ===
+    # === Print summary ===
     print(
         f"MSE: {mse_loss:.6f} | Cos(pred,gt): {avg_cosine:.4f} | "
         f"Within: {avg_within:.4f} | Between: {avg_between:.4f} | "
