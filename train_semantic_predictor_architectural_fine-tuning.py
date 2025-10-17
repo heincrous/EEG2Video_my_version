@@ -256,12 +256,55 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
 
 
 # ==========================================
+# Plot Training Metrics (Cosine & Accuracy)
+# ==========================================
+import os
+import matplotlib.pyplot as plt
+
+def save_training_plots(cosine_list, acc_list, cfg):
+    plots_dir = os.path.join(cfg["result_root"], "plots")
+    os.makedirs(plots_dir, exist_ok=True)
+
+    epochs = list(range(1, len(cosine_list) + 1))
+    batch_size = cfg["batch_size"]
+
+    # Plot 1: Cosine Similarity
+    plt.figure(figsize=(7, 5))
+    plt.plot(epochs, cosine_list, marker="o", color="blue")
+    plt.title(f"Cosine Similarity vs Epoch (Batch {batch_size})")
+    plt.xlabel("Epoch")
+    plt.ylabel("Cosine Similarity")
+    plt.grid(True)
+    plt.tight_layout()
+    cos_path = os.path.join(plots_dir, f"cosine_batch{batch_size}.png")
+    plt.savefig(cos_path, dpi=300)
+    plt.close()
+
+    # Plot 2: Accuracy
+    plt.figure(figsize=(7, 5))
+    plt.plot(epochs, [a * 100 for a in acc_list], marker="o", color="green")
+    plt.title(f"Semantic Accuracy vs Epoch (Batch {batch_size})")
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy (%)")
+    plt.grid(True)
+    plt.tight_layout()
+    acc_path = os.path.join(plots_dir, f"accuracy_batch{batch_size}.png")
+    plt.savefig(acc_path, dpi=300)
+    plt.close()
+
+    print(f"[Plot Saved] → {cos_path}")
+    print(f"[Plot Saved] → {acc_path}")
+
+
+# ==========================================
 # Training Loop
 # ==========================================
 def train_model(model, train_loader, val_eeg, val_clip, cfg):
     device = cfg["device"]
     optimizer = build_optimizer(model, cfg)
-    scheduler = build_scheduler(optimizer, cfg, len(train_loader))  # FIXED — pass loader length
+    scheduler = build_scheduler(optimizer, cfg, len(train_loader))
+
+    cosine_history, acc_history = [], []
 
     for epoch in tqdm(range(1, cfg["epochs"] + 1)):
         model.train()
@@ -270,26 +313,22 @@ def train_model(model, train_loader, val_eeg, val_clip, cfg):
         for eeg, clip in train_loader:
             eeg, clip = eeg.float().to(device), clip.float().to(device)
             optimizer.zero_grad()
-
-            # === Forward & Loss ===
             pred = model(eeg)
             loss = F.mse_loss(pred, clip)
-
-            # === Backprop ===
             loss.backward()
             optimizer.step()
-
-            # === Step scheduler per batch (correct for CosineAnnealing) ===
             if scheduler is not None:
                 scheduler.step()
-
             epoch_loss += loss.item()
 
-        # === Epoch summary ===
         if epoch % 10 == 0:
             avg_loss = epoch_loss / len(train_loader)
             print(f"\n[Epoch {epoch}/{cfg['epochs']}] AvgLoss={avg_loss:.6f}")
-            evaluate_model(model, val_eeg, val_clip, cfg)
+            _, avg_cosine, _, _, _, acc = evaluate_model(model, val_eeg, val_clip, cfg)
+            cosine_history.append(avg_cosine)
+            acc_history.append(acc)
+
+    save_training_plots(cosine_history, acc_history, cfg)
 
 
 # ==========================================
