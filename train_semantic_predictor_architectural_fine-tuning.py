@@ -293,7 +293,7 @@ def save_training_plots(cosine_list, acc_list, val_loss_list, cfg):
     plots_dir = cfg["result_root"]
     os.makedirs(plots_dir, exist_ok=True)
 
-    epochs = list(range(10, 10 * len(cosine_list) + 1))
+    epochs = [i * 10 for i in range(1, len(cosine_list) + 1)]
     batch_size = cfg["batch_size"]
 
     # Plot 1: Validation MSE
