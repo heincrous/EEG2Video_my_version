@@ -76,14 +76,10 @@ print(f"Loaded predictions shape: {sem_preds_all.shape}, total samples: {total_s
 # ==========================================
 # Negative Embedding (Mean of Predictions)
 # ==========================================
-mean_sem = sem_preds_all.mean(axis=(0, 1), keepdims=True)  # expected [1,77,768]
-neg_embeddings = torch.tensor(mean_sem, dtype=torch.float16)
-
-# enforce correct shape
-if neg_embeddings.ndim == 2:
-    neg_embeddings = neg_embeddings.unsqueeze(0)
-
-neg_embeddings = neg_embeddings.to(device)
+# Flatten [num_classes, trials_per_class, 77, 768] → [num_classes*trials_per_class, 77, 768]
+flat_preds = sem_preds_all.reshape(-1, 77, 768)
+mean_sem   = flat_preds.mean(axis=0)                # average over all samples → [77,768]
+neg_embeddings = torch.tensor(mean_sem, dtype=torch.float16).unsqueeze(0).to(device)
 print(f"Using mean of all predictions as negative embedding. Shape: {tuple(neg_embeddings.shape)}")
 
 
