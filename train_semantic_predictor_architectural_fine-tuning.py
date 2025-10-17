@@ -104,27 +104,40 @@ class EEGTextDataset(Dataset):
 def load_de_data(cfg):
     eeg_path = os.path.join(cfg["eeg_root"], cfg["feature_type"], cfg["subject_name"])
     clip_path = cfg["clip_path"]
+
     eeg = np.load(eeg_path, allow_pickle=True)
     clip = np.load(clip_path, allow_pickle=True)
 
+    # Expect 6D: [7, 40, 5, 2, 62, 5]
     if eeg.ndim != 6:
-        raise ValueError(f"Expected 6D EEG array, got shape {eeg.shape}")
-    eeg = eeg.mean(axis=3)  # average across trials
-    print(f"EEG shape: {eeg.shape}, CLIP shape: {clip.shape}")
+        raise ValueError(f"Expected 6D EEG array [7,40,5,2,62,5], got {eeg.shape}")
+
+    # Average across trials (axis=3)
+    eeg = eeg.mean(axis=3)  # -> [7, 40, 5, 62, 5]
+
+    print(f"Loaded EEG {cfg['subject_name']} shape: {eeg.shape}")
+    print(f"Loaded CLIP shape: {clip.shape}")
     return eeg, clip
 
 
 def prepare_data(eeg, clip, cfg):
+    # Apply subset of classes
     eeg, clip = eeg[:, cfg["class_subset"]], clip[:, cfg["class_subset"]]
+
+    # Split into blocks: 5 train, 1 val, 1 test
     train_eeg, val_eeg, test_eeg = eeg[:5], eeg[5:6], eeg[6:]
     train_clip, val_clip, test_clip = clip[:5], clip[5:6], clip[6:]
 
-    flatten_eeg = lambda x: rearrange(x, "b c s ch t -> (b c s) (ch t)")
+    # Flatten EEG and CLIP correctly
+    # EEG: [b, c, s, ch, f] -> [(b c s), (ch f)]
+    # CLIP: [b, c, s, tok, dim] -> [(b c s), (tok dim)]
+    flatten_eeg = lambda x: rearrange(x, "b c s ch f -> (b c s) (ch f)")
     flatten_clip = lambda x: rearrange(x, "b c s tok dim -> (b c s) (tok dim)")
 
     train_eeg, val_eeg, test_eeg = map(flatten_eeg, [train_eeg, val_eeg, test_eeg])
     train_clip, val_clip, test_clip = map(flatten_clip, [train_clip, val_clip, test_clip])
 
+    # Fit scaler on all EEG before splitting
     scaler = StandardScaler()
     scaler.fit(eeg.reshape(-1, eeg.shape[-2] * eeg.shape[-1]))
     train_eeg = scaler.transform(train_eeg)
@@ -132,7 +145,9 @@ def prepare_data(eeg, clip, cfg):
     test_eeg = scaler.transform(test_eeg)
 
     print(f"[Scaler] mean={np.mean(train_eeg):.5f}, std={np.std(train_eeg):.5f}")
+    print(f"Train EEG shape: {train_eeg.shape}, Train CLIP shape: {train_clip.shape}")
     return train_eeg, val_eeg, test_eeg, train_clip, val_clip, test_clip
+
 
 
 # ==========================================
