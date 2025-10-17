@@ -2,7 +2,7 @@
 # EEG2Video – Semantic-Only Inference (Predictions → Video)
 # ==========================================
 import os, gc, re, shutil, torch, numpy as np
-from diffusers import AutoencoderKL, DDIMScheduler
+from diffusers import AutoencoderKL, DDIMScheduler, DPMSolverMultistepScheduler
 from transformers import CLIPTokenizer, CLIPTextModel
 from core.unet import UNet3DConditionModel
 from pipelines.my_pipeline import TuneAVideoPipeline
@@ -18,8 +18,9 @@ BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 OUTPUT_ROOT        = "/content/drive/MyDrive/EEG2Video_results/inference"
 
-NUM_INFERENCE      = 100
+NUM_INFERENCE      = 30
 GUIDANCE_SCALE     = 12.5 # 8 worked decently
+USE_DPM_SOLVER = True  # set False to use DDIM
 
 
 # ==========================================
@@ -86,15 +87,20 @@ print(f"Using mean of all predictions as negative embedding. Shape: {tuple(neg_e
 # ==========================================
 # Diffusion Pipeline (Pretrained Only)
 # ==========================================
+scheduler_class = DPMSolverMultistepScheduler if USE_DPM_SOLVER else DDIMScheduler
+
 pipe = TuneAVideoPipeline(
     vae=AutoencoderKL.from_pretrained(PRETRAINED_SD_PATH, subfolder="vae", torch_dtype=torch.float16),
     text_encoder=CLIPTextModel.from_pretrained(PRETRAINED_SD_PATH, subfolder="text_encoder", torch_dtype=torch.float16),
     tokenizer=CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer"),
     unet=UNet3DConditionModel.from_pretrained_2d(PRETRAINED_SD_PATH, subfolder="unet"),
-    scheduler=DDIMScheduler.from_pretrained(PRETRAINED_SD_PATH, subfolder="scheduler"),
+    scheduler=scheduler_class.from_pretrained(PRETRAINED_SD_PATH, subfolder="scheduler"),
 ).to(device)
+
 pipe.unet.to(torch.float16)
 pipe.enable_vae_slicing()
+
+print(f"Scheduler: {'DPM-Solver-Multistep' if USE_DPM_SOLVER else 'DDIM'}")
 
 
 # ==========================================
