@@ -61,7 +61,7 @@ else:  # epoch
 CONFIG = {
     "dropout": 0.0,
     "layer_widths": [10000, 10000, 10000, 10000],
-    "activation": "ReLU",
+    "activation": "SiLU",
     "normalization": "None",
     "feature_type": "EEG_DE_1per1s",
     "subject_name": "sub1.npy",
