@@ -18,8 +18,8 @@ BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
 OUTPUT_ROOT        = "/content/drive/MyDrive/EEG2Video_results/inference"
 
-NUM_INFERENCE      = 30
-GUIDANCE_SCALE     = 12.5 # 8 worked decently
+NUM_INFERENCE      = 50
+GUIDANCE_SCALE     = 8 # 8 worked decently
 USE_DPM_SOLVER = True  # set False to use DDIM
 
 
