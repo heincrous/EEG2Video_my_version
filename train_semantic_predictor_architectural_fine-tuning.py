@@ -155,16 +155,17 @@ def prepare_data(eeg, clip, cfg):
 def build_optimizer(model, cfg):
     opt = cfg["optimizer"].lower()
     if opt == "adam":
-        return torch.optim.Adam(model.parameters(), lr=cfg["lr"], weight_decay=0.0)
+        return torch.optim.Adam(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
     if opt == "adamw":
         return torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
     raise ValueError("Unsupported optimizer type.")
 
 
-def build_scheduler(optimizer, cfg):
+def build_scheduler(optimizer, cfg, steps_per_epoch):
     sched = cfg["scheduler"].lower()
     if sched == "cosine":
-        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cfg["epochs"] * len(train_loader))
+        total_steps = cfg["epochs"] * steps_per_epoch
+        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
     if sched == "constant":
         return None
     raise ValueError("Unsupported scheduler type.")
@@ -254,24 +255,34 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
 def train_model(model, train_loader, val_eeg, val_clip, cfg):
     device = cfg["device"]
     optimizer = build_optimizer(model, cfg)
-    scheduler = build_scheduler(optimizer, cfg)
+    scheduler = build_scheduler(optimizer, cfg, len(train_loader))  # FIXED — pass loader length
 
     for epoch in tqdm(range(1, cfg["epochs"] + 1)):
         model.train()
-        epoch_loss = 0
+        epoch_loss = 0.0
+
         for eeg, clip in train_loader:
             eeg, clip = eeg.float().to(device), clip.float().to(device)
             optimizer.zero_grad()
-            loss = F.mse_loss(model(eeg), clip)
+
+            # === Forward & Loss ===
+            pred = model(eeg)
+            loss = F.mse_loss(pred, clip)
+
+            # === Backprop ===
             loss.backward()
             optimizer.step()
-            epoch_loss += loss.item()
-            if scheduler:
+
+            # === Step scheduler per batch (correct for CosineAnnealing) ===
+            if scheduler is not None:
                 scheduler.step()
 
+            epoch_loss += loss.item()
+
+        # === Epoch summary ===
         if epoch % 10 == 0:
-            print(f"\n[Epoch {epoch}/{cfg['epochs']}] AvgLoss={epoch_loss/len(train_loader):.6f}")
-            print("val_eeg:", val_eeg.shape, "val_clip:", val_clip.shape)
+            avg_loss = epoch_loss / len(train_loader)
+            print(f"\n[Epoch {epoch}/{cfg['epochs']}] AvgLoss={avg_loss:.6f}")
             evaluate_model(model, val_eeg, val_clip, cfg)
 
 
