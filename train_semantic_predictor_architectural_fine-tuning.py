@@ -388,7 +388,7 @@ def save_results(cfg, metrics, exp_type, exp_mode):
     if exp_mode == "architectural":
         fname = (
             f"{exp_type}_lw{'-'.join(map(str, cfg['layer_widths']))}"
-            f"_do{cfg['dropout']}_act{cfg['activation']}_reg{cfg['normalization']}.txt"
+            f"_do{cfg['dropout']}_act{cfg['activation']}_norm{cfg['normalization']}.txt"
         )
     elif exp_mode == "optimisation":
         fname = (
