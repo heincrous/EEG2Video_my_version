@@ -70,7 +70,7 @@ CONFIG = {
     "normalisation": "LayerNorm",
     "lr": 0.0005,
     "optimizer": "adamw",
-    "weight_decay": 0.25,
+    "weight_decay": 0.5,
     "scheduler": "cosine",
     "device": "cuda:0" if torch.cuda.is_available() else "cpu",
     "eeg_root": "/content/drive/MyDrive/EEG2Video_data/processed",
