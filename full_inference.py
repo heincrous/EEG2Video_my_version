@@ -27,7 +27,7 @@ Video length: 6 frames (3 FPS)
 # Experiment Settings
 # ==========================================
 SUBSETS = {
-    "subset_A": [5, 13, 22, 36, 8],
+    # "subset_A": [5, 13, 22, 36, 8],
     "subset_B": [1, 9, 25, 39, 29],
     "subset_C": [0, 4, 7, 11, 28],
     "subset_D": [3, 6, 10, 12, 37],
