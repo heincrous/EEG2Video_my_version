@@ -48,8 +48,8 @@ Loss: MSE
 # ==========================================
 # Experiment Settings
 # ==========================================
-EXPERIMENT_MODE = "architectural"          # "epoch", "architectural", "optimisation"
-EXPERIMENT_TYPE = "layer_widths"     # any label (used only for naming)
+EXPERIMENT_MODE = "optimisation"          # "epoch", "architectural", "optimisation"
+EXPERIMENT_TYPE = "learning_rate"     # any label (used only for naming)
 
 if EXPERIMENT_MODE == "architectural":
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/architectural_fine-tuning"
@@ -76,7 +76,7 @@ CONFIG = {
     "eeg_root": "/content/drive/MyDrive/EEG2Video_data/processed",
     "clip_path": "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy",
     "result_root": RESULT_ROOT,
-    "run_inference": True,
+    "run_inference": False,
 }
 
 
