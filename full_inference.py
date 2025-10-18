@@ -98,7 +98,8 @@ def run_inference_for_subset(subset_name, class_subset, cfg, pipe):
     sem_path = os.path.join(
         cfg["pred_root"], f"{'_'.join(map(str, class_subset))}.npy"
     )
-    out_dir = os.path.join(cfg["output_root"], subset_name)
+    subset_name_num = "_".join(map(str, class_subset))
+    out_dir = os.path.join(cfg["output_root"], subset_name_num)
     os.makedirs(out_dir, exist_ok=True)
 
     # Cleanup
