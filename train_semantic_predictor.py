@@ -68,7 +68,7 @@ CONFIG = {
     "dropout": 0.5,
     "activation": "ReLU",
     "normalisation": "LayerNorm",
-    "lr": 0.0005,
+    "lr": 0.0001,
     "optimizer": "adam",
     "weight_decay": 0.0,
     "scheduler": "cosine",
