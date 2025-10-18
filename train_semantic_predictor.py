@@ -28,10 +28,10 @@ Activation: ReLU
 Normalisation: None
 
 Optimisation:
+Learning rate: 0.0005
 Optimiser: Adam
 Weight decay: 0.0
 Scheduler: cosine
-Learning rate: 0.0005
 
 Adam
 No weight decay
@@ -49,7 +49,7 @@ Loss: MSE
 # Experiment Settings
 # ==========================================
 EXPERIMENT_MODE = "optimisation"          # "epoch", "architectural", "optimisation"
-EXPERIMENT_TYPE = "optimiser"     # any label (used only for naming)
+EXPERIMENT_TYPE = "learning_rate"     # any label (used only for naming)
 
 if EXPERIMENT_MODE == "architectural":
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/architectural_fine-tuning"
@@ -65,13 +65,13 @@ CONFIG = {
     "epochs": 50,
     "batch_size": 32,
     "layer_widths": [10000, 10000, 10000, 10000],
-    "dropout": 0.5,
+    "dropout": 0.0,
     "activation": "ReLU",
     "normalisation": "LayerNorm",
     "lr": 0.0005,
-    "optimizer": "adamw",
-    "weight_decay": 0.5,
-    "scheduler": "cosine",
+    "optimizer": "adam",
+    "weight_decay": 0.0,
+    "scheduler": "constant",
     "device": "cuda:0" if torch.cuda.is_available() else "cpu",
     "eeg_root": "/content/drive/MyDrive/EEG2Video_data/processed",
     "clip_path": "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy",
