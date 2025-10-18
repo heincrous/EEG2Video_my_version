@@ -1,6 +1,5 @@
 # ==========================================
-# EEG → CLIP Semantic Predictor (DE-Only, MSE Loss)
-# Modular Version
+# Semantic Predictor
 # ==========================================
 import os
 import numpy as np
@@ -16,10 +15,10 @@ from tqdm import tqdm
 
 
 # ==========================================
-# Config Block
+# Default Configuration
 # ==========================================
 """
-DEFAULT MODEL
+DEFAULT MODEL CONFIGURATION
 
 Architecture:
 Layer width: [10000, 10000, 10000, 10000]
@@ -48,8 +47,10 @@ Loss: MSE
 # ==========================================
 # Experiment Settings
 # ==========================================
-EXPERIMENT_MODE = "optimisation"          # "epoch", "architectural", "optimisation"
-EXPERIMENT_TYPE = "scheduler"     # any label (used only for naming)
+# Architectural or optimisation
+EXPERIMENT_MODE = "optimisation"
+# Layer_widths, dropout, activation, normalisation or learning_rate, optimiser, scheduler
+EXPERIMENT_TYPE = "scheduler"
 
 if EXPERIMENT_MODE == "architectural":
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/architectural_fine-tuning"
@@ -75,7 +76,7 @@ CONFIG = {
     "activation": "ReLU",
     "normalisation": "LayerNorm",
     "lr": 0.0005,
-    "optimizer": "adam",
+    "optimiser": "adam",
     "weight_decay": 0.0,
     "scheduler": "cosine",
     "device": "cuda:0" if torch.cuda.is_available() else "cpu",
@@ -189,20 +190,20 @@ def prepare_data(eeg, clip, cfg):
 # ==========================================
 # Optimiser and Scheduler
 # ==========================================
-def build_optimizer(model, cfg):
-    opt = cfg["optimizer"].lower()
+def build_optimiser(model, cfg):
+    opt = cfg["optimiser"].lower()
     if opt == "adam":
         return torch.optim.Adam(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
     if opt == "adamw":
         return torch.optim.AdamW(model.parameters(), lr=cfg["lr"], weight_decay=cfg["weight_decay"])
-    raise ValueError("Unsupported optimizer type.")
+    raise ValueError("Unsupported optimiser type.")
 
 
-def build_scheduler(optimizer, cfg, steps_per_epoch):
+def build_scheduler(optimiser, cfg, steps_per_epoch):
     sched = cfg["scheduler"].lower()
     if sched == "cosine":
         total_steps = cfg["epochs"] * steps_per_epoch
-        return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
+        return torch.optim.lr_scheduler.CosineAnnealingLR(optimiser, T_max=total_steps)
     if sched == "constant":
         return None
     raise ValueError("Unsupported scheduler type.")
@@ -223,42 +224,41 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
         preds = preds_tensor.cpu().numpy()
         gt = clip_flat
 
-    # === Basic label mapping ===
+    # Basic label mapping
     num_classes = len(cfg["class_subset"])
     samples_per_class = eeg_flat.shape[0] // num_classes
     labels = np.repeat(np.arange(num_classes), samples_per_class)
     labels = labels[:eeg_flat.shape[0]]
-    # print("labels:", labels.shape, "unique:", np.unique(labels, return_counts=True))
 
-    # === Normalize embeddings (L2 per vector) ===
+    # Normalise embeddings (L2 per vector) ===
     preds_norm = preds / (np.linalg.norm(preds, axis=1, keepdims=True) + 1e-8)
     gt_norm = gt / (np.linalg.norm(gt, axis=1, keepdims=True) + 1e-8)
 
-    # === (1) MSE already computed ===
-    # === (2) Average cosine(pred, gt) ===
+    # MSE already computed
+    # Average cosine(pred, gt)
     cosines = np.sum(preds_norm * gt_norm, axis=1)
     avg_cosine = float(np.mean(cosines))
 
-    # === (3.1) Compute per-class mean embeddings ===
+    # Compute per-class mean embeddings
     class_means_pred = np.zeros((num_classes, preds_norm.shape[1]))
     for c in range(num_classes):
         class_means_pred[c] = preds_norm[labels == c].mean(axis=0)
         class_means_pred[c] /= np.linalg.norm(class_means_pred[c]) + 1e-8
 
-    # === (3.2) Compute ground-truth class means ===
+    # Compute ground-truth class means
     class_means_gt = np.zeros((num_classes, gt_norm.shape[1]))
     for c in range(num_classes):
         class_means_gt[c] = gt_norm[labels == c].mean(axis=0)
         class_means_gt[c] /= np.linalg.norm(class_means_gt[c]) + 1e-8
 
-    # === (4) Within-class similarity (sample → its class mean) ===
+    # Within-class similarity (sample → its class mean)
     within_scores = []
     for i, p in enumerate(preds_norm):
         c = labels[i]
         within_scores.append(np.dot(p, class_means_pred[c]))
     avg_within = float(np.mean(within_scores))
 
-    # === (5) Between-class similarity (sample → other class means) ===
+    # Between-class similarity (sample → other class means)
     between_scores = []
     for i, p in enumerate(preds_norm):
         c = labels[i]
@@ -267,7 +267,7 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
         between_scores.extend(sims)
     avg_between = float(np.mean(between_scores))
 
-    # === (6) Fisher-style separability ===
+    # Fisher-style separability
     global_mean = class_means_pred.mean(axis=0)
     sb = np.sum([np.sum((m - global_mean) ** 2) for m in class_means_pred])
     sw = np.sum([
@@ -276,12 +276,12 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
     ])
     fisher = sb / (sw + 1e-8)
 
-    # === (7) Classification accuracy (nearest class mean) ===
+    # Classification accuracy (nearest class mean)
     sims_to_means = np.dot(preds_norm, class_means_gt.T)
     pred_class = np.argmax(sims_to_means, axis=1)
     acc = np.mean(pred_class == labels)
 
-    # === Print summary ===
+    # Print summary
     print(
         f"MSE: {mse_loss:.6f} | Cos(pred,gt): {avg_cosine:.4f} | "
         f"Within: {avg_within:.4f} | Between: {avg_between:.4f} | "
@@ -348,8 +348,8 @@ def save_training_plots(cosine_list, acc_list, val_loss_list, cfg):
 # ==========================================
 def train_model(model, train_loader, val_eeg, val_clip, cfg):
     device = cfg["device"]
-    optimizer = build_optimizer(model, cfg)
-    scheduler = build_scheduler(optimizer, cfg, len(train_loader))
+    optimiser = build_optimiser(model, cfg)
+    scheduler = build_scheduler(optimiser, cfg, len(train_loader))
 
     cosine_history, acc_history, val_loss_history = [], [], []
 
@@ -359,11 +359,11 @@ def train_model(model, train_loader, val_eeg, val_clip, cfg):
 
         for eeg, clip in train_loader:
             eeg, clip = eeg.float().to(device), clip.float().to(device)
-            optimizer.zero_grad()
+            optimiser.zero_grad()
             pred = model(eeg)
             loss = F.mse_loss(pred, clip)
             loss.backward()
-            optimizer.step()
+            optimiser.step()
             if scheduler is not None:
                 scheduler.step()
             epoch_loss += loss.item()
@@ -398,7 +398,7 @@ def save_results(cfg, metrics, exp_type, exp_mode):
         )
     elif exp_mode == "optimisation":
         fname = (
-            f"{exp_type}_opt{cfg['optimizer']}_wd{cfg['weight_decay']}"
+            f"{exp_type}_opt{cfg['optimiser']}_wd{cfg['weight_decay']}"
             f"_sched{cfg['scheduler']}_lr{cfg['lr']}.txt"
         )
     else:
@@ -495,7 +495,7 @@ def clean_old_result_files(cfg, exp_type, exp_mode):
         )
     elif exp_mode == "optimisation":
         target_name = (
-            f"{exp_type}_opt{cfg['optimizer']}_wd{cfg['weight_decay']}"
+            f"{exp_type}_opt{cfg['optimiser']}_wd{cfg['weight_decay']}"
             f"_sched{cfg['scheduler']}_lr{cfg['lr']}.txt"
         )
     else:

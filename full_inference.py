@@ -1,5 +1,5 @@
 # ==========================================
-# EEG2Video – Semantic-Only Inference (Predictions → Video)
+# Inference
 # ==========================================
 import os, gc, re, shutil, torch, numpy as np
 from diffusers import AutoencoderKL, DDIMScheduler, DPMSolverMultistepScheduler
@@ -10,34 +10,155 @@ from core.util import save_videos_grid
 
 
 # ==========================================
-# Config
+# Default Configuration
 # ==========================================
-CLASS_SUBSET       = [1, 2, 3, 4, 5, 6, 7, 8, 10, 12],
-SEM_PATH           = f"/content/drive/MyDrive/EEG2Video_results/semantic_predictor/predictions/{'_'.join(map(str, CLASS_SUBSET))}.npy"
-BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
-PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
-OUTPUT_ROOT        = "/content/drive/MyDrive/EEG2Video_results/inference"
+"""
+DEFAULT INFERENCE CONFIGURATION
 
-NUM_INFERENCE      = 50
-GUIDANCE_SCALE     = 8 # 8 worked decently
-USE_DPM_SOLVER = True  # set False to use DDIM
+Model:
+Pretrained Stable Diffusion (v1-4)
+Scheduler: DDIMScheduler
+Guidance scale: 8
+Inference steps: 100
+Video length: 6 frames (3 FPS)
+"""
+
+# ==========================================
+# Experiment Settings
+# ==========================================
+SUBSETS = {
+    "subset_A": [4, 12, 26, 10, 2, 7, 24, 0, 14, 30],
+    "subset_B": [23, 8, 13, 1, 25, 9, 5, 29, 38, 11],
+    # "subset_C": [3, 22, 24, 14, 0, 26, 37, 9, 10, 13],
+    "subset_D": [8, 2, 5, 7, 12, 25, 38, 1, 4, 39],
+}
+
+CONFIG = {
+    "num_inference": 50,
+    "guidance_scale": 8,
+    "use_dpm_solver": True,
+    "video_length": 6,
+    "fps": 3,
+    "test_block": 6,
+    "pretrained_sd_path": "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4",
+    "pred_root": "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/predictions",
+    "blip_text_path": "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy",
+    "output_root": "/content/drive/MyDrive/EEG2Video_results/inference",
+    "device": "cuda" if torch.cuda.is_available() else "cpu",
+}
 
 
 # ==========================================
-# Output Directory
+# Memory Config
 # ==========================================
-subset_name = "_".join(map(str, CLASS_SUBSET))
-OUTPUT_DIR  = os.path.join(OUTPUT_ROOT, subset_name)
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+gc.collect()
+torch.cuda.empty_cache()
+
+
+# ==========================================
+# Diffusion Pipeline
+# ==========================================
+def load_pipeline(cfg):
+    scheduler_class = (
+        DPMSolverMultistepScheduler if cfg["use_dpm_solver"] else DDIMScheduler
+    )
+    pipe = TuneAVideoPipeline(
+        vae=AutoencoderKL.from_pretrained(
+            cfg["pretrained_sd_path"], subfolder="vae", torch_dtype=torch.float16
+        ),
+        text_encoder=CLIPTextModel.from_pretrained(
+            cfg["pretrained_sd_path"], subfolder="text_encoder", torch_dtype=torch.float16
+        ),
+        tokenizer=CLIPTokenizer.from_pretrained(
+            cfg["pretrained_sd_path"], subfolder="tokenizer"
+        ),
+        unet=UNet3DConditionModel.from_pretrained_2d(
+            cfg["pretrained_sd_path"], subfolder="unet"
+        ),
+        scheduler=scheduler_class.from_pretrained(
+            cfg["pretrained_sd_path"], subfolder="scheduler"
+        ),
+    ).to(cfg["device"])
+
+    pipe.unet.to(torch.float16)
+    pipe.enable_vae_slicing()
+
+    print(f"Scheduler: {'DPM-Solver-Multistep' if cfg['use_dpm_solver'] else 'DDIM'}")
+    return pipe
+
+
+# ==========================================
+# Inference
+# ==========================================
+def run_inference_for_subset(subset_name, class_subset, cfg, pipe):
+    print(f"\n=== Running inference for {subset_name}: {class_subset} ===")
+
+    # Paths
+    sem_path = os.path.join(
+        cfg["pred_root"], f"{'_'.join(map(str, class_subset))}.npy"
+    )
+    out_dir = os.path.join(cfg["output_root"], subset_name)
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Cleanup
+    cleanup_previous_outputs(out_dir)
+
+    # Load predictions + captions
+    print(f"Loading semantic predictions: {sem_path}")
+    sem_preds_all = np.load(sem_path, allow_pickle=True)
+    blip_text = np.load(cfg["blip_text_path"], allow_pickle=True)
+
+    num_classes, trials_per_class = sem_preds_all.shape[:2]
+    total_samples = num_classes * trials_per_class
+    print(f"Predictions shape: {sem_preds_all.shape} | Total samples: {total_samples}")
+
+    # Negative embedding
+    mean_sem = sem_preds_all.reshape(-1, 77, 768).mean(axis=0)
+    neg_embeddings = torch.tensor(mean_sem, dtype=torch.float16).unsqueeze(0).to(cfg["device"])
+    print(f"Negative embedding shape: {tuple(neg_embeddings.shape)}")
+
+    # Generate videos
+    flat_preds = sem_preds_all.reshape(total_samples, 77, 768)
+    test_block = cfg["test_block"]
+    sample_idx = 0
+
+    for ci, class_id in enumerate(class_subset):
+        print(f"\n[CLASS {class_id}] ------------------------------")
+        for trial in range(trials_per_class):
+            emb = flat_preds[sample_idx]
+            semantic_emb = torch.tensor(emb, dtype=torch.float16)
+            if semantic_emb.ndim == 2:
+                semantic_emb = semantic_emb.unsqueeze(0)
+            semantic_emb = semantic_emb.to(cfg["device"])
+
+            caption = str(blip_text[test_block, class_id, trial])
+            safe_caption = re.sub(r"[^a-zA-Z0-9_-]", "_", caption)[:120]
+
+            video = pipe(
+                prompt=semantic_emb,
+                negative_prompt=neg_embeddings,
+                video_length=cfg["video_length"],
+                height=288,
+                width=512,
+                num_inference_steps=cfg["num_inference"],
+                guidance_scale=cfg["guidance_scale"],
+            ).videos
+
+            out_path = os.path.join(out_dir, f"class{class_id}_trial{trial}_{safe_caption}.gif")
+            save_videos_grid(video, out_path, fps=cfg["fps"])
+            print(f"Saved {out_path}")
+
+            sample_idx += 1
 
 
 # ==========================================
 # Cleanup
 # ==========================================
-def cleanup_previous_outputs():
+def cleanup_previous_outputs(folder):
     deleted = 0
-    for f in os.listdir(OUTPUT_DIR):
-        path = os.path.join(OUTPUT_DIR, f)
+    for f in os.listdir(folder):
+        path = os.path.join(folder, f)
         try:
             if os.path.isfile(path) or os.path.islink(path):
                 os.remove(path)
@@ -47,109 +168,23 @@ def cleanup_previous_outputs():
                 deleted += 1
         except Exception as e:
             print(f"⚠️ Failed to delete {path}: {e}")
-    print(f"🧹 Deleted {deleted} previous file(s) from {OUTPUT_DIR}.")
-
-
-# ==========================================
-# Memory Config
-# ==========================================
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-gc.collect()
-torch.cuda.empty_cache()
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
-
-# ==========================================
-# Load Predictions + Captions
-# ==========================================
-print(f"Loading semantic predictor outputs from: {SEM_PATH}")
-sem_preds_all = np.load(SEM_PATH, allow_pickle=True)   # [num_classes, 5, 77, 768]
-blip_text     = np.load(BLIP_TEXT_PATH, allow_pickle=True)
-
-num_classes      = sem_preds_all.shape[0]
-trials_per_class = sem_preds_all.shape[1]
-test_block       = 6
-total_samples    = num_classes * trials_per_class
-
-print(f"Loaded predictions shape: {sem_preds_all.shape}, total samples: {total_samples}")
-
-
-# ==========================================
-# Negative Embedding (Mean of Predictions)
-# ==========================================
-# Flatten [num_classes, trials_per_class, 77, 768] → [num_classes*trials_per_class, 77, 768]
-flat_preds = sem_preds_all.reshape(-1, 77, 768)
-mean_sem   = flat_preds.mean(axis=0)                # average over all samples → [77,768]
-neg_embeddings = torch.tensor(mean_sem, dtype=torch.float16).unsqueeze(0).to(device)
-print(f"Using mean of all predictions as negative embedding. Shape: {tuple(neg_embeddings.shape)}")
-
-
-# ==========================================
-# Diffusion Pipeline (Pretrained Only)
-# ==========================================
-scheduler_class = DPMSolverMultistepScheduler if USE_DPM_SOLVER else DDIMScheduler
-
-pipe = TuneAVideoPipeline(
-    vae=AutoencoderKL.from_pretrained(PRETRAINED_SD_PATH, subfolder="vae", torch_dtype=torch.float16),
-    text_encoder=CLIPTextModel.from_pretrained(PRETRAINED_SD_PATH, subfolder="text_encoder", torch_dtype=torch.float16),
-    tokenizer=CLIPTokenizer.from_pretrained(PRETRAINED_SD_PATH, subfolder="tokenizer"),
-    unet=UNet3DConditionModel.from_pretrained_2d(PRETRAINED_SD_PATH, subfolder="unet"),
-    scheduler=scheduler_class.from_pretrained(PRETRAINED_SD_PATH, subfolder="scheduler"),
-).to(device)
-
-pipe.unet.to(torch.float16)
-pipe.enable_vae_slicing()
-
-print(f"Scheduler: {'DPM-Solver-Multistep' if USE_DPM_SOLVER else 'DDIM'}")
-
-
-# ==========================================
-# Inference
-# ==========================================
-def run_inference():
-    video_length, fps = 6, 3
-    flat_sem_preds = sem_preds_all.reshape(total_samples, 77, 768)
-    print(f"Flattened semantic embeddings: {flat_sem_preds.shape}")
-
-    sample_idx = 0
-    for ci, class_id in enumerate(CLASS_SUBSET):
-        print(f"\n[CLASS {class_id}] ------------------------------")
-        for trial in range(trials_per_class):
-            emb = flat_sem_preds[sample_idx]
-            semantic_emb = torch.tensor(emb, dtype=torch.float16)
-            if semantic_emb.ndim == 2:
-                semantic_emb = semantic_emb.unsqueeze(0)
-            semantic_emb = semantic_emb.to(device)
-            caption = str(blip_text[test_block, class_id, trial])
-
-            # Generate video
-            video = pipe(
-                prompt=semantic_emb,
-                negative_prompt=neg_embeddings,
-                video_length=video_length,
-                height=288,
-                width=512,
-                num_inference_steps=NUM_INFERENCE,
-                guidance_scale=GUIDANCE_SCALE,
-            ).videos
-
-            # Save GIF
-            safe_caption = re.sub(r"[^a-zA-Z0-9_-]", "_", caption)
-            if len(safe_caption) > 120:
-                safe_caption = safe_caption[:120]
-
-            out_gif = os.path.join(OUTPUT_DIR, f"class{class_id}_trial{trial}_{safe_caption}.gif")
-            save_videos_grid(video, out_gif, fps=fps)
-            print(f"Saved {out_gif}")
-
-            sample_idx += 1
+    print(f"🧹 Deleted {deleted} previous file(s) from {folder}.")
 
 
 # ==========================================
 # Main
 # ==========================================
+def main():
+    print("=== EEG2Video Semantic-Only Inference ===")
+    print(f"Device: {CONFIG['device']}")
+    print(f"Guidance scale: {CONFIG['guidance_scale']}")
+    pipe = load_pipeline(CONFIG)
+
+    for subset_name, class_subset in SUBSETS.items():
+        run_inference_for_subset(subset_name, class_subset, CONFIG, pipe)
+
+    print("\nAll subset inferences completed successfully.")
+
+
 if __name__ == "__main__":
-    print(f"Running semantic-only inference for subset {subset_name}")
-    print(f"Using pretrained Stable Diffusion | Guidance={GUIDANCE_SCALE}")
-    cleanup_previous_outputs()
-    run_inference()
+    main()
