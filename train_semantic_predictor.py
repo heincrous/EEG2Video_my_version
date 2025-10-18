@@ -58,10 +58,16 @@ elif EXPERIMENT_MODE == "optimisation":
 else:  # epoch
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/plots"
 
+SUBSETS = {
+    "subset_A": [4, 12, 26, 10, 2, 7, 24, 0, 14, 30],
+    "subset_B": [23, 8, 13, 1, 25, 9, 5, 29, 38, 11],
+    "subset_C": [3, 22, 24, 14, 0, 26, 37, 9, 10, 13],
+    "subset_D": [8, 2, 5, 7, 12, 25, 38, 1, 4, 39],
+}
+
 CONFIG = {
     "subject_name": "sub1.npy",
     "feature_type": "EEG_DE_1per1s",
-    "class_subset": [1, 2, 3, 4, 5, 6, 7, 8, 10, 12], # [0, 9, 11, 15, 18, 22, 24, 30, 33, 38] or [1, 2, 3, 4, 5, 6, 7, 8, 10, 12] or [13, 14, 16, 17, 19, 20, 21, 23, 25, 26] or [27, 28, 29, 31, 32, 34, 35, 36, 37, 39]
     "epochs": 50,
     "batch_size": 32,
     "layer_widths": [10000, 10000, 10000, 10000],
@@ -77,6 +83,7 @@ CONFIG = {
     "clip_path": "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy",
     "result_root": RESULT_ROOT,
     "run_inference": True,
+    "save_text_results": False,
 }
 
 
@@ -525,40 +532,59 @@ def clean_old_predictions(cfg):
 # ==========================================
 # Main
 # ==========================================
+# ==========================================
+# Main – Train or Inference for All Subsets
+# ==========================================
 def main():
-    cfg = CONFIG
-    eeg, clip = load_de_data(cfg)
-    tr_eeg, va_eeg, te_eeg, tr_clip, va_clip, te_clip = prepare_data(eeg, clip, cfg)
-    dataset = EEGTextDataset(tr_eeg, tr_clip)
-    loader = DataLoader(dataset, batch_size=cfg["batch_size"], shuffle=True)
-    model = CLIPSemanticMLP(input_dim=tr_eeg.shape[1], cfg=cfg).to(cfg["device"])
+    for name, subset in SUBSETS.items():
+        print(f"\n=== Running Semantic Predictor for {name}: {subset} ===")
+        cfg = CONFIG.copy()
+        cfg["class_subset"] = subset
 
-    # === Cleanup before training ===
-    if EXPERIMENT_MODE == "epoch":
-        clean_old_plots(cfg)
+        # Optional flags
+        cfg["save_text_results"] = False  # disables .txt metric saving during inference
+        cfg["result_root"] = os.path.join(CONFIG["result_root"], name)
+        os.makedirs(cfg["result_root"], exist_ok=True)
 
-    train_model(model, loader, va_eeg, va_clip, cfg)
-    print("\nFinal Test Evaluation:")
-    metrics = evaluate_model(model, te_eeg, te_clip, cfg)
+        # === Load and prepare data ===
+        eeg, clip = load_de_data(cfg)
+        tr_eeg, va_eeg, te_eeg, tr_clip, va_clip, te_clip = prepare_data(eeg, clip, cfg)
+        dataset = EEGTextDataset(tr_eeg, tr_clip)
+        loader = DataLoader(dataset, batch_size=cfg["batch_size"], shuffle=True)
+        model = CLIPSemanticMLP(input_dim=tr_eeg.shape[1], cfg=cfg).to(cfg["device"])
 
-    # === Save / Inference Logic ===
-    if EXPERIMENT_MODE == "epoch":
-        print("Experiment mode 'epoch' — only plots will be saved (no .txt files).")
-        if cfg["run_inference"]:
-            print("run_inference=True — running inference.")
-            clean_old_predictions(cfg)
-            run_inference_and_save(model, te_eeg, cfg)
+        # === Cleanup before training ===
+        if EXPERIMENT_MODE == "epoch":
+            clean_old_plots(cfg)
+
+        # === Train model ===
+        train_model(model, loader, va_eeg, va_clip, cfg)
+
+        print("\nFinal Test Evaluation:")
+        metrics = evaluate_model(model, te_eeg, te_clip, cfg)
+
+        # === Save / Inference Logic ===
+        if EXPERIMENT_MODE == "epoch":
+            # Epoch mode → no .txt files, only inference and plots
+            if cfg["run_inference"]:
+                clean_old_predictions(cfg)
+                run_inference_and_save(model, te_eeg, cfg)
+            else:
+                print("run_inference=False — skipping inference.")
         else:
-            print("run_inference=False — skipping inference.")
-    else:
-        clean_old_result_files(cfg, EXPERIMENT_TYPE, EXPERIMENT_MODE)
-        save_results(cfg, metrics, EXPERIMENT_TYPE, EXPERIMENT_MODE)
-        if cfg["run_inference"]:
-            print("run_inference=True — running inference.")
-            clean_old_predictions(cfg)
-            run_inference_and_save(model, te_eeg, cfg)
-        else:
-            print("run_inference=False — skipping inference.")
+            # Optimisation / architectural mode
+            if cfg.get("save_text_results", True):
+                clean_old_result_files(cfg, EXPERIMENT_TYPE, EXPERIMENT_MODE)
+                save_results(cfg, metrics, EXPERIMENT_TYPE, EXPERIMENT_MODE)
+            else:
+                print("[Info] Text result saving disabled for inference-only run.")
+
+            if cfg["run_inference"]:
+                print("Running inference-only mode (no .txt saving).")
+                clean_old_predictions(cfg)
+                run_inference_and_save(model, te_eeg, cfg)
+            else:
+                print("run_inference=False — skipping inference.")
 
 
 if __name__ == "__main__":

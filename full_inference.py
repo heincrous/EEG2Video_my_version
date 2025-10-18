@@ -12,7 +12,7 @@ from core.util import save_videos_grid
 # ==========================================
 # Config
 # ==========================================
-CLASS_SUBSET       = [0, 9, 11, 15, 18, 22, 24, 30, 33, 38]
+CLASS_SUBSET       = [1, 2, 3, 4, 5, 6, 7, 8, 10, 12],
 SEM_PATH           = f"/content/drive/MyDrive/EEG2Video_results/semantic_predictor/predictions/{'_'.join(map(str, CLASS_SUBSET))}.npy"
 BLIP_TEXT_PATH     = "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy"
 PRETRAINED_SD_PATH = "/content/drive/MyDrive/EEG2Video_checkpoints/stable-diffusion-v1-4"
