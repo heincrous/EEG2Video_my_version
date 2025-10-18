@@ -29,9 +29,9 @@ Video length: 6 frames (3 FPS)
 SUBSETS = {
     "subset_A": [37, 10, 12, 3, 6],
     "subset_B": [25, 29, 1, 39, 9],
-    "subset_C": [8, 36, 5, 13, 22],
-    "subset_D": [23, 2, 26, 38, 24],
-    "subset_E": [7, 28, 11, 4, 0],
+    # "subset_C": [8, 36, 5, 13, 22],
+    # "subset_D": [23, 2, 26, 38, 24],
+    # "subset_E": [7, 28, 11, 4, 0],
 }
 
 CONFIG = {
