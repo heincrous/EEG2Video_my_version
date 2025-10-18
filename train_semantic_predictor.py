@@ -60,11 +60,11 @@ else:  # epoch
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/plots"
 
 SUBSETS = {
-    "subset_A": [5, 13, 22, 36, 8],
-    "subset_B": [1, 9, 25, 39, 29],
-    "subset_C": [0, 4, 7, 11, 28],
-    "subset_D": [3, 6, 10, 12, 37],
-    "subset_E": [2, 23, 24, 26, 38],
+    "subset_A": [11, 7, 28, 0, 4],
+    "subset_B": [23, 26, 38, 2, 24],
+    "subset_C": [9, 39, 1, 25, 29],
+    "subset_D": [13, 22, 8, 36, 5],
+    "subset_E": [6, 10, 12, 37, 3],
 }
 
 CONFIG = {
