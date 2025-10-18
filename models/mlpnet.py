@@ -5,7 +5,7 @@ CONFIG = {
     "dropout": 0.0,                 # dropout probability
     "layer_widths": [512, 256],     # hidden layer sizes
     "activation": "GELU",           # activation type: "GELU", "ReLU", "SiLU", etc.
-    "normalization": None,          # "BatchNorm1d", "LayerNorm", or None
+    "normalisation": None,          # "BatchNorm1d", "LayerNorm", or None
     "input_dim": {"C": 62, "T": 5}  # default input shape
 }
 

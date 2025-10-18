@@ -9,7 +9,7 @@ CONFIG = {
     "pool_size": (1, 75),        # pooling window
     "pool_stride": (1, 15),      # pooling stride
     "activation": "ELU",         # "ELU", "GELU", "SiLU", etc.
-    "normalization": "BatchNorm",# "BatchNorm", "LayerNorm", "GroupNorm"
+    "normalisation": "BatchNorm",# "BatchNorm", "LayerNorm", "GroupNorm"
 }
 
 

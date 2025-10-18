@@ -6,7 +6,7 @@ CONFIG = {
     "layer_widths": [8, 16, 16],  # convolutional channel sizes
     "kernel_sizes": [(1, 64), (1, 16)],  # temporal filter sizes
     "activation": "ELU",          # "ELU", "GELU", "SiLU", etc.
-    "normalization": "BatchNorm", # "BatchNorm", "LayerNorm", "GroupNorm"
+    "normalisation": "BatchNorm", # "BatchNorm", "LayerNorm", "GroupNorm"
 }
 
 

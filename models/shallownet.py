@@ -9,7 +9,7 @@ CONFIG = {
     "pool_size": (1, 51),             # pooling window
     "pool_stride": (1, 5),            # pooling stride
     "activation": "ELU",              # "ELU", "GELU", "SiLU", etc.
-    "normalization": "BatchNorm",     # "BatchNorm", "LayerNorm", "GroupNorm"
+    "normalisation": "BatchNorm",     # "BatchNorm", "LayerNorm", "GroupNorm"
     "input_dim": {"C": 62, "T": 400}  # default input shape
 }
 
