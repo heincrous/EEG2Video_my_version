@@ -48,8 +48,8 @@ Loss: MSE
 # ==========================================
 # Experiment Settings
 # ==========================================
-EXPERIMENT_MODE = "optimisation"          # "epoch", "architectural", "optimisation"
-EXPERIMENT_TYPE = "scheduler"     # any label (used only for naming)
+EXPERIMENT_MODE = "architectural"          # "epoch", "architectural", "optimisation"
+EXPERIMENT_TYPE = "layer_widths"     # any label (used only for naming)
 
 if EXPERIMENT_MODE == "architectural":
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/architectural_fine-tuning"
@@ -59,25 +59,25 @@ else:  # epoch
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/plots"
 
 CONFIG = {
-    "dropout": 0.0,
-    "layer_widths": [10000, 10000, 10000, 10000],
-    "activation": "ReLU",
-    "normalisation": "None",
+    "dropout": 0.5,
+    "layer_widths": [2048, 2048, 2048, 2048],
+    "activation": "GELU",
+    "normalisation": "LayerNorm",
     "feature_type": "EEG_DE_1per1s",
     "subject_name": "sub1.npy",
     "class_subset": [0, 9, 11, 15, 18, 22, 24, 30, 33, 38],
     "subset_id": "1",
     "epochs": 50,
     "batch_size": 32,
-    "lr": 0.0005,
-    "optimizer": "adamw",
-    "scheduler": "constant",
+    "lr": 0.0001,
+    "optimizer": "adam",
+    "scheduler": "cosine",
     "weight_decay": 0.0,
     "device": "cuda:0" if torch.cuda.is_available() else "cpu",
     "eeg_root": "/content/drive/MyDrive/EEG2Video_data/processed",
     "clip_path": "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy",
     "result_root": RESULT_ROOT,
-    "run_inference": False,
+    "run_inference": True,
 }
 
 
