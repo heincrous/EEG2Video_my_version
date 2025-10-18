@@ -71,7 +71,7 @@ CONFIG = {
     "subject_name": "sub1.npy",
     "feature_type": "EEG_DE_1per1s",
     "epochs": 50,
-    "batch_size": 32,
+    "batch_size": 16,
     "layer_widths": [10000, 10000, 10000, 10000],
     "dropout": 0.0,
     "activation": "ReLU",
