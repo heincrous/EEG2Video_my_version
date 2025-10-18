@@ -71,12 +71,12 @@ CONFIG = {
     "lr": 0.0005,
     "optimizer": "adam",
     "weight_decay": 0.0,
-    "scheduler": "constant",
+    "scheduler": "cosine",
     "device": "cuda:0" if torch.cuda.is_available() else "cpu",
     "eeg_root": "/content/drive/MyDrive/EEG2Video_data/processed",
     "clip_path": "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy",
     "result_root": RESULT_ROOT,
-    "run_inference": False,
+    "run_inference": True,
 }
 
 
