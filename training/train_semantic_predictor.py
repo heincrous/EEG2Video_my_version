@@ -1,6 +1,11 @@
 # ==========================================
-# Semantic Predictor
+# SEMANTIC PREDICTOR (EEG → CLIP Embeddings)
 # ==========================================
+# Input: Preprocessed EEG DE/PSD features and CLIP embeddings
+# Process: Train MLP to map EEG → CLIP latent space
+# Output: Predicted embeddings (.npy) and evaluation metrics (.txt)
+# ==========================================
+
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -41,7 +46,6 @@ Training:
 Epochs: 200
 Batch size: 32
 Loss: MSE
-*Optimise values based on default model
 """
 
 # ==========================================
@@ -294,7 +298,7 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
 
 
 # ==========================================
-# Plot Training Metrics (Cosine & Accuracy)
+# Plot Training Metrics
 # ==========================================
 def save_training_plots(cosine_list, acc_list, val_loss_list, cfg):
     plots_dir = cfg["result_root"]
@@ -387,11 +391,11 @@ def train_model(model, train_loader, val_eeg, val_clip, cfg):
 def save_results(cfg, metrics, exp_type, exp_mode):
     mse, cos, within, between, fisher, acc = metrics
 
-    # === Create results directory ===
+    # Create results directory
     exp_dir = os.path.join(cfg["result_root"], exp_type)
     os.makedirs(exp_dir, exist_ok=True)
 
-    # === File naming rules ===
+    # File naming rules
     if exp_mode == "architectural":
         fname = (
             f"{exp_type}_lw{'-'.join(map(str, cfg['layer_widths']))}"
@@ -407,7 +411,7 @@ def save_results(cfg, metrics, exp_type, exp_mode):
 
     save_path = os.path.join(exp_dir, fname)
 
-    # === Write configuration and metrics ===
+    # Write configuration and metrics
     with open(save_path, "w") as f:
         f.write(f"EEG→CLIP Semantic Predictor ({exp_mode.capitalize()})\n")
         f.write("=" * 60 + "\n\n")
@@ -439,11 +443,11 @@ def run_inference_and_save(model, eeg_flat, cfg):
         preds_tensor = model(eeg_tensor)
         preds = preds_tensor.cpu().numpy()
 
-    # === Reshape to [num_classes, 5, 77, 768] ===
+    # Reshape to [num_classes, 5, 77, 768]
     num_classes = len(cfg["class_subset"])
     preds = preds.reshape(num_classes, 5, 77, 768)
 
-    # === Save predictions ===
+    # Save predictions
     pred_dir = os.path.join(
         "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/predictions"
     )
@@ -488,7 +492,7 @@ def clean_old_result_files(cfg, exp_type, exp_mode):
     if not os.path.exists(exp_dir):
         return
 
-    # === Recreate exact file name ===
+    # Recreate exact file name
     if exp_mode == "architectural":
         target_name = (
             f"{exp_type}_lw{'-'.join(map(str, cfg['layer_widths']))}"
@@ -533,9 +537,6 @@ def clean_old_predictions(cfg):
 # ==========================================
 # Main
 # ==========================================
-# ==========================================
-# Main – Train or Inference for All Subsets
-# ==========================================
 def main():
     for name, subset in SUBSETS.items():
         print(f"\n=== Running Semantic Predictor for {name}: {subset} ===")
@@ -547,24 +548,24 @@ def main():
         cfg["result_root"] = os.path.join(CONFIG["result_root"], name)
         os.makedirs(cfg["result_root"], exist_ok=True)
 
-        # === Load and prepare data ===
+        # Load and prepare data
         eeg, clip = load_de_data(cfg)
         tr_eeg, va_eeg, te_eeg, tr_clip, va_clip, te_clip = prepare_data(eeg, clip, cfg)
         dataset = EEGTextDataset(tr_eeg, tr_clip)
         loader = DataLoader(dataset, batch_size=cfg["batch_size"], shuffle=True)
         model = CLIPSemanticMLP(input_dim=tr_eeg.shape[1], cfg=cfg).to(cfg["device"])
 
-        # === Cleanup before training ===
+        # Cleanup before training
         if EXPERIMENT_MODE == "epoch":
             clean_old_plots(cfg)
 
-        # === Train model ===
+        # Train model
         train_model(model, loader, va_eeg, va_clip, cfg)
 
         print("\nFinal Test Evaluation:")
         metrics = evaluate_model(model, te_eeg, te_clip, cfg)
 
-        # === Save / Inference Logic ===
+        # Save / Inference Logic
         if EXPERIMENT_MODE == "epoch":
             # Epoch mode → no .txt files, only inference and plots
             if cfg["run_inference"]:

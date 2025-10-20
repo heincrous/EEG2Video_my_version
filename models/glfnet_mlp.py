@@ -5,7 +5,7 @@ CONFIG = {
     "dropout": 0.0,               # dropout probability; 0 default
     "layer_widths": [512, 256],   # hidden layer sizes; [512, 256] default
     "activation": "ELU",         # "ReLU", "ELU", "GELU", "SiLU"; ELU default
-    "normalisation": "BatchNorm", # "BatchNorm", "LayerNorm", "GroupNorm"; BatchNorm default
+    "normalisation": "LayerNorm", # "BatchNorm", "LayerNorm", "GroupNorm"; BatchNorm default
 }
 
 
@@ -22,14 +22,14 @@ class mlpnet(nn.Module):
         w = cfg["layer_widths"]
         p = cfg["dropout"]
 
-        # activation
+        # Activation
         act_fn = getattr(nn, cfg["activation"])() if hasattr(nn, cfg["activation"]) else nn.GELU()
 
-        # optional normalization factory
+        # Optional normalisation factory
         def norm_layer(dim):
-            if cfg["normalization"] == "LayerNorm":
+            if cfg["normalisation"] == "LayerNorm":
                 return nn.LayerNorm(dim)
-            elif cfg["normalization"] == "BatchNorm1d":
+            elif cfg["normalisation"] == "BatchNorm1d":
                 return nn.BatchNorm1d(dim)
             else:
                 return nn.Identity()

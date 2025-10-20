@@ -21,7 +21,7 @@ class mlpnet(nn.Module):
     def __init__(self, out_dim, input_dim=None, cfg=CONFIG):
         super(mlpnet, self).__init__()
 
-        # pull dimensions
+        # Pull dimensions
         C = cfg["input_dim"]["C"]
         T = cfg["input_dim"]["T"]
         in_dim = input_dim or (C * T)
@@ -29,12 +29,12 @@ class mlpnet(nn.Module):
         w = cfg["layer_widths"]
         p = cfg["dropout"]
 
-        # activation
+        # Activation
         act_fn = getattr(nn, cfg["activation"])() if hasattr(nn, cfg["activation"]) else nn.GELU()
 
-        # normalization factory
+        # Normalisation factory
         def norm_layer(dim):
-            norm = cfg["normalization"]
+            norm = cfg["normalisation"]
             if norm == "BatchNorm1d":
                 return nn.BatchNorm1d(dim)
             elif norm == "LayerNorm":
@@ -42,7 +42,7 @@ class mlpnet(nn.Module):
             else:
                 return nn.Identity()
 
-        # network definition
+        # Network definition
         self.net = nn.Sequential(
             nn.Flatten(),
             nn.Linear(in_dim, w[0]),

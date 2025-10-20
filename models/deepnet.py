@@ -24,21 +24,21 @@ class deepnet(nn.Module):
         w = cfg["layer_widths"]
         k = cfg["kernel_size"]
 
-        # activation
+        # Activation
         act_fn = getattr(nn, cfg["activation"])() if hasattr(nn, cfg["activation"]) else nn.ELU()
 
-        # normalization factory
+        # Normalisation factory
         def norm_layer(channels):
-            if cfg["normalization"] == "BatchNorm":
+            if cfg["normalisation"] == "BatchNorm":
                 return nn.BatchNorm2d(channels)
-            elif cfg["normalization"] == "LayerNorm":
+            elif cfg["normalisation"] == "LayerNorm":
                 return nn.LayerNorm([channels, 1, 1])
-            elif cfg["normalization"] == "GroupNorm":
+            elif cfg["normalisation"] == "GroupNorm":
                 return nn.GroupNorm(4, channels)
             else:
                 return nn.BatchNorm2d(channels)
 
-        # convolutional stack
+        # Convolutional stack
         self.net = nn.Sequential(
             nn.Conv2d(1, w[0], k, (1, 1)),
             nn.Conv2d(w[0], w[0], (C, 1), (1, 1)),
@@ -66,7 +66,7 @@ class deepnet(nn.Module):
             nn.Dropout(p),
         )
 
-        # dynamically infer flattened feature dimension
+        # Dynamically infer flattened feature dimension
         with torch.no_grad():
             dummy = torch.zeros(1, 1, C, T)
             feat_dim = self.net(dummy).view(1, -1).shape[1]

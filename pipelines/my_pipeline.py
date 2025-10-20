@@ -1,4 +1,20 @@
-# Adapted from https://github.com/huggingface/diffusers/blob/main/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py
+# ==========================================
+# TUNE-A-VIDEO PIPELINE (EEG-CONDITIONED)
+# ==========================================
+# Input:
+#   CLIP text embeddings or text prompts
+#   Pretrained Stable Diffusion VAE, UNet3DConditionModel, and Scheduler
+#
+# Process:
+#   - Encode text prompts or EEG-derived embeddings using CLIP
+#   - Run diffusion-based latent denoising using 3D UNet
+#   - Decode latents to reconstruct video frames
+#
+# Output:
+#   TuneAVideoPipelineOutput.videos
+#       Type: torch.Tensor or np.ndarray
+#       Shape: [B, C, F, H, W]
+# ==========================================
 
 import inspect
 from typing import Callable, List, Optional, Union
@@ -29,17 +45,29 @@ from einops import rearrange
 from core.unet import UNet3DConditionModel
 
 
+# ==========================================
+# LOGGER
+# ==========================================
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
+# ==========================================
+# OUTPUT DATACLASS
+# ==========================================
 @dataclass
 class TuneAVideoPipelineOutput(BaseOutput):
     videos: Union[torch.Tensor, np.ndarray]
 
 
+# ==========================================
+# MAIN PIPELINE CLASS
+# ==========================================
 class TuneAVideoPipeline(DiffusionPipeline):
     _optional_components = []
 
+    # ==========================================
+    # INITIALIZATION
+    # ==========================================
     def __init__(
         self,
         vae: AutoencoderKL,
@@ -57,14 +85,11 @@ class TuneAVideoPipeline(DiffusionPipeline):
     ):
         super().__init__()
 
+        # Handle scheduler config updates
         if hasattr(scheduler.config, "steps_offset") and scheduler.config.steps_offset != 1:
             deprecation_message = (
                 f"The configuration file of this scheduler: {scheduler} is outdated. `steps_offset`"
-                f" should be set to 1 instead of {scheduler.config.steps_offset}. Please make sure "
-                "to update the config accordingly as leaving `steps_offset` might led to incorrect results"
-                " in future versions. If you have downloaded this checkpoint from the Hugging Face Hub,"
-                " it would be very nice if you could open a Pull request for the `scheduler/scheduler_config.json`"
-                " file"
+                f" should be set to 1 instead of {scheduler.config.steps_offset}."
             )
             deprecate("steps_offset!=1", "1.0.0", deprecation_message, standard_warn=False)
             new_config = dict(scheduler.config)
@@ -73,32 +98,22 @@ class TuneAVideoPipeline(DiffusionPipeline):
 
         if hasattr(scheduler.config, "clip_sample") and scheduler.config.clip_sample is True:
             deprecation_message = (
-                f"The configuration file of this scheduler: {scheduler} has not set the configuration `clip_sample`."
-                " `clip_sample` should be set to False in the configuration file. Please make sure to update the"
-                " config accordingly as not setting `clip_sample` in the config might lead to incorrect results in"
-                " future versions. If you have downloaded this checkpoint from the Hugging Face Hub, it would be very"
-                " nice if you could open a Pull request for the `scheduler/scheduler_config.json` file"
+                f"The configuration file of this scheduler: {scheduler} has not set `clip_sample`."
+                " It should be set to False for correct results."
             )
             deprecate("clip_sample not set", "1.0.0", deprecation_message, standard_warn=False)
             new_config = dict(scheduler.config)
             new_config["clip_sample"] = False
             scheduler._internal_dict = FrozenDict(new_config)
 
+        # Handle UNet config updates
         is_unet_version_less_0_9_0 = hasattr(unet.config, "_diffusers_version") and version.parse(
             version.parse(unet.config._diffusers_version).base_version
         ) < version.parse("0.9.0.dev0")
         is_unet_sample_size_less_64 = hasattr(unet.config, "sample_size") and unet.config.sample_size < 64
         if is_unet_version_less_0_9_0 and is_unet_sample_size_less_64:
             deprecation_message = (
-                "The configuration file of the unet has set the default `sample_size` to smaller than"
-                " 64 which seems highly unlikely. If your checkpoint is a fine-tuned version of any of the"
-                " following: \n- CompVis/stable-diffusion-v1-4 \n- CompVis/stable-diffusion-v1-3 \n-"
-                " CompVis/stable-diffusion-v1-2 \n- CompVis/stable-diffusion-v1-1 \n- runwayml/stable-diffusion-v1-5"
-                " \n- runwayml/stable-diffusion-inpainting \n you should change 'sample_size' to 64 in the"
-                " configuration file. Please make sure to update the config accordingly as leaving `sample_size=32`"
-                " in the config might lead to incorrect results in future versions. If you have downloaded this"
-                " checkpoint from the Hugging Face Hub, it would be very nice if you could open a Pull request for"
-                " the `unet/config.json` file"
+                "UNet config sample_size < 64 detected; update to 64 for consistency."
             )
             deprecate("sample_size<64", "1.0.0", deprecation_message, standard_warn=False)
             new_config = dict(unet.config)
@@ -114,6 +129,9 @@ class TuneAVideoPipeline(DiffusionPipeline):
         )
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
 
+    # ==========================================
+    # MEMORY MANAGEMENT
+    # ==========================================
     def enable_vae_slicing(self):
         self.vae.enable_slicing()
 
@@ -125,98 +143,71 @@ class TuneAVideoPipeline(DiffusionPipeline):
             from accelerate import cpu_offload
         else:
             raise ImportError("Please install accelerate via `pip install accelerate`")
-
         device = torch.device(f"cuda:{gpu_id}")
+        for m in [self.unet, self.text_encoder, self.vae]:
+            if m is not None:
+                cpu_offload(m, device)
 
-        for cpu_offloaded_model in [self.unet, self.text_encoder, self.vae]:
-            if cpu_offloaded_model is not None:
-                cpu_offload(cpu_offloaded_model, device)
-
-
+    # ==========================================
+    # ENCODING PROMPTS
+    # ==========================================
     @property
     def _execution_device(self):
         if self.device != torch.device("meta") or not hasattr(self.unet, "_hf_hook"):
             return self.device
-        for module in self.unet.modules():
-            if (
-                hasattr(module, "_hf_hook")
-                and hasattr(module._hf_hook, "execution_device")
-                and module._hf_hook.execution_device is not None
-            ):
-                return torch.device(module._hf_hook.execution_device)
+        for m in self.unet.modules():
+            if hasattr(m, "_hf_hook") and hasattr(m._hf_hook, "execution_device") and m._hf_hook.execution_device:
+                return torch.device(m._hf_hook.execution_device)
         return self.device
 
     def _encode_prompt(self, prompt, device, num_videos_per_prompt, do_classifier_free_guidance, negative_prompt):
-        # Case 1: direct embeddings passed in
         if isinstance(prompt, torch.Tensor):
-            # expect [1, seq_len, hidden_dim]
             text_embeddings = prompt.to(device)
-            bs_embed, seq_len, dim = text_embeddings.shape
-
-            # repeat for multiple videos per prompt
+            bs, seq_len, dim = text_embeddings.shape
             text_embeddings = text_embeddings.repeat(1, num_videos_per_prompt, 1)
-            text_embeddings = text_embeddings.view(bs_embed * num_videos_per_prompt, seq_len, dim)
+            text_embeddings = text_embeddings.view(bs * num_videos_per_prompt, seq_len, dim)
 
             if do_classifier_free_guidance:
                 if not isinstance(negative_prompt, torch.Tensor):
-                    raise ValueError("When passing embeddings directly, negative_prompt must also be a tensor.")
-                uncond_embeddings = negative_prompt.to(device)
-                uncond_embeddings = uncond_embeddings.repeat(1, num_videos_per_prompt, 1)
-                uncond_embeddings = uncond_embeddings.view(bs_embed * num_videos_per_prompt, seq_len, dim)
-                text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
-
+                    raise ValueError("When passing embeddings, negative_prompt must also be a tensor.")
+                uncond = negative_prompt.to(device).repeat(1, num_videos_per_prompt, 1)
+                uncond = uncond.view(bs * num_videos_per_prompt, seq_len, dim)
+                text_embeddings = torch.cat([uncond, text_embeddings])
             return text_embeddings
 
-        # Case 2: fallback to original text → CLIP encoder
         batch_size = len(prompt) if isinstance(prompt, list) else 1
-
         text_inputs = self.tokenizer(
-            prompt,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            truncation=True,
-            return_tensors="pt",
+            prompt, padding="max_length", max_length=self.tokenizer.model_max_length,
+            truncation=True, return_tensors="pt"
         )
-        text_input_ids = text_inputs.input_ids
+        text_ids = text_inputs.input_ids
+        attention_mask = text_inputs.attention_mask.to(device) if getattr(
+            self.text_encoder.config, "use_attention_mask", False
+        ) else None
 
-        if hasattr(self.text_encoder.config, "use_attention_mask") and self.text_encoder.config.use_attention_mask:
-            attention_mask = text_inputs.attention_mask.to(device)
-        else:
-            attention_mask = None
-
-        text_embeddings = self.text_encoder(
-            text_input_ids.to(device),
-            attention_mask=attention_mask,
-        )[0]
-
-        bs_embed, seq_len, _ = text_embeddings.shape
+        text_embeddings = self.text_encoder(text_ids.to(device), attention_mask=attention_mask)[0]
+        bs, seq_len, _ = text_embeddings.shape
         text_embeddings = text_embeddings.repeat(1, num_videos_per_prompt, 1)
-        text_embeddings = text_embeddings.view(bs_embed * num_videos_per_prompt, seq_len, -1)
+        text_embeddings = text_embeddings.view(bs * num_videos_per_prompt, seq_len, -1)
 
         if do_classifier_free_guidance:
             uncond_tokens = [""] * batch_size if negative_prompt is None else negative_prompt
-            uncond_input = self.tokenizer(
-                uncond_tokens,
-                padding="max_length",
-                max_length=text_input_ids.shape[-1],
-                truncation=True,
-                return_tensors="pt",
+            uncond_inputs = self.tokenizer(
+                uncond_tokens, padding="max_length", max_length=text_ids.shape[-1],
+                truncation=True, return_tensors="pt"
             )
-            if hasattr(self.text_encoder.config, "use_attention_mask") and self.text_encoder.config.use_attention_mask:
-                attention_mask = uncond_input.attention_mask.to(device)
-            else:
-                attention_mask = None
-            uncond_embeddings = self.text_encoder(
-                uncond_input.input_ids.to(device),
-                attention_mask=attention_mask,
-            )[0]
-            uncond_embeddings = uncond_embeddings.repeat(1, num_videos_per_prompt, 1)
-            uncond_embeddings = uncond_embeddings.view(batch_size * num_videos_per_prompt, seq_len, -1)
-            text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
-
+            mask = uncond_inputs.attention_mask.to(device) if getattr(
+                self.text_encoder.config, "use_attention_mask", False
+            ) else None
+            uncond_emb = self.text_encoder(uncond_inputs.input_ids.to(device), attention_mask=mask)[0]
+            uncond_emb = uncond_emb.repeat(1, num_videos_per_prompt, 1)
+            uncond_emb = uncond_emb.view(batch_size * num_videos_per_prompt, seq_len, -1)
+            text_embeddings = torch.cat([uncond_emb, text_embeddings])
         return text_embeddings
 
-
+    # ==========================================
+    # LATENT DECODING
+    # ==========================================
     def decode_latents(self, latents):
         video_length = latents.shape[2]
         latents = 1 / 0.18215 * latents
@@ -224,59 +215,26 @@ class TuneAVideoPipeline(DiffusionPipeline):
         video = self.vae.decode(latents).sample
         video = rearrange(video, "(b f) c h w -> b c f h w", f=video_length)
         video = (video / 2 + 0.5).clamp(0, 1)
-        # we always cast to float32 as this does not cause significant overhead and is compatible with bfloa16
-        video = video.cpu().float().numpy()
-        return video
+        return video.cpu().float().numpy()
 
+    # ==========================================
+    # SAMPLING UTILITIES
+    # ==========================================
     def prepare_extra_step_kwargs(self, generator, eta):
-        # prepare extra kwargs for the scheduler step, since not all schedulers have the same signature
-        # eta (η) is only used with the DDIMScheduler, it will be ignored for other schedulers.
-        # eta corresponds to η in DDIM paper: https://arxiv.org/abs/2010.02502
-        # and should be between [0, 1]
-
-        accepts_eta = "eta" in set(inspect.signature(self.scheduler.step).parameters.keys())
-        extra_step_kwargs = {}
-        if accepts_eta:
-            extra_step_kwargs["eta"] = eta
-
-        # check if the scheduler accepts generator
-        accepts_generator = "generator" in set(inspect.signature(self.scheduler.step).parameters.keys())
-        if accepts_generator:
-            extra_step_kwargs["generator"] = generator
-        return extra_step_kwargs
-
-    def check_inputs(self, prompt, height, width, callback_steps):
-        if not isinstance(prompt, str) and not isinstance(prompt, list):
-            raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
-
-        if height % 8 != 0 or width % 8 != 0:
-            raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
-
-        if (callback_steps is None) or (
-            callback_steps is not None and (not isinstance(callback_steps, int) or callback_steps <= 0)
-        ):
-            raise ValueError(
-                f"`callback_steps` has to be a positive integer but is {callback_steps} of type"
-                f" {type(callback_steps)}."
-            )
+        extra = {}
+        if "eta" in inspect.signature(self.scheduler.step).parameters:
+            extra["eta"] = eta
+        if "generator" in inspect.signature(self.scheduler.step).parameters:
+            extra["generator"] = generator
+        return extra
 
     def prepare_latents(self, batch_size, num_channels_latents, video_length, height, width, dtype, device, generator, latents=None):
         shape = (batch_size, num_channels_latents, video_length, height // self.vae_scale_factor, width // self.vae_scale_factor)
-        if isinstance(generator, list) and len(generator) != batch_size:
-            raise ValueError(
-                f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
-                f" size of {batch_size}. Make sure the batch size matches the length of the generators."
-            )
-
         if latents is None:
             rand_device = "cpu" if device.type == "mps" else device
-
             if isinstance(generator, list):
                 shape = (1,) + shape[1:]
-                latents = [
-                    torch.randn(shape, generator=generator[i], device=rand_device, dtype=dtype)
-                    for i in range(batch_size)
-                ]
+                latents = [torch.randn(shape, generator=g, device=rand_device, dtype=dtype) for g in generator]
                 latents = torch.cat(latents, dim=0).to(device)
             else:
                 latents = torch.randn(shape, generator=generator, device=rand_device, dtype=dtype).to(device)
@@ -284,11 +242,11 @@ class TuneAVideoPipeline(DiffusionPipeline):
             if latents.shape != shape:
                 raise ValueError(f"Unexpected latents shape, got {latents.shape}, expected {shape}")
             latents = latents.to(device)
+        return latents * self.scheduler.init_noise_sigma
 
-        # scale the initial noise by the standard deviation required by the scheduler
-        latents = latents * self.scheduler.init_noise_sigma
-        return latents
-
+    # ==========================================
+    # FORWARD PASS
+    # ==========================================
     @torch.no_grad()
     def __call__(
         self,
@@ -309,82 +267,44 @@ class TuneAVideoPipeline(DiffusionPipeline):
         callback_steps: Optional[int] = 1,
         **kwargs,
     ):
-        # Default height and width to unet
         height = height or self.unet.config.sample_size * self.vae_scale_factor
-        width = width or self.unet.config.sample_size * self.vae_scale_factor
-
-        # Check inputs. Raise error if not correct
-        # self.check_inputs(prompt, height, width, callback_steps)
-
-        # Define call parameters
+        width  = width  or self.unet.config.sample_size * self.vae_scale_factor
         batch_size = 1 if isinstance(prompt, str) else len(prompt)
         device = self._execution_device
-        # here `guidance_scale` is defined analog to the guidance weight `w` of equation (2)
-        # of the Imagen paper: https://arxiv.org/pdf/2205.11487.pdf . `guidance_scale = 1`
-        # corresponds to doing no classifier free guidance.
-        do_classifier_free_guidance = guidance_scale > 1.0
+        do_cfg = guidance_scale > 1.0
 
-        # Encode input prompt
-        text_embeddings = self._encode_prompt(
-            prompt, device, num_videos_per_prompt, do_classifier_free_guidance, negative_prompt
-        )
-        
-
-        # Prepare timesteps
+        text_embeddings = self._encode_prompt(prompt, device, num_videos_per_prompt, do_cfg, negative_prompt)
         self.scheduler.set_timesteps(num_inference_steps, device=device)
         timesteps = self.scheduler.timesteps
 
-        # Prepare latent variables
         num_channels_latents = self.unet.in_channels
         latents = self.prepare_latents(
-            batch_size * num_videos_per_prompt,
-            num_channels_latents,
-            video_length,
-            height,
-            width,
-            text_embeddings.dtype,
-            device,
-            generator,
-            latents,
+            batch_size * num_videos_per_prompt, num_channels_latents,
+            video_length, height, width, text_embeddings.dtype, device, generator, latents
         )
-        latents_dtype = latents.dtype
+        extra_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
-        # Prepare extra step kwargs.
-        extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
-
-        # Denoising loop
-        num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
-        with self.progress_bar(total=num_inference_steps) as progress_bar:
+        num_warmup = len(timesteps) - num_inference_steps * self.scheduler.order
+        with self.progress_bar(total=num_inference_steps) as pbar:
             for i, t in enumerate(timesteps):
-                # expand the latents if we are doing classifier free guidance
-                latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-                latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                latent_in = torch.cat([latents] * 2) if do_cfg else latents
+                latent_in = self.scheduler.scale_model_input(latent_in, t)
 
-                # predict the noise residual
-                noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=text_embeddings).sample.to(dtype=latents_dtype)
+                noise_pred = self.unet(latent_in, t, encoder_hidden_states=text_embeddings).sample
+                if do_cfg:
+                    noise_uncond, noise_text = noise_pred.chunk(2)
+                    noise_pred = noise_uncond + guidance_scale * (noise_text - noise_uncond)
 
-                # perform guidance
-                if do_classifier_free_guidance:
-                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+                latents = self.scheduler.step(noise_pred, t, latents, **extra_kwargs).prev_sample
 
-                # compute the previous noisy sample x_t -> x_t-1
-                latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
-
-                # call the callback, if provided
-                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
-                    progress_bar.update()
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup and (i + 1) % self.scheduler.order == 0):
+                    pbar.update()
                     if callback is not None and i % callback_steps == 0:
                         callback(i, t, latents)
 
-        # Post-processing
         video = self.decode_latents(latents)
-
-        # Convert to tensor
         if output_type == "tensor":
             video = torch.from_numpy(video)
-
         if not return_dict:
             return video
-
         return TuneAVideoPipelineOutput(videos=video)

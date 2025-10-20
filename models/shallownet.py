@@ -25,21 +25,21 @@ class shallownet(nn.Module):
     def __init__(self, out_dim, C=None, T=None, cfg=CONFIG):
         super(shallownet, self).__init__()
 
-        # pull from config or override
+        # Pull from config or override
         C = C or cfg["input_dim"]["C"]
         T = T or cfg["input_dim"]["T"]
         w = cfg["layer_width"]
         p = cfg["dropout"]
 
-        # choose activation
+        # Choose activation
         act_fn = getattr(nn, cfg["activation"])() if hasattr(nn, cfg["activation"]) else nn.ELU()
 
-        # choose normalization
-        if cfg["normalization"] == "BatchNorm":
+        # Choose normalisation
+        if cfg["normalisation"] == "BatchNorm":
             norm = nn.BatchNorm2d(w)
-        elif cfg["normalization"] == "LayerNorm":
+        elif cfg["normalisation"] == "LayerNorm":
             norm = nn.LayerNorm([w, 1, 1])
-        elif cfg["normalization"] == "GroupNorm":
+        elif cfg["normalisation"] == "GroupNorm":
             norm = nn.GroupNorm(4, w)
         else:
             norm = nn.BatchNorm2d(w)
@@ -53,7 +53,7 @@ class shallownet(nn.Module):
             nn.Dropout(p),
         )
 
-        # dynamically compute flattened feature dimension
+        # Dynamically compute flattened feature dimension
         with torch.no_grad():
             dummy = torch.zeros(1, 1, C, T)
             feat_dim = self.net(dummy).view(1, -1).shape[1]

@@ -1,11 +1,6 @@
 # ==========================================
-# EEG Classification Script (DE-Only + Experiment Type)
+# EEG Classification Script
 # ==========================================
-# Performs subject-wise EEG classification using DE features only.
-# Uses GLFNet-MLP encoder and saves results under experiment-type folders.
-# ==========================================
-
-
 # === Imports ===
 import os
 import numpy as np

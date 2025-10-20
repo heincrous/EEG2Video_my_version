@@ -24,21 +24,21 @@ class eegnet(nn.Module):
         w = cfg["layer_widths"]
         k = cfg["kernel_sizes"]
 
-        # activation
+        # Activation
         act_fn = getattr(nn, cfg["activation"])() if hasattr(nn, cfg["activation"]) else nn.ELU()
 
-        # normalization factory
+        # Normalisation factory
         def norm_layer(channels):
-            if cfg["normalization"] == "BatchNorm":
+            if cfg["normalisation"] == "BatchNorm":
                 return nn.BatchNorm2d(channels)
-            elif cfg["normalization"] == "LayerNorm":
+            elif cfg["normalisation"] == "LayerNorm":
                 return nn.LayerNorm([channels, 1, 1])
-            elif cfg["normalization"] == "GroupNorm":
+            elif cfg["normalisation"] == "GroupNorm":
                 return nn.GroupNorm(4, channels)
             else:
                 return nn.BatchNorm2d(channels)
 
-        # core CNN
+        # Core CNN
         self.net = nn.Sequential(
             nn.Conv2d(1, w[0], k[0]),
             norm_layer(w[0]),
@@ -56,7 +56,7 @@ class eegnet(nn.Module):
             nn.Dropout2d(p)
         )
 
-        # dynamic output dimension inference
+        # Dynamic output dimension inference
         with torch.no_grad():
             dummy = torch.zeros(1, 1, C, T)
             feat_dim = self.net(dummy).view(1, -1).shape[1]

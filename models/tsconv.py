@@ -26,20 +26,20 @@ class tsconv(nn.Module):
         w = cfg["layer_width"]
         p = cfg["dropout"]
 
-        # activation
+        # Activation
         act_fn = getattr(nn, cfg["activation"])() if hasattr(nn, cfg["activation"]) else nn.ELU()
 
-        # normalization
-        if cfg["normalization"] == "BatchNorm":
+        # Normalisation
+        if cfg["normalisation"] == "BatchNorm":
             norm_layer = nn.BatchNorm2d(w)
-        elif cfg["normalization"] == "LayerNorm":
+        elif cfg["normalisation"] == "LayerNorm":
             norm_layer = nn.LayerNorm([w, 1, 1])
-        elif cfg["normalization"] == "GroupNorm":
+        elif cfg["normalisation"] == "GroupNorm":
             norm_layer = nn.GroupNorm(4, w)
         else:
             norm_layer = nn.BatchNorm2d(w)
 
-        # convolutional stack
+        # Convolutional stack
         self.net = nn.Sequential(
             nn.Conv2d(1, w, cfg["kernel_size"]),
             nn.AvgPool2d(cfg["pool_size"], cfg["pool_stride"]),
@@ -51,7 +51,7 @@ class tsconv(nn.Module):
             nn.Dropout(p),
         )
 
-        # dynamically infer feature dimension
+        # Dynamically infer feature dimension
         with torch.no_grad():
             dummy = torch.zeros(1, 1, C, T)
             feat_dim = self.net(dummy).view(1, -1).shape[1]

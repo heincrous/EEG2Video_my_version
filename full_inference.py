@@ -1,12 +1,17 @@
 # ==========================================
-# Inference
+# EEG2VIDEO SEMANTIC-ONLY INFERENCE
 # ==========================================
+# Input: Predicted CLIP embeddings (.npy)
+# Process: Generate videos using Tune-A-Video pipeline
+# Output: .gif videos per class/trial
+# ==========================================
+
 import os, gc, re, shutil, torch, numpy as np
 from diffusers import AutoencoderKL, DDIMScheduler, DPMSolverMultistepScheduler
 from transformers import CLIPTokenizer, CLIPTextModel
 from core.unet import UNet3DConditionModel
 from pipelines.my_pipeline import TuneAVideoPipeline
-from core.util import save_videos_grid
+from core.save_video_grid import save_videos_grid
 
 
 # ==========================================
@@ -147,7 +152,7 @@ def run_inference_for_subset(subset_name, class_subset, cfg, pipe):
                 guidance_scale=cfg["guidance_scale"],
             ).videos
 
-            out_path = os.path.join(out_dir, f"class{class_id}_trial{trial}_{safe_caption}.gif")
+            out_path = os.path.join(out_dir, f"class{class_id}_clip{trial + 1}_{safe_caption}.gif")
             save_videos_grid(video, out_path, fps=cfg["fps"])
             print(f"Saved {out_path}")
 

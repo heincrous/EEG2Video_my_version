@@ -1,12 +1,6 @@
 # ==========================================
 # EEG Classification Script (Full Modular + Functional Dry Run)
 # ==========================================
-# Performs comprehensive dry-run forward passes on all models
-# with simulated preprocessing for all feature types.
-# Can also train EEG classifiers per subject when dry_run=False.
-# ==========================================
-
-
 # === Imports ===
 import os
 import numpy as np
