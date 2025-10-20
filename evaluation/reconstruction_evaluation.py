@@ -60,14 +60,22 @@ def compute_ssim_psnr(gt, pred):
     return np.mean(s_list), np.mean(p_list)
 
 def compute_lpips_fid(gt, pred, lp, fid, tr):
-    g = torch.stack([tr(f) for f in gt]).to(cfg["device"])
-    p = torch.stack([tr(f) for f in pred]).to(cfg["device"])
-    l = lp(g, p).mean().item()
-    fid.update(g, real=True)
-    fid.update(p, real=False)
-    f = fid.compute().item()
+    # LPIPS expects [0,1] float32, FID expects [0,255] uint8
+    g_lp = torch.stack([tr(f) for f in gt]).to(cfg["device"])           # float32 [0,1]
+    p_lp = torch.stack([tr(f) for f in pred]).to(cfg["device"])
+
+    lpips_val = lp(g_lp, p_lp).mean().item()
+
+    # Convert to uint8 for FID
+    g_fid = (g_lp * 255).to(torch.uint8)
+    p_fid = (p_lp * 255).to(torch.uint8)
+
+    fid.update(g_fid, real=True)
+    fid.update(p_fid, real=False)
+    fid_val = fid.compute().item()
     fid.reset()
-    return l, f
+
+    return lpips_val, fid_val
 
 def evaluate_pair(gt_path, pred_path, lp, fid, tr):
     gt = load_gif(gt_path, cfg["size"])
