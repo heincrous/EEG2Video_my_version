@@ -487,13 +487,14 @@ def clean_old_plots(cfg):
 def clean_old_result_files(cfg, exp_type, exp_mode):
     exp_dir = os.path.join(cfg["result_root"], exp_type)
     if not os.path.exists(exp_dir):
+        print(f"[Cleanup] No directory found for {exp_type}, skipping.")
         return
 
-    # Recreate exact file name
+    # Match exact filename patterns from save_results()
     if exp_mode == "architectural":
         target_name = (
             f"{exp_type}_lw{'-'.join(map(str, cfg['layer_widths']))}"
-            f"_do{cfg['dropout']}_act{cfg['activation']}_reg{cfg['normalisation']}.txt"
+            f"_do{cfg['dropout']}_act{cfg['activation']}_norm{cfg['normalisation']}.txt"
         )
     elif exp_mode == "optimisation":
         target_name = (
@@ -501,6 +502,7 @@ def clean_old_result_files(cfg, exp_type, exp_mode):
             f"_sched{cfg['scheduler']}_lr{cfg['lr']}.txt"
         )
     else:
+        print(f"[Cleanup] Unsupported exp_mode={exp_mode}, skipping.")
         return
 
     target_path = os.path.join(exp_dir, target_name)
@@ -540,10 +542,10 @@ def main():
         cfg = CONFIG.copy()
         cfg["class_subset"] = subset
 
-        # Optional flags
-        cfg["save_text_results"] = False  # Disables .txt metric saving during inference
+        # Create experiment directories
         cfg["result_root"] = os.path.join(CONFIG["result_root"], name)
-        os.makedirs(cfg["result_root"], exist_ok=True)
+        exp_dir = os.path.join(cfg["result_root"], EXPERIMENT_TYPE)
+        os.makedirs(exp_dir, exist_ok=True)
 
         # Load and prepare data
         eeg, clip = load_de_data(cfg)
@@ -552,34 +554,41 @@ def main():
         loader = DataLoader(dataset, batch_size=cfg["batch_size"], shuffle=True)
         model = CLIPSemanticMLP(input_dim=tr_eeg.shape[1], cfg=cfg).to(cfg["device"])
 
-        # Cleanup before training
+        # --------------------------------------------------
+        # EXPERIMENT MODE HANDLING
+        # --------------------------------------------------
         if EXPERIMENT_MODE == "epoch":
+            # Epoch mode: visualize learning curves, optionally run inference
             clean_old_plots(cfg)
+            train_model(model, loader, va_eeg, va_clip, cfg)
 
-        # Train model
-        train_model(model, loader, va_eeg, va_clip, cfg)
+            print("\nFinal Test Evaluation:")
+            metrics = evaluate_model(model, te_eeg, te_clip, cfg)
 
-        print("\nFinal Test Evaluation:")
-        metrics = evaluate_model(model, te_eeg, te_clip, cfg)
-
-        # Save / Inference Logic
-        if EXPERIMENT_MODE == "epoch":
-            # Epoch mode → no .txt files, only inference and plots
-            if cfg["run_inference"]:
+            if cfg.get("run_inference", False):
                 clean_old_predictions(cfg)
                 run_inference_and_save(model, te_eeg, cfg)
             else:
                 print("run_inference=False — skipping inference.")
+
         else:
-            # Optimisation / architectural mode
+            # Architectural or optimisation tuning
+            print("\n[Training]")
+            train_model(model, loader, va_eeg, va_clip, cfg)
+
+            print("\nFinal Test Evaluation:")
+            metrics = evaluate_model(model, te_eeg, te_clip, cfg)
+
+            # Save results only if allowed
             if cfg.get("save_text_results", True):
                 clean_old_result_files(cfg, EXPERIMENT_TYPE, EXPERIMENT_MODE)
                 save_results(cfg, metrics, EXPERIMENT_TYPE, EXPERIMENT_MODE)
             else:
-                print("[Info] Text result saving disabled for inference-only run.")
+                print("[Info] Text result saving disabled by config.")
 
-            if cfg["run_inference"]:
-                print("Running inference-only mode (no .txt saving).")
+            # Optional inference
+            if cfg.get("run_inference", False):
+                print("[Info] Running inference...")
                 clean_old_predictions(cfg)
                 run_inference_and_save(model, te_eeg, cfg)
             else:
