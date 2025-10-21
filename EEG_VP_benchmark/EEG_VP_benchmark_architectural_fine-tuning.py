@@ -48,7 +48,7 @@ Loss: CrossEntropy
 # Experiment Settings
 # ==========================================
 EXPERIMENT_MODE = "architectural"  # Classification only
-EXPERIMENT_TYPE = "activation"     # Layer_width, dropout, activation, or normalisation
+EXPERIMENT_TYPE = "normalisation"     # Layer_width, dropout, activation, or normalisation
 
 RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/EEG_VP_benchmark/architectural_fine-tuning"
 
