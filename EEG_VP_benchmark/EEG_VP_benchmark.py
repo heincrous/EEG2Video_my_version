@@ -305,7 +305,6 @@ def plot_confusion_matrix(model, dataloader, cfg, subject_name):
     model.eval()
 
     all_preds, all_labels = [], []
-
     with torch.no_grad():
         for X, y in dataloader:
             X, y = X.to(device), y.to(device)
@@ -318,31 +317,27 @@ def plot_confusion_matrix(model, dataloader, cfg, subject_name):
     cm = confusion_matrix(all_labels, all_preds)
     cm_norm = cm.astype(float) / (cm.sum(axis=1, keepdims=True) + 1e-8)
 
-    # Plot directory
-    plot_dir = os.path.join(cfg["result_root"], "plots")
+    # === Save under feature-type subfolder ===
+    plot_dir = os.path.join(cfg["result_root"], "plots", cfg["feature_type"])
     os.makedirs(plot_dir, exist_ok=True)
-
-    # Class labels
-    class_labels = [f"{i}" for i in range(cfg["num_classes"])]
 
     plt.figure(figsize=(12, 10))
     sns.heatmap(
         cm_norm,
         cmap="Blues",
-        annot=False,        # Hide cluttered text
-        xticklabels=False,  # Hide axis labels for compactness
+        annot=False,
+        xticklabels=False,
         yticklabels=False,
         cbar=True,
         square=True,
         vmin=0,
-        vmax=0.3            # Better contrast for subtle differences
+        vmax=0.3,
     )
     plt.title(f"Confusion Matrix – {cfg['encoder_name']} ({subject_name})", fontsize=14, pad=12)
     plt.xlabel("Predicted Label", fontsize=12)
     plt.ylabel("True Label", fontsize=12)
     plt.tight_layout()
 
-    # Save by model name
     save_path = os.path.join(plot_dir, f"{cfg['encoder_name']}_confmat_{subject_name}.png")
     plt.savefig(save_path, dpi=300)
     plt.close()
@@ -362,22 +357,20 @@ def plot_average_confusion_matrix(all_cms, cfg):
     avg_cm = np.mean(all_cms, axis=0)
     avg_cm_norm = avg_cm / (avg_cm.sum(axis=1, keepdims=True) + 1e-8)
 
-    plot_dir = os.path.join(cfg["result_root"], "plots")
+    plot_dir = os.path.join(cfg["result_root"], "plots", cfg["feature_type"])
     os.makedirs(plot_dir, exist_ok=True)
-
-    class_labels = [f"{i}" for i in range(cfg["num_classes"])]
 
     plt.figure(figsize=(12, 10))
     sns.heatmap(
         avg_cm_norm,
         cmap="Blues",
-        annot=False,        # Remove dense text
+        annot=False,
         xticklabels=False,
         yticklabels=False,
         cbar=True,
         square=True,
         vmin=0,
-        vmax=0.3
+        vmax=0.3,
     )
     plt.title(f"Average Confusion Matrix – {cfg['encoder_name']}", fontsize=14, pad=12)
     plt.xlabel("Predicted Label", fontsize=12)
@@ -441,30 +434,47 @@ def save_results(cfg, subjects, all_top1, all_top5):
 # Cleanup Utilities
 # ==========================================
 def clean_old_results(cfg):
-    """Remove previous result summaries and confusion matrix plots."""
+    """
+    Remove only result and plot files matching the same encoder
+    and feature-type configuration.
+    """
     exp_dir = os.path.join(cfg["result_root"], cfg["feature_type"])
-    plot_dir = os.path.join(cfg["result_root"], "plots")
+    plot_dir = os.path.join(cfg["result_root"], "plots", cfg["feature_type"])
+
+    try:
+        model_module = importlib.import_module(f"models.{cfg['encoder_name']}")
+        model_cfg = getattr(model_module, "CONFIG", {})
+    except Exception:
+        model_cfg = {}
+
+    lw = model_cfg.get("layer_widths", model_cfg.get("layer_width", "NA"))
+    if isinstance(lw, (list, tuple)):
+        lw = "-".join(str(x) for x in lw)
+    dropout = model_cfg.get("dropout", "NA")
+    activation = model_cfg.get("activation", "NA")
+    norm = model_cfg.get("normalisation", model_cfg.get("norm", "NA"))
+    signature = f"{cfg['encoder_name']}_w{lw}_d{dropout}_a{activation}_n{norm}"
 
     deleted = []
 
-    # Remove result .txt files
+    # Delete matching results
     if os.path.exists(exp_dir):
         for f in os.listdir(exp_dir):
-            if f.endswith(".txt"):
+            if f.endswith(".txt") and signature in f:
                 os.remove(os.path.join(exp_dir, f))
                 deleted.append(f)
 
-    # Remove confusion matrix .png files
+    # Delete matching confusion matrices
     if os.path.exists(plot_dir):
         for f in os.listdir(plot_dir):
-            if f.endswith(".png"):
+            if f.endswith(".png") and cfg["encoder_name"] in f:
                 os.remove(os.path.join(plot_dir, f))
                 deleted.append(f)
 
     if deleted:
-        print(f"[Cleanup] Removed old files: {deleted}")
+        print(f"[Cleanup] Removed old matching files: {deleted}")
     else:
-        print("[Cleanup] No previous result or plot files found.")
+        print("[Cleanup] No matching result or plot files found.")
 
 
 # ==========================================

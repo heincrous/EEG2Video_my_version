@@ -209,7 +209,23 @@ def save_results(cfg, top1_list, top5_list, exp_type):
     exp_dir = os.path.join(cfg["result_root"], exp_type)
     os.makedirs(exp_dir, exist_ok=True)
 
-    fname = f"{exp_type}_glfnet_mlp_lr{cfg['lr']}_bs{cfg['batch_size']}_ep{cfg['num_epochs']}.txt"
+    # Extract architecture details from the model definition if available
+    try:
+        model_module = importlib.import_module(f"models.{cfg['encoder_name']}")
+        model_cfg = getattr(model_module, "CONFIG", {})
+    except Exception:
+        model_cfg = {}
+
+    layer_widths = model_cfg.get("layer_widths", model_cfg.get("layer_width", "NA"))
+    if isinstance(layer_widths, (list, tuple)):
+        layer_widths = "-".join(str(x) for x in layer_widths)
+
+    dropout = model_cfg.get("dropout", "NA")
+    activation = model_cfg.get("activation", "NA")
+    norm = model_cfg.get("normalisation", model_cfg.get("norm", "NA"))
+
+    # Create filename based on architecture configuration
+    fname = f"{exp_type}_glfnet_mlp_w{layer_widths}_d{dropout}_a{activation}_n{norm}.txt"
     save_path = os.path.join(exp_dir, fname)
 
     with open(save_path, "w") as f:
@@ -218,6 +234,12 @@ def save_results(cfg, top1_list, top5_list, exp_type):
         f.write("Configuration Used:\n")
         for k, v in cfg.items():
             f.write(f"{k}: {v}\n")
+
+        f.write("\nModel Architecture Parameters:\n")
+        f.write(f"Layer Widths: {layer_widths}\n")
+        f.write(f"Dropout: {dropout}\n")
+        f.write(f"Activation: {activation}\n")
+        f.write(f"Normalisation: {norm}\n")
 
         f.write("\nFinal Evaluation Metrics:\n")
         f.write(f"Mean Top-1: {mean_top1:.4f} ± {std_top1:.4f}\n")
@@ -234,18 +256,39 @@ def save_results(cfg, top1_list, top5_list, exp_type):
 # Cleanup Utilities
 # ==========================================
 def clean_old_results(cfg, exp_type):
+    """Remove only result files with the same architecture configuration."""
     exp_dir = os.path.join(cfg["result_root"], exp_type)
     if not os.path.exists(exp_dir):
         return
+
+    try:
+        model_module = importlib.import_module(f"models.{cfg['encoder_name']}")
+        model_cfg = getattr(model_module, "CONFIG", {})
+    except Exception:
+        model_cfg = {}
+
+    # Extract key identifiers
+    layer_widths = model_cfg.get("layer_widths", model_cfg.get("layer_width", "NA"))
+    if isinstance(layer_widths, (list, tuple)):
+        layer_widths = "-".join(str(x) for x in layer_widths)
+    dropout = model_cfg.get("dropout", "NA")
+    activation = model_cfg.get("activation", "NA")
+    norm = model_cfg.get("normalisation", model_cfg.get("norm", "NA"))
+
+    # Unique identifier substring for matching same setup files
+    signature = f"w{layer_widths}_d{dropout}_a{activation}_n{norm}"
     deleted = []
+
+    # Remove only files matching the same architecture configuration
     for f in os.listdir(exp_dir):
-        if f.endswith(".txt"):
+        if f.endswith(".txt") and signature in f:
             os.remove(os.path.join(exp_dir, f))
             deleted.append(f)
+
     if deleted:
-        print(f"[Cleanup] Removed old result file(s): {deleted}")
+        print(f"[Cleanup] Removed old matching result files: {deleted}")
     else:
-        print("[Cleanup] No existing result files found.")
+        print("[Cleanup] No matching result files found to delete.")
 
 
 # ==========================================
