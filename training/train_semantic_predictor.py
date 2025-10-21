@@ -76,7 +76,7 @@ CONFIG = {
     "layer_widths": [10000, 10000, 10000, 10000],
     "dropout": 0.0,
     "activation": " ReLU",
-    "normalisation": "LayerNorm",
+    "normalisation": "GroupNorm",
     "lr": 0.0005,
     "optimiser": "adam",
     "weight_decay": 0.0,
