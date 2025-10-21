@@ -86,7 +86,7 @@ CONFIG = {
     "clip_path": "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy",
     "result_root": RESULT_ROOT,
     "run_inference": False,
-    "save_text_results": False,
+    "save_text_results": True,
 }
 
 
