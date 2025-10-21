@@ -75,7 +75,7 @@ CONFIG = {
     "batch_size": 8,
     "layer_widths": [10000, 10000, 10000, 10000],
     "dropout": 0.0,
-    "activation": "SiLU",
+    "activation": "ELU",
     "normalisation": "None",
     "lr": 0.0005,
     "optimiser": "adam",
