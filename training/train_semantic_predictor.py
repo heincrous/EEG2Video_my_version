@@ -74,7 +74,7 @@ CONFIG = {
     "epochs": 50,
     "batch_size": 8,
     "layer_widths": [10000, 10000, 10000, 10000],
-    "dropout": 0.25,
+    "dropout": 0.5,
     "activation": "ReLU",
     "normalisation": "None",
     "lr": 0.0005,
