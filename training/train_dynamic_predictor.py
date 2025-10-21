@@ -60,7 +60,7 @@ CONFIG = {
     "subjects_to_train": ["sub1.npy"],
     "epochs": 100,
     "batch_size": 128,
-    "lr": 0.0005,
+    "lr": 0.0001,
     "optimiser": "adam",
     "weight_decay": 0.0,
     "scheduler": "constant",
