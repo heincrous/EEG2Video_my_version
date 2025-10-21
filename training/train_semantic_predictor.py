@@ -77,7 +77,7 @@ CONFIG = {
     "dropout": 0.0,
     "activation": " ReLU",
     "normalisation": "BatchNorm",
-    "lr": 0.001,
+    "lr": 0.005,
     "optimiser": "adam",
     "weight_decay": 0.0,
     "scheduler": "cosine",
