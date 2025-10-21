@@ -47,7 +47,7 @@ Loss: MSE
 # Experiment Settings
 # ==========================================
 EXPERIMENT_MODE = "architectural" # Architectural or optimisation or epoch
-EXPERIMENT_TYPE = "activation" # Layer_width, dropout, activation, normalisation or learning_rate, optimiser, scheduler
+EXPERIMENT_TYPE = "normalisation" # Layer_width, dropout, activation, normalisation or learning_rate, optimiser, scheduler
 
 if EXPERIMENT_MODE == "architectural":
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/architectural_fine-tuning"
@@ -75,8 +75,8 @@ CONFIG = {
     "batch_size": 8,
     "layer_widths": [10000, 10000, 10000, 10000],
     "dropout": 0.0,
-    "activation": "ELU",
-    "normalisation": "None",
+    "activation": " ReLU",
+    "normalisation": "BatchNorm",
     "lr": 0.0005,
     "optimiser": "adam",
     "weight_decay": 0.0,
