@@ -276,7 +276,7 @@ def clean_old_results(cfg, exp_type):
     norm = model_cfg.get("normalisation", model_cfg.get("norm", "NA"))
 
     # Unique identifier substring for matching same setup files
-    signature = f"w{layer_widths}_d{dropout}_a{activation}_n{norm}"
+    signature = f"lw{layer_widths}_do{dropout}_act{activation}_norm{norm}"
     deleted = []
 
     # Remove only files matching the same architecture configuration
