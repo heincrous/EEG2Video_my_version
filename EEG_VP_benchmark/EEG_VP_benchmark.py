@@ -435,18 +435,30 @@ def save_results(cfg, subjects, all_top1, all_top5):
 # Cleanup Utilities
 # ==========================================
 def clean_old_results(cfg):
+    """Remove previous result summaries and confusion matrix plots."""
     exp_dir = os.path.join(cfg["result_root"], cfg["feature_type"])
-    if not os.path.exists(exp_dir):
-        return
+    plot_dir = os.path.join(cfg["result_root"], "plots")
+
     deleted = []
-    for f in os.listdir(exp_dir):
-        if f.endswith(".txt"):
-            os.remove(os.path.join(exp_dir, f))
-            deleted.append(f)
+
+    # Remove result .txt files
+    if os.path.exists(exp_dir):
+        for f in os.listdir(exp_dir):
+            if f.endswith(".txt"):
+                os.remove(os.path.join(exp_dir, f))
+                deleted.append(f)
+
+    # Remove confusion matrix .png files
+    if os.path.exists(plot_dir):
+        for f in os.listdir(plot_dir):
+            if f.endswith(".png"):
+                os.remove(os.path.join(plot_dir, f))
+                deleted.append(f)
+
     if deleted:
-        print(f"[Cleanup] Removed old result files: {deleted}")
+        print(f"[Cleanup] Removed old files: {deleted}")
     else:
-        print("[Cleanup] No previous result files found.")
+        print("[Cleanup] No previous result or plot files found.")
 
 
 # ==========================================

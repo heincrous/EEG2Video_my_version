@@ -317,10 +317,7 @@ def save_results(cfg, subjects, all_top1, all_top5):
     os.makedirs(exp_dir, exist_ok=True)
 
     fusion_name = "_".join(cfg["feature_types"])
-    filename = (
-        f"fusion_{fusion_name}_emb{cfg['emb_dim']}_"
-        f"lr{cfg['lr']}_bs{cfg['batch_size']}_ep{cfg['num_epochs']}.txt"
-    )
+    filename = f"fusion_{fusion_name}.txt"
     save_path = os.path.join(exp_dir, filename)
 
     with open(save_path, "w") as f:
@@ -348,9 +345,10 @@ def clean_old_results(cfg):
     exp_dir = cfg["result_root"]
     if not os.path.exists(exp_dir):
         return
+    fusion_name = "_".join(cfg["feature_types"])
     deleted = []
     for f in os.listdir(exp_dir):
-        if f.endswith(".txt"):
+        if f.startswith(f"fusion_{fusion_name}") and f.endswith(".txt"):
             os.remove(os.path.join(exp_dir, f))
             deleted.append(f)
     if deleted:
