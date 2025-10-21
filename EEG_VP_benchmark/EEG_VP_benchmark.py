@@ -16,6 +16,9 @@ import torch.nn as nn
 from torch.utils import data
 from einops import rearrange
 from tqdm import tqdm
+from sklearn.metrics import confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 
 # ==========================================
@@ -65,7 +68,6 @@ CONFIG = {
         "sub1_session2.npy", "sub1.npy", "sub18.npy", "sub19.npy",
         "sub6.npy", "sub15.npy", "sub20.npy", "sub7.npy", "sub10.npy", "sub13.npy"
     ],
-    "dry_run": False,
     "num_classes": 40,
     "channels": 62,
     "time_len": 400,
@@ -80,6 +82,8 @@ CONFIG = {
     "lr": 0.0005,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     "result_root": RESULT_ROOT,
+    "dry_run": False,
+    "save_confusion_matrices": True,   # Set False to skip confusion matrices
 }
 
 
@@ -290,6 +294,98 @@ def train_and_eval(model, train_iter, test_iter, cfg):
 
 
 # ==========================================
+# Confusion Matrix Generation and Plotting
+# ==========================================
+def plot_confusion_matrix(model, dataloader, cfg, subject_name):
+    """Compute and save confusion matrix for a trained model."""
+    if not cfg.get("save_confusion_matrices", False):
+        return
+
+    device = cfg["device"]
+    model.eval()
+
+    all_preds, all_labels = [], []
+
+    with torch.no_grad():
+        for X, y in dataloader:
+            X, y = X.to(device), y.to(device)
+            if cfg["feature_type"] == "segment":
+                X = X.unsqueeze(1)
+            preds = model(X).argmax(dim=1)
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(y.cpu().numpy())
+
+    cm = confusion_matrix(all_labels, all_preds)
+    cm_norm = cm.astype(float) / (cm.sum(axis=1, keepdims=True) + 1e-8)
+
+    # Plot directory
+    plot_dir = os.path.join(cfg["result_root"], "plots")
+    os.makedirs(plot_dir, exist_ok=True)
+
+    # Class labels
+    class_labels = [f"{i}" for i in range(cfg["num_classes"])]
+
+    plt.figure(figsize=(12, 10))
+    sns.heatmap(
+        cm_norm,
+        annot=True, fmt=".2f", cmap="Blues",
+        xticklabels=class_labels,
+        yticklabels=class_labels,
+        cbar=True, square=True,
+        linewidths=0.5, linecolor='gray'
+    )
+    plt.title(f"Confusion Matrix – {cfg['encoder_name']} ({subject_name})", fontsize=14, pad=12)
+    plt.xlabel("Predicted Label", fontsize=12)
+    plt.ylabel("True Label", fontsize=12)
+    plt.tight_layout()
+
+    # Save by model name
+    save_path = os.path.join(plot_dir, f"{cfg['encoder_name']}_confmat_{subject_name}.png")
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+    print(f"[Saved Confusion Matrix] {save_path}")
+    return cm
+
+
+# ==========================================
+# Average Confusion Matrix Across Subjects
+# ==========================================
+def plot_average_confusion_matrix(all_cms, cfg):
+    """Compute and save an averaged confusion matrix across all subjects."""
+    if not all_cms or not cfg.get("save_confusion_matrices", False):
+        return
+
+    avg_cm = np.mean(all_cms, axis=0)
+    avg_cm_norm = avg_cm / (avg_cm.sum(axis=1, keepdims=True) + 1e-8)
+
+    plot_dir = os.path.join(cfg["result_root"], "plots")
+    os.makedirs(plot_dir, exist_ok=True)
+
+    class_labels = [f"{i}" for i in range(cfg["num_classes"])]
+
+    plt.figure(figsize=(12, 10))
+    sns.heatmap(
+        avg_cm_norm,
+        annot=True, fmt=".2f", cmap="Blues",
+        xticklabels=class_labels,
+        yticklabels=class_labels,
+        cbar=True, square=True,
+        linewidths=0.5, linecolor='gray'
+    )
+    plt.title(f"Average Confusion Matrix – {cfg['encoder_name']}", fontsize=14, pad=12)
+    plt.xlabel("Predicted Label", fontsize=12)
+    plt.ylabel("True Label", fontsize=12)
+    plt.tight_layout()
+
+    save_path = os.path.join(plot_dir, f"{cfg['encoder_name']}_avg_confmat.png")
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+    print(f"[Saved Average Confusion Matrix] {save_path}")
+
+
+# ==========================================
 # Save Results
 # ==========================================
 def save_results(cfg, subjects, all_top1, all_top5):
@@ -312,12 +408,9 @@ def save_results(cfg, subjects, all_top1, all_top5):
 
     dropout = model_cfg.get("dropout", "NA")
     activation = model_cfg.get("activation", "NA")
-    norm = model_cfg.get("normalization", model_cfg.get("normalisation", "NA"))
+    norm = model_cfg.get("normalisation", model_cfg.get("normalisation", "NA"))
 
-    filename = (
-        f"{cfg['encoder_name']}_lw{lw}_do{dropout}_act{activation}_norm{norm}_"
-        f"lr{cfg['lr']}_bs{cfg['batch_size']}_ep{cfg['num_epochs']}.txt"
-    )
+    filename = f"{cfg['encoder_name']}.txt"
     save_path = os.path.join(exp_dir, filename)
 
     with open(save_path, "w") as f:
@@ -377,6 +470,7 @@ def main(cfg):
     print(f"\nTraining subjects: {subjects}\n")
 
     all_top1, all_top5 = [], []
+    all_confmats = []
 
     for sub in subjects:
         print(f"\n=== Subject: {sub} ===")
@@ -388,9 +482,13 @@ def main(cfg):
         model = select_model(cfg)
         top1, top5 = train_and_eval(model, train_iter, test_iter, cfg)
         print(f"[Test Block-7] Top-1={top1:.4f} | Top-5={top5:.4f}")
+        cm = plot_confusion_matrix(model, test_iter, cfg, subject_name=sub)
+        if cm is not None:
+            all_confmats.append(cm)
         all_top1.append(top1)
         all_top5.append(top5)
 
+    plot_average_confusion_matrix(all_confmats, cfg)
     print("\n=== Final Results ===")
     print(f"Mean Top-1: {np.mean(all_top1):.4f} ± {np.std(all_top1):.4f}")
     print(f"Mean Top-5: {np.mean(all_top5):.4f} ± {np.std(all_top5):.4f}")

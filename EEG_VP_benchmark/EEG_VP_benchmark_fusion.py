@@ -61,7 +61,6 @@ CONFIG = {
         "sub1_session2.npy", "sub1.npy", "sub18.npy", "sub19.npy",
         "sub6.npy", "sub15.npy", "sub20.npy", "sub7.npy", "sub10.npy", "sub13.npy"
     ],
-    "dry_run": False,
     "num_classes": 40,
     "channels": 62,
     "time_len": 400,
@@ -78,6 +77,7 @@ CONFIG = {
     "lr": 0.0005,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     "result_root": RESULT_ROOT,
+    "dry_run": False,
 }
 
 
