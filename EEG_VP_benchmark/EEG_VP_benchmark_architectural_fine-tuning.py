@@ -225,7 +225,7 @@ def save_results(cfg, top1_list, top5_list, exp_type):
     norm = model_cfg.get("normalisation", model_cfg.get("norm", "NA"))
 
     # Create filename based on architecture configuration
-    fname = f"{exp_type}_glfnet_mlp_w{layer_widths}_d{dropout}_a{activation}_n{norm}.txt"
+    fname = f"{exp_type}_glfnet_mlp_lw{layer_widths}_do{dropout}_act{activation}_norm{norm}.txt"
     save_path = os.path.join(exp_dir, fname)
 
     with open(save_path, "w") as f:
@@ -311,6 +311,11 @@ def main():
         print(f"[Test Results] Top-1={t1:.4f} | Top-5={t5:.4f}")
         all_top1.append(t1)
         all_top5.append(t5)
+
+
+    print(f"\n=== Final Results ===")
+    print(f"Mean Top-1: {np.mean(all_top1):.4f} ± {np.std(all_top1):.4f}")
+    print(f"Mean Top-5: {np.mean(all_top5):.4f} ± {np.std(all_top5):.4f}")
 
     save_results(cfg, all_top1, all_top5, EXPERIMENT_TYPE)
 
