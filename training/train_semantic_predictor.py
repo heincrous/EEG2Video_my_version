@@ -51,10 +51,8 @@ Loss: MSE
 # ==========================================
 # Experiment Settings
 # ==========================================
-# Architectural or optimisation
-EXPERIMENT_MODE = "epoch"
-# Layer_widths, dropout, activation, normalisation or learning_rate, optimiser, scheduler
-EXPERIMENT_TYPE = "scheduler"
+EXPERIMENT_MODE = "epoch" # Architectural or optimisation or epoch
+EXPERIMENT_TYPE = "scheduler" # Layer_width, dropout, activation, normalisation or learning_rate, optimiser, scheduler
 
 if EXPERIMENT_MODE == "architectural":
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/architectural_fine-tuning"
@@ -548,7 +546,7 @@ def main():
         cfg["class_subset"] = subset
 
         # Optional flags
-        cfg["save_text_results"] = False  # disables .txt metric saving during inference
+        cfg["save_text_results"] = False  # Disables .txt metric saving during inference
         cfg["result_root"] = os.path.join(CONFIG["result_root"], name)
         os.makedirs(cfg["result_root"], exist_ok=True)
 

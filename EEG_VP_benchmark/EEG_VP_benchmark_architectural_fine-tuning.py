@@ -1,71 +1,99 @@
 # ==========================================
-# EEG Classification Script
+# EEG CLASSIFICATION (EEG → CATEGORY LABELS)
 # ==========================================
-# === Imports ===
+# Input: Preprocessed EEG DE features
+# Process: Train MLP encoder (GLFNet-MLP) to classify 40 visual categories
+# Output: Accuracy metrics (.txt)
+# ==========================================
+
 import os
 import numpy as np
-import importlib
 from sklearn.preprocessing import StandardScaler
+import importlib
+
 import torch
 import torch.nn as nn
 from torch.utils import data
-
-
-# === Encoder Import ===
-from models.glfnet_mlp import glfnet_mlp
+from tqdm import tqdm
 
 
 # ==========================================
-# Architectural Fine-Tuning Toggle
+# Default Configuration
 # ==========================================
-# Choose ONE: "layer_width", "dropout", "activation", "normalisation"
-EXPERIMENT_TYPE = "activation"
+"""
+DEFAULT MODEL CONFIGURATION
+
+Architecture:
+Encoder: GLFNet-MLP
+Embedding dimension: 64
+Input dimension: 310 (62 × 5)
+Layer width: [512, 256]
+Dropout: 0.0
+Activation: ELU
+Normalisation: BatchNorm
+
+Optimisation:
+Learning rate: 0.0005
+Optimiser: Adam
+Weight decay: 0.0
+Scheduler: constant
+
+Training:
+Epochs: 100
+Batch size: 128
+Loss: CrossEntropy
+"""
+
+# ==========================================
+# Experiment Settings
+# ==========================================
+EXPERIMENT_MODE = "architectural"  # Classification only
+EXPERIMENT_TYPE = "activation"     # Layer_width, dropout, activation, or normalisation
+
+RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/EEG_VP_benchmark/architectural_fine-tuning"
 
 
 # ==========================================
-# 1. Configuration Table
+# Configuration Table
 # ==========================================
 CONFIG = {
-    "feature_type": "de",
+    "feature_type": "EEG_DE_1per1s",
     "encoder_name": "glfnet_mlp",
     "subjects_to_train": [
-        "sub1_session2.npy",
-        "sub1.npy",
-        "sub18.npy",
-        "sub19.npy",
-        "sub6.npy",
-        "sub15.npy",
-        "sub20.npy",
-        "sub7.npy",
-        "sub10.npy",
-        "sub13.npy",
+        "sub1_session2.npy", "sub1.npy", "sub18.npy", "sub19.npy",
+        "sub6.npy", "sub15.npy", "sub20.npy", "sub7.npy", "sub10.npy", "sub13.npy"
     ],
-    "dry_run": False,
-
-    # --- Data parameters ---
     "num_classes": 40,
     "channels": 62,
     "time_len": 5,
     "num_blocks": 7,
     "clips_per_class": 5,
-
-    # --- Paths ---
-    "data_root": "/content/drive/MyDrive/EEG2Video_data/processed/",
-    "de_dir": "EEG_DE_1per1s/",
-
-    # --- Model parameters ---
     "emb_dim": 64,
-
-    # --- Training parameters ---
     "batch_size": 128,
     "num_epochs": 100,
     "lr": 0.0005,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
+    "data_root": "/content/drive/MyDrive/EEG2Video_data/processed/",
+    "de_dir": "EEG_DE_1per1s/",
+    "result_root": RESULT_ROOT,
 }
 
 
 # ==========================================
-# 2. Data Handling
+# Model Definition
+# ==========================================
+class EEGClassifier(nn.Module):
+    def __init__(self, input_dim, cfg):
+        super().__init__()
+        from models.glfnet_mlp import glfnet_mlp
+        self.model = glfnet_mlp(out_dim=cfg["num_classes"], emb_dim=cfg["emb_dim"], input_dim=input_dim)
+
+    def forward(self, x):
+        return self.model(x)
+
+
+# ==========================================
+# Data Handling
 # ==========================================
 def create_labels(num_classes, clips_per_class, blocks=1):
     block_labels = np.repeat(np.arange(num_classes), clips_per_class)
@@ -74,7 +102,7 @@ def create_labels(num_classes, clips_per_class, blocks=1):
 
 def load_feature_data(sub_file, cfg):
     path = os.path.join(cfg["data_root"], cfg["de_dir"], sub_file)
-    data = np.load(path)  # (7, 40, 5, 2, 62, 5)
+    data = np.load(path)
     print(f"Loaded {sub_file} | shape {data.shape}")
     return data
 
@@ -85,13 +113,13 @@ def preprocess_data(data, cfg):
     b, c, d, f, g = data.shape
     data = data.reshape(b, c * d, f, g)
 
-    # normalization
+    # Normalisation
     scaler = StandardScaler()
     flat_all = data.reshape(-1, g)
     scaler.fit(flat_all)
     scaled = scaler.transform(flat_all).reshape(b, c * d, f, g)
 
-    # split by blocks
+    # Split by blocks
     train_data, val_data, test_data = scaled[:5], scaled[5:6], scaled[6:7]
 
     labels = {
@@ -115,7 +143,7 @@ def Get_Dataloader(data_split, labels, istrain, batch_size):
 
 
 # ==========================================
-# 3. Training and Evaluation
+# Evaluation Utilities
 # ==========================================
 def topk_accuracy(output, target, topk=(1, 5)):
     with torch.no_grad():
@@ -134,26 +162,31 @@ def topk_accuracy(output, target, topk=(1, 5)):
 def train_and_eval(model, train_iter, test_iter, cfg):
     device = cfg["device"]
     model.to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=cfg["lr"])
+    optimiser = torch.optim.AdamW(model.parameters(), lr=cfg["lr"])
     loss_fn = nn.CrossEntropyLoss()
 
-    for epoch in range(cfg["num_epochs"]):
+    for epoch in tqdm(range(1, cfg["num_epochs"] + 1)):
         model.train()
         total_loss, total_acc, total_count = 0, 0, 0
+
         for X, y in train_iter:
             X, y = X.to(device), y.to(device)
             y_hat = model(X)
             loss = loss_fn(y_hat, y)
-            optimizer.zero_grad()
+            optimiser.zero_grad()
             loss.backward()
-            optimizer.step()
+            optimiser.step()
+
             total_loss += loss.item() * X.shape[0]
             total_acc += (y_hat.argmax(1) == y).sum().item()
             total_count += X.shape[0]
-        if (epoch + 1) % 10 == 0:
-            print(f"[Epoch {epoch+1}] Loss={total_loss/total_count:.4f} | Acc={total_acc/total_count:.4f}")
 
-    # evaluation
+        if epoch % 10 == 0:
+            avg_loss = total_loss / total_count
+            avg_acc = total_acc / total_count
+            print(f"[Epoch {epoch}/{cfg['num_epochs']}] Loss={avg_loss:.4f} | Acc={avg_acc:.4f}")
+
+    # Evaluation
     model.eval()
     top1_all, top5_all = [], []
     with torch.no_grad():
@@ -168,73 +201,76 @@ def train_and_eval(model, train_iter, test_iter, cfg):
 
 
 # ==========================================
-# 4. Main Execution
+# Save Results
 # ==========================================
-def main(cfg):
-    base_dir = "/content/drive/MyDrive/EEG2Video_results/EEG_VP_benchmark"
-    fine_dir = os.path.join(base_dir, "architectural_fine-tuning", EXPERIMENT_TYPE)
-    os.makedirs(fine_dir, exist_ok=True)
+def save_results(cfg, top1_list, top5_list, exp_type):
+    mean_top1, std_top1 = np.mean(top1_list), np.std(top1_list)
+    mean_top5, std_top5 = np.mean(top5_list), np.std(top5_list)
+    exp_dir = os.path.join(cfg["result_root"], exp_type)
+    os.makedirs(exp_dir, exist_ok=True)
 
-    subjects = [s for s in os.listdir(os.path.join(cfg["data_root"], cfg["de_dir"])) if s in cfg["subjects_to_train"]]
-    print(f"\nTraining subjects: {subjects}\n")
+    fname = f"{exp_type}_glfnet_mlp_lr{cfg['lr']}_bs{cfg['batch_size']}_ep{cfg['num_epochs']}.txt"
+    save_path = os.path.join(exp_dir, fname)
+
+    with open(save_path, "w") as f:
+        f.write("EEG→Category Classifier (Architectural Fine-Tuning)\n")
+        f.write("=" * 60 + "\n\n")
+        f.write("Configuration Used:\n")
+        for k, v in cfg.items():
+            f.write(f"{k}: {v}\n")
+
+        f.write("\nFinal Evaluation Metrics:\n")
+        f.write(f"Mean Top-1: {mean_top1:.4f} ± {std_top1:.4f}\n")
+        f.write(f"Mean Top-5: {mean_top5:.4f} ± {std_top5:.4f}\n")
+
+        f.write("\nSubject-Wise Results:\n")
+        for s, t1, t5 in zip(cfg["subjects_to_train"], top1_list, top5_list):
+            f.write(f"{s:15s} | Top-1: {t1:.4f} | Top-5: {t5:.4f}\n")
+
+    print(f"[Saved] {save_path}")
+
+
+# ==========================================
+# Cleanup Utilities
+# ==========================================
+def clean_old_results(cfg, exp_type):
+    exp_dir = os.path.join(cfg["result_root"], exp_type)
+    if not os.path.exists(exp_dir):
+        return
+    deleted = []
+    for f in os.listdir(exp_dir):
+        if f.endswith(".txt"):
+            os.remove(os.path.join(exp_dir, f))
+            deleted.append(f)
+    if deleted:
+        print(f"[Cleanup] Removed old result file(s): {deleted}")
+    else:
+        print("[Cleanup] No existing result files found.")
+
+
+# ==========================================
+# Main
+# ==========================================
+def main():
+    cfg = CONFIG
+    clean_old_results(cfg, EXPERIMENT_TYPE)
+    subjects = cfg["subjects_to_train"]
 
     all_top1, all_top5 = [], []
-
     for sub in subjects:
         print(f"\n=== Subject: {sub} ===")
         data = load_feature_data(sub, cfg)
         processed, labels = preprocess_data(data, cfg)
         train_iter = Get_Dataloader(processed["train"], labels["train"], True, cfg["batch_size"])
         test_iter  = Get_Dataloader(processed["test"],  labels["test"],  False, cfg["batch_size"])
+        model = EEGClassifier(input_dim=310, cfg=cfg).to(cfg["device"])
+        t1, t5 = train_and_eval(model, train_iter, test_iter, cfg)
+        print(f"[Test Results] Top-1={t1:.4f} | Top-5={t5:.4f}")
+        all_top1.append(t1)
+        all_top5.append(t5)
 
-        model = glfnet_mlp(out_dim=cfg["num_classes"], emb_dim=cfg["emb_dim"], input_dim=310)
-        top1, top5 = train_and_eval(model, train_iter, test_iter, cfg)
-        print(f"Test (Block 7): Top-1={top1:.4f}, Top-5={top5:.4f}")
-        all_top1.append(top1)
-        all_top5.append(top5)
-
-    mean_top1, std_top1 = np.mean(all_top1), np.std(all_top1)
-    mean_top5, std_top5 = np.mean(all_top5), np.std(all_top5)
-
-    print("\n=== Final Results ===")
-    print(f"Mean Top-1: {mean_top1:.4f} ± {std_top1:.4f}")
-    print(f"Mean Top-5: {mean_top5:.4f} ± {std_top5:.4f}")
-
-    # ==========================================
-    # Save Configuration and Results (Auto)
-    # ==========================================
-    model_cfg = getattr(importlib.import_module("models.glfnet_mlp"), "CONFIG", {})
-
-    lw = "-".join(str(x) for x in model_cfg.get("layer_widths", [])) if "layer_widths" in model_cfg else "NA"
-    dropout = model_cfg.get("dropout", "NA")
-    activation = model_cfg.get("activation", "NA")
-    norm = model_cfg.get("normalization", model_cfg.get("normalisation", "NA"))
-
-    filename = (
-        f"{EXPERIMENT_TYPE}_de_mlp_lw{lw}_do{dropout}_act{activation}_norm{norm}_"
-        f"emb{cfg['emb_dim']}_lr{cfg['lr']}_bs{cfg['batch_size']}_ep{cfg['num_epochs']}.txt"
-    )
-
-    save_path = os.path.join(fine_dir, filename)
-    with open(save_path, "w") as f:
-        f.write("EEG DE Classification Summary\n")
-        f.write("==========================================\n\n")
-        f.write(f"Architectural Fine-Tuning Type: {EXPERIMENT_TYPE}\n\n")
-        f.write("Configuration Used:\n")
-        for k, v in cfg.items():
-            f.write(f"{k}: {v}\n")
-        f.write("\nModel Config:\n")
-        for k, v in model_cfg.items():
-            f.write(f"{k}: {v}\n")
-        f.write("\nFinal Results:\n")
-        f.write(f"Mean Top-1: {mean_top1:.4f} ± {std_top1:.4f}\n")
-        f.write(f"Mean Top-5: {mean_top5:.4f} ± {std_top5:.4f}\n\n")
-        f.write("Subject-Wise Results:\n")
-        for sub, t1, t5 in zip(subjects, all_top1, all_top5):
-            f.write(f"{sub:15s} | Top-1: {t1:.4f} | Top-5: {t5:.4f}\n")
-
-    print(f"\nSaved configuration and results to: {save_path}")
+    save_results(cfg, all_top1, all_top5, EXPERIMENT_TYPE)
 
 
 if __name__ == "__main__":
-    main(CONFIG)
+    main()
