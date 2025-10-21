@@ -328,11 +328,14 @@ def plot_confusion_matrix(model, dataloader, cfg, subject_name):
     plt.figure(figsize=(12, 10))
     sns.heatmap(
         cm_norm,
-        annot=True, fmt=".2f", cmap="Blues",
-        xticklabels=class_labels,
-        yticklabels=class_labels,
-        cbar=True, square=True,
-        linewidths=0.5, linecolor='gray'
+        cmap="Blues",
+        annot=False,        # Hide cluttered text
+        xticklabels=False,  # Hide axis labels for compactness
+        yticklabels=False,
+        cbar=True,
+        square=True,
+        vmin=0,
+        vmax=0.3            # Better contrast for subtle differences
     )
     plt.title(f"Confusion Matrix – {cfg['encoder_name']} ({subject_name})", fontsize=14, pad=12)
     plt.xlabel("Predicted Label", fontsize=12)
@@ -367,11 +370,14 @@ def plot_average_confusion_matrix(all_cms, cfg):
     plt.figure(figsize=(12, 10))
     sns.heatmap(
         avg_cm_norm,
-        annot=True, fmt=".2f", cmap="Blues",
-        xticklabels=class_labels,
-        yticklabels=class_labels,
-        cbar=True, square=True,
-        linewidths=0.5, linecolor='gray'
+        cmap="Blues",
+        annot=False,        # Remove dense text
+        xticklabels=False,
+        yticklabels=False,
+        cbar=True,
+        square=True,
+        vmin=0,
+        vmax=0.3
     )
     plt.title(f"Average Confusion Matrix – {cfg['encoder_name']}", fontsize=14, pad=12)
     plt.xlabel("Predicted Label", fontsize=12)
