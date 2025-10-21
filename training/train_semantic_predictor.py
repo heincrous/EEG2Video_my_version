@@ -73,7 +73,7 @@ CONFIG = {
     "feature_type": "EEG_DE_1per1s",
     "epochs": 50,
     "batch_size": 8,
-    "layer_widths": [4096, 4096, 4096, 4096],
+    "layer_widths": [2048, 2048, 2048, 2048],
     "dropout": 0.0,
     "activation": "ReLU",
     "normalisation": "None",
