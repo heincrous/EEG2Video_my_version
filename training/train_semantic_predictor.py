@@ -52,7 +52,7 @@ Loss: MSE
 # Experiment Settings
 # ==========================================
 # Architectural or optimisation
-EXPERIMENT_MODE = "optimisation"
+EXPERIMENT_MODE = "epoch"
 # Layer_widths, dropout, activation, normalisation or learning_rate, optimiser, scheduler
 EXPERIMENT_TYPE = "scheduler"
 
@@ -64,19 +64,23 @@ else:  # epoch
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/plots"
 
 SUBSETS = {
-    "subset_A": [37, 10, 12, 3, 6],
-    "subset_B": [25, 29, 1, 39, 9],
-    "subset_C": [8, 36, 5, 13, 22],
-    "subset_D": [23, 2, 26, 38, 24],
-    "subset_E": [7, 28, 11, 4, 0],
+"subset_A": [37, 10, 12, 3, 6, 25, 29, 1, 39, 9]
 }
+
+# SUBSETS = {
+#     "subset_A": [37, 10, 12, 3, 6],
+#     "subset_B": [25, 29, 1, 39, 9],
+#     "subset_C": [8, 36, 5, 13, 22],
+#     "subset_D": [23, 2, 26, 38, 24],
+#     "subset_E": [7, 28, 11, 4, 0],
+# }
 
 CONFIG = {
     "subject_name": "sub1.npy",
     "feature_type": "EEG_DE_1per1s",
-    "epochs": 50,
+    "epochs": 100,
     "batch_size": 32,
-    "layer_widths": [4096, 4096, 4096, 4096],
+    "layer_widths": [10000, 10000, 10000, 10000],
     "dropout": 0.0,
     "activation": "ReLU",
     "normalisation": "LayerNorm",
@@ -88,7 +92,7 @@ CONFIG = {
     "eeg_root": "/content/drive/MyDrive/EEG2Video_data/processed",
     "clip_path": "/content/drive/MyDrive/EEG2Video_data/processed/CLIP_embeddings/CLIP_embeddings.npy",
     "result_root": RESULT_ROOT,
-    "run_inference": True,
+    "run_inference": False,
     "save_text_results": False,
 }
 
