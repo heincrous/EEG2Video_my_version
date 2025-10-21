@@ -62,7 +62,7 @@ RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/EEG_VP_benchmark/classif
 # Configuration Table
 # ==========================================
 CONFIG = {
-    "feature_type": "segment",
+    "feature_type": "segment", # de, psd, or segment
     "encoder_name": "glfnet_mlp",
     "subjects_to_train": [
         "sub1_session2.npy", "sub1.npy", "sub18.npy", "sub19.npy",
