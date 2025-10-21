@@ -37,11 +37,6 @@ Optimiser: Adam
 Weight decay: 0.0
 Scheduler: cosine
 
-Adam
-No weight decay
-No dropout
-ReLU activation
-
 Training:
 Epochs: 200
 Batch size: 32
@@ -51,8 +46,8 @@ Loss: MSE
 # ==========================================
 # Experiment Settings
 # ==========================================
-EXPERIMENT_MODE = "epoch" # Architectural or optimisation or epoch
-EXPERIMENT_TYPE = "scheduler" # Layer_width, dropout, activation, normalisation or learning_rate, optimiser, scheduler
+EXPERIMENT_MODE = "architectural" # Architectural or optimisation or epoch
+EXPERIMENT_TYPE = "layer_width" # Layer_width, dropout, activation, normalisation or learning_rate, optimiser, scheduler
 
 if EXPERIMENT_MODE == "architectural":
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/architectural_fine-tuning"
@@ -78,10 +73,10 @@ CONFIG = {
     "feature_type": "EEG_DE_1per1s",
     "epochs": 100,
     "batch_size": 8,
-    "layer_widths": [10000, 10000, 10000, 10000],
+    "layer_widths": [4096, 4096, 4096, 4096],
     "dropout": 0.0,
     "activation": "ReLU",
-    "normalisation": "LayerNorm",
+    "normalisation": "None",
     "lr": 0.0005,
     "optimiser": "adam",
     "weight_decay": 0.0,
