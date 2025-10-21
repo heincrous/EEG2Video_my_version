@@ -542,6 +542,10 @@ def main():
         cfg = CONFIG.copy()
         cfg["class_subset"] = subset
 
+        # --- DO NOT OVERRIDE CONFIG FLAGS ---
+        # Keep the flags from CONFIG as-is
+        # cfg["save_text_results"] and cfg["run_inference"] are already defined in CONFIG
+
         # Create experiment directories
         cfg["result_root"] = os.path.join(CONFIG["result_root"], name)
         exp_dir = os.path.join(cfg["result_root"], EXPERIMENT_TYPE)
@@ -554,17 +558,18 @@ def main():
         loader = DataLoader(dataset, batch_size=cfg["batch_size"], shuffle=True)
         model = CLIPSemanticMLP(input_dim=tr_eeg.shape[1], cfg=cfg).to(cfg["device"])
 
-        # --------------------------------------------------
-        # EXPERIMENT MODE HANDLING
-        # --------------------------------------------------
+        # Cleanup before training
         if EXPERIMENT_MODE == "epoch":
-            # Epoch mode: visualize learning curves, optionally run inference
             clean_old_plots(cfg)
-            train_model(model, loader, va_eeg, va_clip, cfg)
 
-            print("\nFinal Test Evaluation:")
-            metrics = evaluate_model(model, te_eeg, te_clip, cfg)
+        # Train model
+        train_model(model, loader, va_eeg, va_clip, cfg)
 
+        print("\nFinal Test Evaluation:")
+        metrics = evaluate_model(model, te_eeg, te_clip, cfg)
+
+        if EXPERIMENT_MODE == "epoch":
+            # Epoch mode: plots only, optional inference
             if cfg.get("run_inference", False):
                 clean_old_predictions(cfg)
                 run_inference_and_save(model, te_eeg, cfg)
@@ -572,21 +577,13 @@ def main():
                 print("run_inference=False — skipping inference.")
 
         else:
-            # Architectural or optimisation tuning
-            print("\n[Training]")
-            train_model(model, loader, va_eeg, va_clip, cfg)
-
-            print("\nFinal Test Evaluation:")
-            metrics = evaluate_model(model, te_eeg, te_clip, cfg)
-
-            # Save results only if allowed
+            # Architectural / Optimisation modes
             if cfg.get("save_text_results", True):
                 clean_old_result_files(cfg, EXPERIMENT_TYPE, EXPERIMENT_MODE)
                 save_results(cfg, metrics, EXPERIMENT_TYPE, EXPERIMENT_MODE)
             else:
                 print("[Info] Text result saving disabled by config.")
 
-            # Optional inference
             if cfg.get("run_inference", False):
                 print("[Info] Running inference...")
                 clean_old_predictions(cfg)
