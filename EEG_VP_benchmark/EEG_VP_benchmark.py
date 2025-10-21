@@ -317,7 +317,7 @@ def plot_confusion_matrix(model, dataloader, cfg, subject_name):
     cm = confusion_matrix(all_labels, all_preds)
     cm_norm = cm.astype(float) / (cm.sum(axis=1, keepdims=True) + 1e-8)
 
-    # === Save under feature-type subfolder ===
+    # Save under feature-type subfolder
     plot_dir = os.path.join(cfg["result_root"], "plots", cfg["feature_type"])
     os.makedirs(plot_dir, exist_ok=True)
 
@@ -460,7 +460,7 @@ def clean_old_results(cfg):
     # Delete matching results
     if os.path.exists(exp_dir):
         for f in os.listdir(exp_dir):
-            if f.endswith(".txt") and signature in f:
+            if f.endswith(".txt") and cfg["encoder_name"] in f:
                 os.remove(os.path.join(exp_dir, f))
                 deleted.append(f)
 
