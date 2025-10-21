@@ -71,7 +71,7 @@ SUBSETS = {
 CONFIG = {
     "subject_name": "sub1.npy",
     "feature_type": "EEG_DE_1per1s",
-    "epochs": 100,
+    "epochs": 50,
     "batch_size": 8,
     "layer_widths": [4096, 4096, 4096, 4096],
     "dropout": 0.0,
