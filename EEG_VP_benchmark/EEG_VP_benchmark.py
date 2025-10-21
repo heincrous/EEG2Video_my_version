@@ -30,6 +30,23 @@ from models.glfnet import glfnet
 from models.mlpnet import mlpnet
 from models.glfnet_mlp import glfnet_mlp
 
+# ==========================================
+# Default Configuration
+# ==========================================
+"""
+DEFAULT MODEL CONFIGURATION
+Optimisation:
+Learning rate: 0.0005
+Optimiser: Adam
+Weight decay: 0.0
+Scheduler: constant
+
+Training:
+Epochs: 100
+Batch size: 128
+Loss: CrossEntropy
+"""
+
 
 # ==========================================
 # Experiment Settings
