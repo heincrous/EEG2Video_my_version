@@ -107,6 +107,7 @@ CONFIG = {
     "result_root": RESULT_ROOT,
     "run_inference": True,
     "save_text_results": False,
+    "save_class_predictions": True,  # Save correctness (1=correct, 0=wrong) in same .npy file
 }
 
 
@@ -303,6 +304,9 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
     pred_class = np.argmax(sims_to_means, axis=1)
     acc = np.mean(pred_class == labels)
 
+    # Optional: correctness flags
+    correct_flags = (pred_class == labels).astype(int) if cfg.get("save_class_predictions", False) else None
+
     # Print summary
     print(
         f"MSE: {mse_loss:.6f} | Cos(pred,gt): {avg_cosine:.4f} | "
@@ -311,7 +315,7 @@ def evaluate_model(model, eeg_flat, clip_flat, cfg):
         f"Semantic Acc={acc*100:.2f}%"
     )
 
-    return mse_loss, avg_cosine, avg_within, avg_between, fisher, acc
+    return mse_loss, avg_cosine, avg_within, avg_between, fisher, acc, correct_flags
 
 
 # ==========================================
@@ -393,7 +397,7 @@ def train_model(model, train_loader, val_eeg, val_clip, cfg):
         if epoch % 10 == 0:
             avg_loss = epoch_loss / len(train_loader)
             print(f"\n[Epoch {epoch}/{cfg['epochs']}] AvgLoss={avg_loss:.6f}")
-            val_mse, avg_cosine, _, _, _, acc = evaluate_model(model, val_eeg, val_clip, cfg)
+            val_mse, avg_cosine, _, _, _, acc, _ = evaluate_model(model, val_eeg, val_clip, cfg)
             cosine_history.append(avg_cosine)
             acc_history.append(acc)
             val_loss_history.append(val_mse)
@@ -451,7 +455,7 @@ def save_results(cfg, metrics, exp_type, exp_mode):
 # ==========================================
 # Inference Module
 # ==========================================
-def run_inference_and_save(model, eeg_flat, cfg):
+def run_inference_and_save(model, eeg_flat, cfg, correct_flags=None):
     device = cfg["device"]
     model.eval()
 
@@ -460,19 +464,19 @@ def run_inference_and_save(model, eeg_flat, cfg):
         preds_tensor = model(eeg_tensor)
         preds = preds_tensor.cpu().numpy()
 
-    # Reshape to [num_classes, 5, 77, 768]
     num_classes = len(cfg["class_subset"])
     preds = preds.reshape(num_classes, 5, 77, 768)
 
-    # Save predictions
-    pred_dir = os.path.join(
-        "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/predictions"
-    )
+    pred_dir = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/predictions"
     os.makedirs(pred_dir, exist_ok=True)
-
     subset_name = "_".join(map(str, cfg["class_subset"]))
     save_path = os.path.join(pred_dir, f"{subset_name}.npy")
-    np.save(save_path, preds)
+
+    # Save dictionary if correctness flags exist
+    if cfg.get("save_class_predictions", False) and correct_flags is not None:
+        np.save(save_path, {"preds": preds, "correct": correct_flags})
+    else:
+        np.save(save_path, preds)
 
     print(f"[Inference] Saved predictions → {save_path}")
     print(f"[Inference] Shape: {preds.shape}")
@@ -587,12 +591,14 @@ def main():
 
         print("\nFinal Test Evaluation:")
         metrics = evaluate_model(model, te_eeg, te_clip, cfg)
+        mse, cos, within, between, fisher, acc, correct_flags = metrics
 
         if EXPERIMENT_MODE == "epoch":
             # Epoch mode: plots only, optional inference
             if cfg.get("run_inference", False):
+                print("[Info] Running inference...")
                 clean_old_predictions(cfg)
-                run_inference_and_save(model, te_eeg, cfg)
+                preds = run_inference_and_save(model, te_eeg, cfg, correct_flags)
             else:
                 print("run_inference=False — skipping inference.")
 
@@ -607,7 +613,7 @@ def main():
             if cfg.get("run_inference", False):
                 print("[Info] Running inference...")
                 clean_old_predictions(cfg)
-                run_inference_and_save(model, te_eeg, cfg)
+                run_inference_and_save(model, te_eeg, cfg, correct_flags)
             else:
                 print("run_inference=False — skipping inference.")
 
