@@ -32,7 +32,6 @@ Video length: 6 frames (3 FPS)
 # Experiment Settings
 # ==========================================
 SUBSETS = {
-    # "subset_A": [7, 8, 11, 12, 21, 2, 26, 27, 36, 38],
     "subset_B": [0, 3, 5, 7, 9, 12, 21, 25, 36, 39],
     "subset_C": [1, 4, 6, 8, 10, 11, 13, 22, 26, 27],
     "subset_D": [2, 5, 7, 11, 12, 21, 23, 28, 36, 38],
@@ -127,9 +126,8 @@ def run_inference_for_subset(subset_name, class_subset, cfg, pipe):
     # Detect if correctness is embedded in the same array (shape [..., 769])
     if sem_preds_all.shape[-1] == 769:
         print("Detected combined predictions with correctness channel.")
-        # Extract correctness flags (same across all tokens per sample)
-        correct_flags = sem_preds_all[..., -1, 0].reshape(-1).astype(int)
-        # Strip correctness channel from embeddings
+        correct_flags = sem_preds_all[..., -1]  # shape: (num_classes, 5, 77)
+        correct_flags = correct_flags[..., 0].reshape(-1).astype(int)
         sem_preds_all = sem_preds_all[..., :768]
     else:
         correct_flags = None
@@ -139,20 +137,19 @@ def run_inference_for_subset(subset_name, class_subset, cfg, pipe):
     if cfg.get("only_correct_predictions", False) and correct_flags is not None:
         print("Filtering to only correctly predicted samples...")
         flat_preds = sem_preds_all.reshape(-1, 77, 768)
-        sem_preds_all = flat_preds[correct_flags == 1]
-        print(f"Filtered predictions shape: {sem_preds_all.shape}")
+        kept_indices = np.where(correct_flags == 1)[0]
+        sem_preds_all = flat_preds[kept_indices]
+        print(f"Filtered predictions shape: {sem_preds_all.shape} | Kept {len(kept_indices)} samples.")
     else:
+        kept_indices = np.arange(sem_preds_all.reshape(-1, 77, 768).shape[0])
         print(f"Loaded prediction array shape: {sem_preds_all.shape}")
-
 
     # Load captions
     blip_text = np.load(cfg["blip_text_path"], allow_pickle=True)
 
     # Determine structure
     if cfg.get("only_correct_predictions", False) and sem_preds_all.ndim == 3:
-        num_classes = 1
-        trials_per_class = sem_preds_all.shape[0]
-        total_samples = trials_per_class
+        total_samples = sem_preds_all.shape[0]
     else:
         num_classes, trials_per_class = sem_preds_all.shape[:2]
         total_samples = num_classes * trials_per_class
@@ -165,37 +162,33 @@ def run_inference_for_subset(subset_name, class_subset, cfg, pipe):
     print(f"Negative embedding shape: {tuple(neg_embeddings.shape)}")
 
     # Generate videos
-    flat_preds = sem_preds_all.reshape(total_samples, 77, 768)
     test_block = cfg["test_block"]
-    sample_idx = 0
 
-    for ci, class_id in enumerate(class_subset):
-        print(f"\n[CLASS {class_id}] ------------------------------")
-        for trial in range(trials_per_class):
-            emb = flat_preds[sample_idx]
-            semantic_emb = torch.tensor(emb, dtype=torch.float16)
-            if semantic_emb.ndim == 2:
-                semantic_emb = semantic_emb.unsqueeze(0)
-            semantic_emb = semantic_emb.to(cfg["device"])
+    for i, emb in enumerate(sem_preds_all):
+        semantic_emb = torch.tensor(emb, dtype=torch.float16).unsqueeze(0).to(cfg["device"])
 
-            caption = str(blip_text[test_block, class_id, trial])
-            safe_caption = re.sub(r"[^a-zA-Z0-9_-]", "_", caption)[:120]
+        # Map index back to class/trial
+        idx = kept_indices[i]
+        class_idx = idx // 5
+        trial_idx = idx % 5
+        class_id = class_subset[class_idx]
 
-            video = pipe(
-                prompt=semantic_emb,
-                negative_prompt=neg_embeddings,
-                video_length=cfg["video_length"],
-                height=288,
-                width=512,
-                num_inference_steps=cfg["num_inference"],
-                guidance_scale=cfg["guidance_scale"],
-            ).videos
+        caption = str(blip_text[test_block, class_id, trial_idx])
+        safe_caption = re.sub(r"[^a-zA-Z0-9_-]", "_", caption)[:120]
 
-            out_path = os.path.join(out_dir, f"class{class_id}_clip{trial + 1}_{safe_caption}.gif")
-            save_videos_grid(video, out_path, fps=cfg["fps"])
-            print(f"Saved {out_path}")
+        video = pipe(
+            prompt=semantic_emb,
+            negative_prompt=neg_embeddings,
+            video_length=cfg["video_length"],
+            height=288,
+            width=512,
+            num_inference_steps=cfg["num_inference"],
+            guidance_scale=cfg["guidance_scale"],
+        ).videos
 
-            sample_idx += 1
+        out_path = os.path.join(out_dir, f"class{class_id}_clip{trial_idx + 1}_{safe_caption}.gif")
+        save_videos_grid(video, out_path, fps=cfg["fps"])
+        print(f"Saved {out_path}")
 
 
 # ==========================================
