@@ -103,7 +103,7 @@ CONFIG = {
     "batch_size": 8,
     # "layer_widths": [4096, 4096, 4096, 4096],
     "layer_widths": [2048, 2048, 2048, 2048],
-    "dropout": 0.0,
+    "dropout": 0.25,
     "activation": " ReLU",
     "normalisation": "LayerNorm",
     "lr": 0.0001,
