@@ -92,8 +92,8 @@ CONFIG = {
     "feature_type": "EEG_DE_1per1s",
     "epochs": 50,
     "batch_size": 8,
-    "layer_widths": [4096, 4096, 4096, 4096],
-    # "layer_widths": [2048, 2048, 2048, 2048],
+    # "layer_widths": [4096, 4096, 4096, 4096],
+    "layer_widths": [2048, 2048, 2048, 2048],
     "dropout": 0.0,
     "activation": " ReLU",
     "normalisation": "BatchNorm",
@@ -472,9 +472,15 @@ def run_inference_and_save(model, eeg_flat, cfg, correct_flags=None):
     subset_name = "_".join(map(str, cfg["class_subset"]))
     save_path = os.path.join(pred_dir, f"{subset_name}.npy")
 
-    # Save dictionary if correctness flags exist
+    # Combine correctness flags into the same array (as extra channel)
     if cfg.get("save_class_predictions", False) and correct_flags is not None:
-        np.save(save_path, {"preds": preds, "correct": correct_flags})
+        flat_preds = preds.reshape(-1, 77, 768)
+        # Append correctness flag as an extra dimension at the end of each embedding
+        correct_expanded = np.repeat(correct_flags[:, None, None], 77, axis=1)
+        correct_expanded = np.repeat(correct_expanded, 1, axis=2)  # just to match shape logic
+        flat_with_flags = np.concatenate([flat_preds, correct_expanded], axis=2)
+        preds_with_flags = flat_with_flags.reshape(num_classes, 5, 77, 769)
+        np.save(save_path, preds_with_flags)
     else:
         np.save(save_path, preds)
 

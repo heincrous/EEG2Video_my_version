@@ -56,6 +56,7 @@ CONFIG = {
     "blip_text_path": "/content/drive/MyDrive/EEG2Video_data/processed/BLIP_text/BLIP_text.npy",
     "output_root": "/content/drive/MyDrive/EEG2Video_results/inference",
     "device": "cuda" if torch.cuda.is_available() else "cpu",
+    "only_correct_predictions": True,  # Reconstruct only correctly predicted samples
 }
 
 
@@ -110,7 +111,10 @@ def run_inference_for_subset(subset_name, class_subset, cfg, pipe):
         cfg["pred_root"], f"{'_'.join(map(str, class_subset))}.npy"
     )
     subset_name_num = "_".join(map(str, class_subset))
-    out_dir = os.path.join(cfg["output_root"], subset_name_num)
+    out_dir = os.path.join(
+        cfg["output_root"],
+        subset_name_num + ("_correct_only" if cfg.get("only_correct_predictions", False) else "")
+    )
     os.makedirs(out_dir, exist_ok=True)
 
     # Cleanup
@@ -119,10 +123,40 @@ def run_inference_for_subset(subset_name, class_subset, cfg, pipe):
     # Load predictions + captions
     print(f"Loading semantic predictions: {sem_path}")
     sem_preds_all = np.load(sem_path, allow_pickle=True)
+
+    # Detect if correctness is embedded in the same array (shape [..., 769])
+    if sem_preds_all.shape[-1] == 769:
+        print("Detected combined predictions with correctness channel.")
+        # Extract correctness flags (same across all tokens per sample)
+        correct_flags = sem_preds_all[..., -1, 0].reshape(-1).astype(int)
+        # Strip correctness channel from embeddings
+        sem_preds_all = sem_preds_all[..., :768]
+    else:
+        correct_flags = None
+        print("No correctness channel detected — using full predictions.")
+
+    # Filter only correct predictions if enabled
+    if cfg.get("only_correct_predictions", False) and correct_flags is not None:
+        print("Filtering to only correctly predicted samples...")
+        flat_preds = sem_preds_all.reshape(-1, 77, 768)
+        sem_preds_all = flat_preds[correct_flags == 1]
+        print(f"Filtered predictions shape: {sem_preds_all.shape}")
+    else:
+        print(f"Loaded prediction array shape: {sem_preds_all.shape}")
+
+
+    # Load captions
     blip_text = np.load(cfg["blip_text_path"], allow_pickle=True)
 
-    num_classes, trials_per_class = sem_preds_all.shape[:2]
-    total_samples = num_classes * trials_per_class
+    # Determine structure
+    if cfg.get("only_correct_predictions", False) and sem_preds_all.ndim == 3:
+        num_classes = 1
+        trials_per_class = sem_preds_all.shape[0]
+        total_samples = trials_per_class
+    else:
+        num_classes, trials_per_class = sem_preds_all.shape[:2]
+        total_samples = num_classes * trials_per_class
+
     print(f"Predictions shape: {sem_preds_all.shape} | Total samples: {total_samples}")
 
     # Negative embedding
