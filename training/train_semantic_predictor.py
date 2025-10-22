@@ -477,15 +477,19 @@ def run_inference_and_save(model, eeg_flat, cfg, correct_flags=None):
         flat_preds = preds.reshape(-1, 77, 768)
         # Append correctness flag as an extra dimension at the end of each embedding
         correct_expanded = np.repeat(correct_flags[:, None, None], 77, axis=1)
-        correct_expanded = np.repeat(correct_expanded, 1, axis=2)  # just to match shape logic
         flat_with_flags = np.concatenate([flat_preds, correct_expanded], axis=2)
         preds_with_flags = flat_with_flags.reshape(num_classes, 5, 77, 769)
         np.save(save_path, preds_with_flags)
     else:
         np.save(save_path, preds)
 
-    print(f"[Inference] Saved predictions → {save_path}")
-    print(f"[Inference] Shape: {preds.shape}")
+    if cfg.get("save_class_predictions", False) and correct_flags is not None:
+        print(f"[Inference] Saved combined array with correctness channel → {save_path}")
+        print(f"[Inference] Combined shape: {preds_with_flags.shape}")
+    else:
+        print(f"[Inference] Saved predictions → {save_path}")
+        print(f"[Inference] Shape: {preds.shape}")
+
     return preds
 
 
