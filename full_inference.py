@@ -10,7 +10,7 @@ import os, gc, re, shutil, torch, numpy as np
 from diffusers import AutoencoderKL, DDIMScheduler, DPMSolverMultistepScheduler
 from transformers import CLIPTokenizer, CLIPTextModel
 from core.unet import UNet3DConditionModel
-from pipelines.my_pipeline import TuneAVideoPipeline
+from EEG2Video_pipeline import TuneAVideoPipeline
 from core.save_video_grid import save_videos_grid
 
 
