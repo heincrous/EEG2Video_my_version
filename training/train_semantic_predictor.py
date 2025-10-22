@@ -61,16 +61,16 @@ else:  # epoch
 # }
 
 SUBSETS = {
-    "subset_A": [7, 8, 11, 12, 21],
-    "subset_B": [36, 9, 13, 0, 24],
-    "subset_C": [22, 27, 28, 5, 3],
-    "subset_D": [26, 30, 37, 38, 39],
-    "subset_E": [1, 2, 4, 6, 8],
-    "subset_F": [7, 9, 12, 23, 25],
-    "subset_G": [11, 13, 21, 29, 36],
-    "subset_H": [0, 5, 8, 22, 30],
-    "subset_I": [7, 12, 10, 26, 38],
-    "subset_J": [11, 21, 27, 36, 39],
+    "subset_A": [12, 7, 8, 21, 3],
+    "subset_B": [9, 36, 25, 0, 11],
+    "subset_C": [22, 5, 27, 13, 38],
+    "subset_D": [30, 26, 39, 2, 12],
+    "subset_E": [8, 4, 23, 7, 28],
+    "subset_F": [21, 10, 37, 36, 1],
+    "subset_G": [11, 29, 9, 12, 30],
+    "subset_H": [22, 6, 8, 0, 25],
+    "subset_I": [39, 13, 7, 11, 26],
+    "subset_J": [21, 27, 36, 28, 38],
 }
 
 CONFIG = {
@@ -78,8 +78,8 @@ CONFIG = {
     "feature_type": "EEG_DE_1per1s",
     "epochs": 50,
     "batch_size": 8,
-    "layer_widths": [4096, 4096, 4096, 4096],
-    # "layer_widths": [2048, 2048, 2048, 2048],
+    # "layer_widths": [4096, 4096, 4096, 4096],
+    "layer_widths": [2048, 2048, 2048, 2048],
     "dropout": 0.0,
     "activation": " ReLU",
     "normalisation": "BatchNorm",
