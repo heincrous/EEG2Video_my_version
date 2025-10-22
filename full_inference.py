@@ -56,7 +56,7 @@ SUBSETS = {
 
 CONFIG = {
     "num_inference": 50,
-    "guidance_scale": 8,
+    "guidance_scale": 5,
     "use_dpm_solver": True,
     "video_length": 6,
     "fps": 3,
