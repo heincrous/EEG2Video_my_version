@@ -57,7 +57,7 @@ RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/dynamic_predictor/optimi
 
 CONFIG = {
     "feature_type": "EEG_DE_1per1s",
-    "subjects_to_train": ["sub1.npy"],
+    "subjects_to_train": [],
     "epochs": 100,
     "batch_size": 128,
     "lr": 0.0001,
