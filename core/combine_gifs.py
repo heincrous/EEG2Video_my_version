@@ -25,7 +25,7 @@ CONFIG = {
     "output_prefix_results": "combined_grid_results",
     "output_prefix_fail": "combined_grid_fail",
     "frames_per_gif": 6,
-    "num_pairs": 5,      # Pairs per page for each group
+    "num_pairs": 6,      # Pairs per page for each group
     "label_width": 120,
 }
 
