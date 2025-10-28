@@ -57,10 +57,6 @@ else:  # epoch
     RESULT_ROOT = "/content/drive/MyDrive/EEG2Video_results/semantic_predictor/plots"
 
 # SUBSETS = {
-# "subset_A": [37, 10, 12, 3, 6, 25, 29, 1, 39, 9]
-# }
-
-# SUBSETS = {
 #     "subset_A": [0, 5, 10, 11, 21, 23, 26, 27, 30, 36],
 #     "subset_B": [1, 4, 7, 12, 13, 22, 24, 26, 28, 38],
 #     "subset_C": [2, 5, 6, 8, 10, 21, 23, 29, 30, 37],
@@ -72,29 +68,6 @@ else:  # epoch
 #     "subset_I": [3, 4, 6, 8, 12, 13, 21, 25, 29, 36],
 #     "subset_J": [0, 2, 5, 7, 9, 10, 22, 23, 27, 38],
 # }
-
-SUBSETS = {
-    "subset_A": [10, 11, 0, 21, 5],
-    "subset_B": [23, 36, 26, 30, 27],
-    "subset_C": [13, 1, 7, 12, 4],
-    "subset_D": [24, 26, 22, 28, 38],
-    "subset_E": [8, 2, 10, 6, 5],
-    "subset_F": [29, 23, 30, 37, 21],
-    "subset_G": [0, 11, 9, 3, 7],
-    "subset_H": [25, 27, 39, 26, 22],
-    "subset_I": [6, 4, 1, 8, 2],
-    "subset_J": [36, 12, 28, 21, 24],
-    "subset_K": [5, 3, 10, 11, 7],
-    "subset_L": [13, 26, 30, 22, 38],
-    "subset_M": [9, 4, 8, 0, 6],
-    "subset_N": [23, 37, 12, 27, 21],
-    "subset_O": [1, 5, 2, 10, 7],
-    "subset_P": [11, 24, 28, 22, 39],
-    "subset_Q": [6, 4, 12, 3, 36],
-    "subset_R": [29, 21, 25, 13, 38],
-    "subset_S": [9, 0, 2, 5, 7],
-    "subset_T": [10, 27, 30, 23, 22],
-}
 
 CONFIG = {
     "subject_name": "sub1.npy",
